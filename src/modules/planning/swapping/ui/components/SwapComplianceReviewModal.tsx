@@ -31,17 +31,18 @@ import { Button } from '@/modules/core/ui/primitives/button';
 import { Avatar, AvatarFallback } from '@/modules/core/ui/primitives/avatar';
 import { Dialog, DialogPortal, DialogOverlay } from '@/modules/core/ui/primitives/dialog';
 import * as RadixDialog from '@radix-ui/react-dialog';
-import { Drawer, DrawerContent } from '@/modules/core/ui/primitives/drawer';
+import { Drawer, DrawerContent, DrawerTitle, DrawerDescription } from '@/modules/core/ui/primitives/drawer';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import { cn } from '@/modules/core/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/platform/realtime/client';
 import {
     swapEvaluator,
-    SolverResult,
     ConstraintViolation,
     getScenarioWindow,
 } from '@/modules/compliance';
+import type { SolverResult } from '@/modules/compliance/v8/swap-engine/types';
 import { validateCompliance } from '@/modules/rosters/services/compliance.service';
 
 // =============================================================================
@@ -108,6 +109,19 @@ const calcNetHours = (s: { start_time: string; end_time: string; unpaid_break_mi
 
 const calcNetMinutes = (s: { start_time: string; end_time: string; unpaid_break_minutes?: number }): number =>
     Math.round(calcNetHours(s) * 60);
+
+/** Adapt a raw DB/ShiftData row to the V8Shift shape required by swapEvaluator */
+function toV8Shift(s: { id: string; shift_date: string; start_time: string; end_time: string; unpaid_break_minutes?: number }) {
+    return {
+        id: s.id,
+        date: s.shift_date,
+        shift_date: s.shift_date,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        unpaid_break_minutes: s.unpaid_break_minutes,
+        is_ordinary_hours: true as const,
+    };
+}
 
 const fmtTime = (t: string) => {
     const [h, m] = (t || '00:00').split(':').map(Number);
@@ -520,14 +534,14 @@ function ConstraintRow({ constraint, requesterName, offererName }: {
                 <div className="flex items-center gap-2 shrink-0">
                     <div className="flex items-center gap-1.5">
                         <span className="text-[9px] font-mono text-muted-foreground/40 uppercase">{requesterName.split(' ')[0]}</span>
-                        <StatusBadge status={constraint.requesterResult?.status ?? 'pending'}
-                            label={constraint.requesterResult?.status === 'pending' ? '—' : (constraint.requesterResult?.status ?? '—')} />
+                        <StatusBadge status={constraint.requesterResult?.status ?? 'pass'}
+                            label={constraint.requesterResult?.status ?? '—'} />
                     </div>
                     <span className="text-muted-foreground/20 text-[10px]">·</span>
                     <div className="flex items-center gap-1.5">
                         <span className="text-[9px] font-mono text-muted-foreground/40 uppercase">{offererName.split(' ')[0]}</span>
-                        <StatusBadge status={constraint.offererResult?.status ?? 'pending'}
-                            label={constraint.offererResult?.status === 'pending' ? '—' : (constraint.offererResult?.status ?? '—')} />
+                        <StatusBadge status={constraint.offererResult?.status ?? 'pass'}
+                            label={constraint.offererResult?.status ?? '—'} />
                     </div>
                     {hasDetails && <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground/30 transition-transform', expanded && 'rotate-180')} />}
                 </div>
@@ -743,9 +757,9 @@ export function SwapComplianceReviewModal({
     // Roster fetches
     // ------------------------------------------------------------------
 
-    const { data: requesterRoster = [] } = useQuery<RosterShift[]>({
+    const { data: requesterRosterRaw = [] } = useQuery({
         queryKey: ['swapCompliance.reqRoster', requesterId, offeredShift?.shift_date],
-        queryFn: async () => {
+        queryFn: async (): Promise<RosterShift[]> => {
             if (!requesterId || !offeredShift?.shift_date) return [];
             const { start, end } = getScenarioWindow(offeredShift.shift_date);
             const { data, error } = await supabase.from('shifts')
@@ -754,14 +768,21 @@ export function SwapComplianceReviewModal({
                 .gte('shift_date', start).lte('shift_date', end)
                 .is('deleted_at', null).is('is_cancelled', false);
             if (error) return [];
-            return data || [];
+            return (data || []).map(r => ({
+                id: r.id,
+                shift_date: r.shift_date,
+                start_time: r.start_time,
+                end_time: r.end_time,
+                unpaid_break_minutes: r.unpaid_break_minutes ?? undefined,
+            }));
         },
         enabled: isOpen && !!requesterId && !!offeredShift?.shift_date,
     });
+    const requesterRoster: RosterShift[] = requesterRosterRaw;
 
-    const { data: offererRoster = [] } = useQuery<RosterShift[]>({
+    const { data: offererRosterRaw = [] } = useQuery({
         queryKey: ['swapCompliance.offRoster', offererId, requesterShift?.shift_date],
-        queryFn: async () => {
+        queryFn: async (): Promise<RosterShift[]> => {
             if (!offererId || !requesterShift?.shift_date) return [];
             const { start, end } = getScenarioWindow(requesterShift.shift_date);
             const { data, error } = await supabase.from('shifts')
@@ -770,10 +791,17 @@ export function SwapComplianceReviewModal({
                 .gte('shift_date', start).lte('shift_date', end)
                 .is('deleted_at', null).is('is_cancelled', false);
             if (error) return [];
-            return data || [];
+            return (data || []).map(r => ({
+                id: r.id,
+                shift_date: r.shift_date,
+                start_time: r.start_time,
+                end_time: r.end_time,
+                unpaid_break_minutes: r.unpaid_break_minutes ?? undefined,
+            }));
         },
         enabled: isOpen && !!offererId && !!requesterShift?.shift_date,
     });
+    const offererRoster: RosterShift[] = offererRosterRaw;
 
     // ------------------------------------------------------------------
     // Reset on close
@@ -807,14 +835,14 @@ export function SwapComplianceReviewModal({
                 partyA: {
                     employee_id: requesterId,
                     name: requesterName,
-                    current_shifts: requesterRoster,
-                    shift_to_give: requesterShift,
+                    current_shifts: requesterRoster.map(toV8Shift),
+                    shift_to_give: toV8Shift(requesterShift),
                 },
                 partyB: {
                     employee_id: offererId,
                     name: offererName,
-                    current_shifts: offererRoster,
-                    shift_to_give: offeredShift,
+                    current_shifts: offererRoster.map(toV8Shift),
+                    shift_to_give: toV8Shift(offeredShift),
                 },
             });
 
@@ -857,12 +885,16 @@ export function SwapComplianceReviewModal({
                 for (const [cid, filter] of Object.entries(QUAL_FILTERS)) {
                     const reqV = reqQual.qualificationViolations.filter(filter);
                     const offV = offQual.qualificationViolations.filter(filter);
+                    const reqStatus: 'fail' | 'pass' = reqV.length > 0 ? 'fail' : 'pass';
+                    const offStatus: 'fail' | 'pass' = offV.length > 0 ? 'fail' : 'pass';
                     extraResults.push(
-                        { constraint_id: cid, constraint_name: QUAL_NAMES[cid], employee_id: requesterId, employee_name: requesterName,
-                          status: reqV.length > 0 ? 'fail' : 'pass', summary: reqV.length > 0 ? `${reqV.length} issue(s)` : 'Passed',
+                        { id: cid, constraint_id: cid, name: QUAL_NAMES[cid], constraint_name: QUAL_NAMES[cid],
+                          employee_id: requesterId, employee_name: requesterName,
+                          status: reqStatus, summary: reqV.length > 0 ? `${reqV.length} issue(s)` : 'Passed',
                           details: reqV.map((v: any) => v.message).join('\n'), calculation: { violations: reqV }, blocking: true },
-                        { constraint_id: cid, constraint_name: QUAL_NAMES[cid], employee_id: offererId, employee_name: offererName,
-                          status: offV.length > 0 ? 'fail' : 'pass', summary: offV.length > 0 ? `${offV.length} issue(s)` : 'Passed',
+                        { id: cid, constraint_id: cid, name: QUAL_NAMES[cid], constraint_name: QUAL_NAMES[cid],
+                          employee_id: offererId, employee_name: offererName,
+                          status: offStatus, summary: offV.length > 0 ? `${offV.length} issue(s)` : 'Passed',
                           details: offV.map((v: any) => v.message).join('\n'), calculation: { violations: offV }, blocking: true },
                     );
                 }
@@ -871,13 +903,15 @@ export function SwapComplianceReviewModal({
                 const reqOverlap = reqQual.violations.some(v => v.toLowerCase().includes('overlap'));
                 const offOverlap = offQual.violations.some(v => v.toLowerCase().includes('overlap'));
                 const existingOverlap = result.all_results.filter(r => r.constraint_id === 'NO_OVERLAP');
-                const noOverlapResults = (reqOverlap || offOverlap)
+                const noOverlapResults: ConstraintViolation[] = (reqOverlap || offOverlap)
                     ? [
-                        { constraint_id: 'NO_OVERLAP', constraint_name: 'No Overlapping Shifts', employee_id: requesterId, employee_name: requesterName,
-                          status: reqOverlap ? 'fail' : 'pass' as any, summary: reqOverlap ? 'Overlap confirmed by server' : 'No overlap',
+                        { id: 'NO_OVERLAP', constraint_id: 'NO_OVERLAP', name: 'No Overlapping Shifts', constraint_name: 'No Overlapping Shifts',
+                          employee_id: requesterId, employee_name: requesterName,
+                          status: reqOverlap ? 'fail' : 'pass', summary: reqOverlap ? 'Overlap confirmed by server' : 'No overlap',
                           details: reqOverlap ? 'Server confirmed a schedule conflict for this employee.' : '', calculation: {}, blocking: true },
-                        { constraint_id: 'NO_OVERLAP', constraint_name: 'No Overlapping Shifts', employee_id: offererId, employee_name: offererName,
-                          status: offOverlap ? 'fail' : 'pass' as any, summary: offOverlap ? 'Overlap confirmed by server' : 'No overlap',
+                        { id: 'NO_OVERLAP', constraint_id: 'NO_OVERLAP', name: 'No Overlapping Shifts', constraint_name: 'No Overlapping Shifts',
+                          employee_id: offererId, employee_name: offererName,
+                          status: offOverlap ? 'fail' : 'pass', summary: offOverlap ? 'Overlap confirmed by server' : 'No overlap',
                           details: offOverlap ? 'Server confirmed a schedule conflict for this employee.' : '', calculation: {}, blocking: true },
                       ]
                     : existingOverlap;
@@ -1219,6 +1253,10 @@ export function SwapComplianceReviewModal({
         return (
             <Drawer open={isOpen} onOpenChange={(open) => !open && onClose()}>
                 <DrawerContent className="h-[90dvh] bg-card border-border p-0 overflow-hidden flex flex-col">
+                    <VisuallyHidden>
+                        <DrawerTitle>Swap Compliance Review</DrawerTitle>
+                        <DrawerDescription>Review shift exchange details and evaluate compliance rules</DrawerDescription>
+                    </VisuallyHidden>
                     {innerContent}
                 </DrawerContent>
             </Drawer>

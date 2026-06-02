@@ -73,7 +73,7 @@ export async function executeCreateShift(
             }
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
             .from('shifts')
             .insert({
                 department_id: departmentId,

@@ -48,9 +48,9 @@ export const RosterListView: React.FC<RosterListViewProps> = ({
   }> = [];
 
   if (roster) {
-    roster.groups.forEach(group => {
-      group.subGroups.forEach(subGroup => {
-        subGroup.shifts.forEach(shift => {
+    ((roster as any).groups || []).forEach((group: any) => {
+      (group.subGroups || group.subgroups || []).forEach((subGroup: any) => {
+        (subGroup.shifts || []).forEach((shift: any) => {
           allShifts.push({
             ...shift,
             groupName: group.name,
@@ -81,8 +81,8 @@ export const RosterListView: React.FC<RosterListViewProps> = ({
         : b.groupName.localeCompare(a.groupName);
     }
     if (sortField === 'employee') {
-      const nameA = a.employee?.name || 'Unassigned';
-      const nameB = b.employee?.name || 'Unassigned';
+      const nameA = (a.employee as any)?.name || a.employee?.fullName || 'Unassigned';
+      const nameB = (b.employee as any)?.name || b.employee?.fullName || 'Unassigned';
       return sortDirection === 'asc'
         ? nameA.localeCompare(nameB)
         : nameB.localeCompare(nameA);
@@ -140,7 +140,7 @@ export const RosterListView: React.FC<RosterListViewProps> = ({
             sortedShifts.map(shift => {
               const employeeObj = shift.employee ? {
                 id: shift.employee.id,
-                name: shift.employee.name || `${shift.employee.firstName || ''} ${shift.employee.lastName || ''}`.trim()
+                name: (shift.employee as any).name || shift.employee.fullName || `${shift.employee.firstName || ''} ${shift.employee.lastName || ''}`.trim()
               } : shift.employeeId ? {
                 id: shift.employeeId,
                 name: "Unknown Employee"

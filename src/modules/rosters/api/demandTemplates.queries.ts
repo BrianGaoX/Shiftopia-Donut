@@ -81,7 +81,7 @@ export const demandTemplatesQueries = {
      * template_code (unique constraint). Returns the persisted row.
      */
     async upsert(input: TemplateInput): Promise<DemandTemplateRow> {
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
             .from('demand_templates')
             .upsert(
                 {

@@ -6,7 +6,8 @@
  * service function's parameter and return shapes.
  */
 
-import type { V8OrchestratorResult, V8Status, V8OrchestratorShift } from '@/modules/compliance/v8/types';
+import type { V8Status } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorResult, V8OrchestratorShift } from '@/modules/compliance/v8/orchestrator/types';
 
 // Re-export for consumers who import from this module
 export type { V8OrchestratorResult, V8Status, V8OrchestratorShift };
@@ -206,7 +207,7 @@ export function isStudentVisaEnforced(
 ): boolean {
   const hasVisaHit = (result?: V8OrchestratorResult): boolean => {
     if (!result) return false;
-    return result.rule_hits.some(h => h.rule_id === 'R05');
+    return result.hits.some(h => h.rule_id === 'R05');
   };
   return hasVisaHit(partyA) || hasVisaHit(partyB);
 }

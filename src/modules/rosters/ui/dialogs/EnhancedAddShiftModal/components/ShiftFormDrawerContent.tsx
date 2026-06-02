@@ -56,6 +56,7 @@ import {
     ChevronRight,
     Calendar,
     Timer,
+    Loader2,
 } from 'lucide-react';
 import { Switch } from '@/modules/core/ui/primitives/switch';
 import { ScrollArea } from '@/modules/core/ui/primitives/scroll-area';

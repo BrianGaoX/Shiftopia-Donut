@@ -277,9 +277,9 @@ export function useToggleRosterLock() {
   return useMutation({
     mutationFn: async (vars: ToggleRosterLockVariables) => {
       const { error, count } = await supabase.rpc('toggle_roster_lock_for_range', {
-        p_org_id:      vars.organizationId,
-        p_dept_id:     vars.departmentId,
-        p_sub_dept_id: vars.subDepartmentId,
+        p_org_id:      vars.organizationId as string,
+        p_dept_id:     vars.departmentId as string,
+        p_sub_dept_id: vars.subDepartmentId as string,
         p_start_date:  vars.startDate,
         p_end_date:    vars.endDate,
         p_lock_status: vars.isLocked,

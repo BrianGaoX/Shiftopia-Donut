@@ -183,6 +183,11 @@ export interface OptimizeResponse {
     num_variables: number;
     num_constraints: number;
     total_time_ms: number;
+    /** Per-category breakdown of the solver objective value (cents).
+     *  Null when the solver returned INFEASIBLE / UNKNOWN / MODEL_INVALID.
+     *  Categories: cost, fairness, fatigue, coverage, continuity,
+     *  overqual, employment_mix, relaxed_violations, availability, other. */
+    objective_breakdown?: Record<string, number> | null;
 }
 
 // =============================================================================
@@ -267,6 +272,10 @@ export interface AutoSchedulerResult {
     proposals: ValidatedProposal[];
     canCommit: boolean;
     usedFallback: boolean;
+    /** Per-category solver objective breakdown forwarded from the Python service.
+     *  Null/undefined when the optimizer was unreachable or returned no solution
+     *  (greedy fallback path). Safe to access with optional-chaining. */
+    objective_breakdown?: Record<string, number> | null;
 }
 
 // =============================================================================

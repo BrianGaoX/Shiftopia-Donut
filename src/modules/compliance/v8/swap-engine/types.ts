@@ -12,11 +12,26 @@ export interface SwapParty {
     hypothetical_schedule: RosterShift[];
     received_shift:        RosterShift;
     given_shift:           RosterShift;
+    is_student_visa?:      boolean;
 }
 
 export interface SwapScenario {
     partyA: SwapParty;
     partyB: SwapParty;
+}
+
+export interface SwapPartyInput {
+    employee_id:     string;
+    name:            string;
+    current_shifts:  RosterShift[];
+    shift_to_give:   RosterShift;
+    is_student_visa?: boolean;
+}
+
+export interface SwapEvaluationInput {
+    partyA:  SwapPartyInput;
+    partyB:  SwapPartyInput;
+    config?: SolverConfig;
 }
 
 export interface SolverConfig {
@@ -36,6 +51,7 @@ export interface ConstraintViolation {
     name:          string;
     constraint_name: string; // Alias for name
     employee_id:   string;
+    employee_name?: string;
     status:        'pass' | 'fail' | 'warning';
     summary:       string;
     details:       string;

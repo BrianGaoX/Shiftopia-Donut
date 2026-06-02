@@ -32,8 +32,8 @@ const MINUTES_PER_DAY = 1440;
 // =============================================================================
 
 function absoluteInterval(eb: EvaluatedBid): [number, number] {
-    const start = toAbsoluteMinutes(eb.shift.shift_date, eb.shift.start_time);
-    const end   = toAbsoluteMinutes(eb.shift.shift_date, eb.shift.end_time);
+    const start = toAbsoluteMinutes(eb.shift.date, eb.shift.start_time);
+    const end   = toAbsoluteMinutes(eb.shift.date, eb.shift.end_time);
     // Cross-midnight: end on same date but before start
     return [start, end <= start ? end + MINUTES_PER_DAY : end];
 }
@@ -47,7 +47,7 @@ function shiftsOverlap(a: EvaluatedBid, b: EvaluatedBid): boolean {
 
 function violatesRestGap(a: EvaluatedBid, b: EvaluatedBid, rest_gap_minutes: number): boolean {
     // Same-day split shifts have no rest gap requirement — only cross-day pairs.
-    if (a.shift.shift_date === b.shift.shift_date) return false;
+    if (a.shift.date === b.shift.date) return false;
 
     const [aS, aE] = absoluteInterval(a);
     const [bS, bE] = absoluteInterval(b);
@@ -133,8 +133,8 @@ export function buildBidConflictGraph(
                         bid_id_b: b.bid.bid_id,
                         kind:     'TIME_OVERLAP',
                         reason:
-                            `Shift ${a.shift.shift_id} (${a.shift.shift_date} ${a.shift.start_time}–${a.shift.end_time}) `
-                            + `overlaps with shift ${b.shift.shift_id} (${b.shift.shift_date} ${b.shift.start_time}–${b.shift.end_time})`,
+                            `Shift ${a.shift.id} (${a.shift.date} ${a.shift.start_time}–${a.shift.end_time}) `
+                            + `overlaps with shift ${b.shift.id} (${b.shift.date} ${b.shift.start_time}–${b.shift.end_time})`,
                     });
                     uf.union(a.bid.bid_id, b.bid.bid_id);
                 } else if (violatesRestGap(a, b, rest_gap_minutes)) {
@@ -143,7 +143,7 @@ export function buildBidConflictGraph(
                         bid_id_b: b.bid.bid_id,
                         kind:     'REST_GAP',
                         reason:
-                            `Gap between shift ${a.shift.shift_id} and shift ${b.shift.shift_id} `
+                            `Gap between shift ${a.shift.id} and shift ${b.shift.id} `
                             + `is less than ${rest_gap_hours}h rest requirement.`,
                     });
                     uf.union(a.bid.bid_id, b.bid.bid_id);

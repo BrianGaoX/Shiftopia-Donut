@@ -114,7 +114,7 @@ export function useShiftFormData({
     // Fetch all shifts for this day and roster to see what groups/subgroups are currently active
     // We fetch ALL shifts for the org/date to have the full picture
     const { data: existingShifts = EMPTY_ARRAY } = useShiftsByDate(
-        isOpen ? context.organizationId : undefined,
+        isOpen ? context.organizationId ?? null : null,
         isOpen ? context.date || null : null
     );
 

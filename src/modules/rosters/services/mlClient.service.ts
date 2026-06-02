@@ -95,29 +95,53 @@ export function resolveMLRoleByNameFallback(roleName: string): MLKnownRole | nul
   return null;
 }
 
+type ApiSlicePayload = {
+  event_type: EventType;
+  function_type: FunctionType;
+  expected_attendance: number;
+  day_of_week: number;
+  month: number;
+  room_count: number;
+  total_sqm: number;
+  room_capacity: number;
+  simultaneous_event_count: number;
+  total_venue_attendance_same_time: number;
+  entry_peak_flag: boolean;
+  exit_peak_flag: boolean;
+  meal_window_flag: boolean;
+  event_id?: string;
+  time_slice_index: number;
+  synthesis_run_id?: string;
+  scenario_id?: string;
+};
+
+function toApiPayload(request: EventInput): ApiSlicePayload {
+  return {
+    event_type: request.eventType,
+    function_type: request.functionType,
+    expected_attendance: request.expectedAttendance,
+    day_of_week: request.dayOfWeek,
+    month: request.month,
+    room_count: request.roomCount,
+    total_sqm: request.totalSqm,
+    room_capacity: request.roomCapacity,
+    simultaneous_event_count: request.simultaneousEventCount,
+    total_venue_attendance_same_time: request.totalVenueAttendanceSameTime,
+    entry_peak_flag: request.entryPeakFlag,
+    exit_peak_flag: request.exitPeakFlag,
+    meal_window_flag: request.mealWindowFlag,
+    event_id: request.eventId,
+    time_slice_index: request.timeSliceIndex,
+    synthesis_run_id: request.synthesisRunId,
+    scenario_id: request.scenarioId,
+  };
+}
+
 export async function predictSlice(request: EventInput): Promise<RoleResult[]> {
   const response = await fetch(`${ML_URL}/predict/demand`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      event_type: request.eventType,
-      function_type: request.functionType,
-      expected_attendance: request.expectedAttendance,
-      day_of_week: request.dayOfWeek,
-      month: request.month,
-      room_count: request.roomCount,
-      total_sqm: request.totalSqm,
-      room_capacity: request.roomCapacity,
-      simultaneous_event_count: request.simultaneousEventCount,
-      total_venue_attendance_same_time: request.totalVenueAttendanceSameTime,
-      entry_peak_flag: request.entryPeakFlag,
-      exit_peak_flag: request.exitPeakFlag,
-      meal_window_flag: request.mealWindowFlag,
-      event_id: request.eventId,
-      time_slice_index: request.timeSliceIndex,
-      synthesis_run_id: request.synthesisRunId,
-      scenario_id: request.scenarioId,
-    }),
+    body: JSON.stringify(toApiPayload(request)),
   });
 
   if (!response.ok) {
@@ -128,6 +152,93 @@ export async function predictSlice(request: EventInput): Promise<RoleResult[]> {
   return response.json();
 }
 
+/**
+ * Batch endpoint binding. Sends N slice requests in ONE POST and returns the
+ * server-ordered list of per-slice results. Server cap is 500 items.
+ */
+export async function predictBatch(requests: EventInput[]): Promise<Record<string, RoleResult>[]> {
+  if (requests.length === 0) return [];
+  const response = await fetch(`${ML_URL}/predict/demand/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requests.map(toApiPayload)),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `ML batch prediction failed for event ${requests[0]?.eventId ?? 'unknown'} (${requests.length} slices): HTTP ${response.status} ${response.statusText}`,
+    );
+  }
+  return response.json();
+}
+
+/**
+ * Send all `timeSliceCount` slice requests in ONE batch POST, then slice the
+ * per-role predictions out of each response. Returns one DemandTensor per
+ * entry in `roles`, in the same order.
+ *
+ * Call-count math: 1 HTTP call per event regardless of N roles or S slices.
+ * Before Phase 1: N × S calls. After Phase 1: S calls. After Phase 4: 1 call.
+ *
+ * Scope: the slice responses are accumulated in a local array that is GC'd when
+ * this function returns — no cross-run state or global cache.
+ */
+export async function buildDemandAnalysisForRoles(
+  event: EventInput,
+  roles: string[],
+  derivePerSliceFlags?: (sliceIndex: number) => {
+    entryPeakFlag: boolean;
+    exitPeakFlag: boolean;
+    mealWindowFlag: boolean;
+  },
+): Promise<DemandTensor[]> {
+  const sliceRequests: EventInput[] = Array.from({ length: event.timeSliceCount }, (_, i) => {
+    const flagOverrides = derivePerSliceFlags ? derivePerSliceFlags(i) : {};
+    return { ...event, timeSliceIndex: i, ...flagOverrides };
+  });
+
+  const slices = await predictBatch(sliceRequests);
+
+  // Guard: if the first slice came back empty the ML service is broken.
+  if (!slices[0]) {
+    throw new Error(
+      `ML service returned an empty response for event '${event.eventId ?? 'unknown'}' slice 0`,
+    );
+  }
+
+  // Build one DemandTensor per requested role from the shared slice responses.
+  return roles.map((role) => {
+    if (!(role in slices[0])) {
+      throw new Error(
+        `ML service did not return predictions for role '${role}'. Known roles: ${ML_KNOWN_ROLES.join(', ')}`,
+      );
+    }
+
+    const packingSlots: DemandSlot[] = slices.map((slice, i) => {
+      const corrected = (slice as unknown as Record<string, RoleResult>)[role].corrected;
+      return {
+        slotStart: i,
+        slotEnd: i + 1,
+        requiredHeadcount: corrected,
+        residualHeadcount: corrected,
+        residualHeadcountInt: Math.round(corrected),
+      };
+    });
+
+    return {
+      roleId: role,
+      subDepartmentId: event.eventId ?? '',
+      buildingType: event.buildingType,
+      slots: packingSlots,
+    };
+  });
+}
+
+/**
+ * Thin back-compat wrapper around buildDemandAnalysisForRoles.
+ * Callers that pass a single role continue to work unchanged.
+ * New callers should use buildDemandAnalysisForRoles directly to avoid
+ * redundant HTTP round-trips when processing multiple roles per event.
+ */
 export async function buildDemandAnalysis(
   event: EventInput,
   role: string,
@@ -137,38 +248,6 @@ export async function buildDemandAnalysis(
     mealWindowFlag: boolean;
   },
 ): Promise<DemandTensor> {
-  // For each time slice, call the ML model to get predicted demand for that slice.
-  // Per-slice flags (entry/exit peak, meal window) are computed by the demand builder
-  // via the optional derivePerSliceFlags callback so the policy lives in one place.
-  const slices = await Promise.all(
-    Array.from({ length: event.timeSliceCount }, (_, i) => {
-      const flagOverrides = derivePerSliceFlags ? derivePerSliceFlags(i) : {};
-      return predictSlice({ ...event, timeSliceIndex: i, ...flagOverrides });
-    }),
-  );
-
-  // Transform the raw ML predictions into the format needed for shift synthesis.
-  // If the role isn't in the ML response, bail clearly rather than crashing on undefined.
-  if (!slices[0] || !(role in slices[0])) {
-    throw new Error(
-      `ML service did not return predictions for role '${role}'. Known roles: ${ML_KNOWN_ROLES.join(', ')}`,
-    );
-  }
-  const packingSlots: DemandSlot[] = slices.map((slice, i) => {
-    const corrected = (slice as unknown as Record<string, RoleResult>)[role].corrected;
-    return {
-      slotStart: i,
-      slotEnd: i + 1,
-      requiredHeadcount: corrected,
-      residualHeadcount: corrected,
-      residualHeadcountInt: Math.round(corrected),
-    };
-  });
-
-  return {
-    roleId: role,
-    subDepartmentId: event.eventId ?? '',
-    buildingType: event.buildingType,
-    slots: packingSlots,
-  };
+  const results = await buildDemandAnalysisForRoles(event, [role], derivePerSliceFlags);
+  return results[0];
 }

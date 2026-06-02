@@ -1,21 +1,64 @@
+import hashlib
+import json
+import logging
 import os
 import pickle
 import numpy as np
 from dotenv import load_dotenv
+from supabase import create_client
 from correction_engine import CorrectionEngine
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
+logger = logging.getLogger(__name__)
+
 MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 ROLES = ['Usher', 'Security', 'Food Staff', 'Supervisor']
 
-FEATURE_ORDER = [
-    'event_type', 'expected_attendance', 'day_of_week', 'month',
-    'function_type', 'room_count', 'total_sqm', 'room_capacity',
-    'simultaneous_event_count', 'total_venue_attendance_same_time',
-    'entry_peak_flag', 'exit_peak_flag', 'meal_window_flag',
-    'time_slice_index'
-]
+# ---------------------------------------------------------------------------
+# Feature schema — single source of truth shared with train_model.py.
+# Fail loudly at import time if the contract file is absent.
+# ---------------------------------------------------------------------------
+_SCHEMA_PATH = os.path.join(os.path.dirname(__file__), 'feature_schema.json')
+if not os.path.exists(_SCHEMA_PATH):
+    raise RuntimeError(
+        f"feature_schema.json not found at {_SCHEMA_PATH}. "
+        "Cannot start: feature contract is missing."
+    )
+with open(_SCHEMA_PATH) as _f:
+    _SCHEMA = json.load(_f)
+
+FEATURE_ORDER: list[str] = _SCHEMA['feature_order']
+CATEGORICAL_COLS: list[str] = _SCHEMA['categorical']
+
+# ---------------------------------------------------------------------------
+# MANIFEST — server-side model version registry.
+# ---------------------------------------------------------------------------
+def load_manifest(models_dir: str = MODELS_DIR) -> dict:
+    """Load MANIFEST.json from models_dir. Raises RuntimeError on missing file."""
+    manifest_path = os.path.join(models_dir, 'MANIFEST.json')
+    if not os.path.exists(manifest_path):
+        raise RuntimeError(
+            f"MANIFEST.json not found at {manifest_path}. "
+            "Cannot start: model version registry is missing."
+        )
+    with open(manifest_path) as f:
+        return json.load(f)
+
+manifest = load_manifest()
+
+# ---------------------------------------------------------------------------
+# Unknown-category counter (module-level; no Prometheus yet)
+# ---------------------------------------------------------------------------
+unknown_category_counter: dict[str, int] = {}
+
+# ---------------------------------------------------------------------------
+# Module-level singletons — populated once by load_all_models() at startup.
+# predict_demand() reads from these; it never calls load_model() per request.
+# ---------------------------------------------------------------------------
+_MODEL_CACHE: dict[str, object] = {}
+_pipeline_singleton: 'FeaturePipeline | None' = None
+_correction_singleton: 'CorrectionEngine | None' = None
 
 
 class PredictionError(Exception):
@@ -41,7 +84,20 @@ class FeaturePipeline:
         for col in FEATURE_ORDER:
             val = features[col]
             if col in self.encoders:
-                val = self.encoders[col].transform([str(val)])[0]
+                encoder = self.encoders[col]
+                str_val = str(val)
+                if str_val not in encoder.classes_:
+                    fallback_label = encoder.classes_[0]
+                    logger.warning(
+                        "unknown category %s for column %s, falling back to %s",
+                        val, col, fallback_label,
+                    )
+                    unknown_category_counter[col] = (
+                        unknown_category_counter.get(col, 0) + 1
+                    )
+                    val = encoder.transform([fallback_label])[0]
+                else:
+                    val = encoder.transform([str_val])[0]
             elif isinstance(val, bool):
                 val = int(val)
             row.append(val)
@@ -87,15 +143,111 @@ def load_model(role: str):
         raise PredictionError(role, exc) from exc
 
 
+def _sha256_of_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_manifest_hashes() -> None:
+    """Compare on-disk model file sha256 against the active row in public.model_manifests.
+    Raises RuntimeError on mismatch. No-op when ML_VERIFY_MANIFEST_HASHES is unset."""
+    if os.getenv('ML_VERIFY_MANIFEST_HASHES', '').lower() not in ('1', 'true', 'yes'):
+        return
+
+    url = os.getenv('VITE_SUPABASE_URL')
+    key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('VITE_SUPABASE_ANON_KEY')
+    if not url or not key:
+        raise RuntimeError("ML_VERIFY_MANIFEST_HASHES=true requires Supabase credentials in env.")
+
+    supabase = create_client(url, key)
+    resp = supabase.table('model_manifests').select('manifest_id, file_hashes').eq('is_active', True).limit(1).execute()
+    if not resp.data:
+        raise RuntimeError("ML_VERIFY_MANIFEST_HASHES=true but no active row in model_manifests.")
+
+    expected = resp.data[0].get('file_hashes', {}) or {}
+    manifest_id = resp.data[0].get('manifest_id', '?')
+
+    for role, expected_hash in expected.items():
+        path = os.path.join(MODELS_DIR, f'{role}.pkl')
+        if not os.path.exists(path):
+            raise RuntimeError(
+                f"Manifest {manifest_id} expects file for role '{role}' but {path} is missing."
+            )
+        actual = _sha256_of_file(path)
+        if actual != expected_hash:
+            raise RuntimeError(
+                f"sha256 mismatch for role '{role}' against manifest {manifest_id}: "
+                f"expected {expected_hash[:12]}…, got {actual[:12]}…"
+            )
+
+    logger.info("Manifest hash verification passed (%s, %d roles).", manifest_id, len(expected))
+
+
+def load_all_models() -> None:
+    """Load all role models, the feature pipeline, and correction engine once.
+
+    Populates the module-level singletons _MODEL_CACHE, _pipeline_singleton,
+    and _correction_singleton. Called once at application startup via lifespan.
+    Raises if any model file is corrupt (missing files are tolerated — predict_demand
+    will return zeros for that role, matching existing behaviour).
+    CorrectionEngine.load_factors() raises on connect/auth failure so startup fails fast.
+    When ML_VERIFY_MANIFEST_HASHES=true, also verifies on-disk sha256 against the
+    active row in public.model_manifests.
+    """
+    global _pipeline_singleton, _correction_singleton
+
+    _verify_manifest_hashes()
+
+    _pipeline_singleton = FeaturePipeline()
+
+    for role in ROLES:
+        model_path = os.path.join(MODELS_DIR, f'{role}.pkl')
+        if not os.path.exists(model_path):
+            logger.warning("Model file not found at startup for role '%s' — predictions will be 0", role)
+            continue
+        try:
+            with open(model_path, 'rb') as f:
+                _MODEL_CACHE[role] = pickle.load(f)
+        except Exception as exc:
+            logger.warning("Failed to load model for role '%s': %s — predictions will be 0", role, exc)
+
+    engine = CorrectionEngine()
+    engine.load_factors(client_factory=create_client)
+    _correction_singleton = engine
+
+
 def predict_demand(features: dict) -> dict:
     _validate_features(features)
-    pipeline = FeaturePipeline()
-    correction = CorrectionEngine()
+
+    # Use the module-level singletons when available (production path).
+    # Fall back to constructing fresh instances for test environments that
+    # call predict_demand() directly without going through lifespan.
+    pipeline = _pipeline_singleton if _pipeline_singleton is not None else FeaturePipeline()
+    if _correction_singleton is not None:
+        correction = _correction_singleton
+    else:
+        correction = CorrectionEngine()
+        try:
+            correction.load_factors(client_factory=create_client)
+        except Exception:
+            pass  # No factors available — apply() will default to 1.0x
+
     results = {}
 
     for role in ROLES:
+        # Use cached model if present; otherwise fall back to loading from disk.
+        model = _MODEL_CACHE.get(role)
+        if model is None:
+            try:
+                model = load_model(role)
+            except PredictionError:
+                results[role] = {'predicted': 0, 'corrected': 0}
+                continue
+
         try:
-            model = load_model(role)
             X = pipeline.transform(features)
             predicted = float(model.predict(X)[0])
             corrected, factor = correction.apply(features['event_type'], role, predicted)

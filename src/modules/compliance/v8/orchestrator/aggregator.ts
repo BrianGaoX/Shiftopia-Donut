@@ -95,9 +95,9 @@ export function combineV8SwapResults(
     const rank = (s: V8Status) => s === 'BLOCKING' ? 2 : s === 'WARNING' ? 1 : 0;
 
     const status: V8Status =
-        rank(result_a.status) >= rank(result_b.status)
-            ? result_a.status
-            : result_b.status;
+        rank(result_a.overall_status) >= rank(result_b.overall_status)
+            ? result_a.overall_status
+            : result_b.overall_status;
 
     return { status, per_employee: [result_a, result_b] };
 }

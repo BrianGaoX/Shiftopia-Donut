@@ -1,7 +1,8 @@
 
 import React from 'react';
 import { Edit, Trash, Clock, User, Award } from 'lucide-react';
-import { Employee, ShiftStatus } from '@/modules/core/types';
+import { Employee } from '@/modules/core/types';
+type ShiftStatus = 'unassigned' | 'assigned' | 'confirmed' | 'completed' | 'cancelled' | string;
 
 interface ShiftProps {
   id: string;
@@ -61,7 +62,7 @@ const ShiftItem: React.FC<ShiftProps> = ({
           </div>
           {employee && (
             <div className="mt-1 text-muted-foreground group-hover:text-foreground text-sm">
-              <span>Assigned to: {employee.name}</span>
+              <span>Assigned to: {(employee as any).fullName ?? (employee as any).name ?? ''}</span>
             </div>
           )}
         </div>

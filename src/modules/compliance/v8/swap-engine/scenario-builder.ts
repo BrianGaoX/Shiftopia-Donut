@@ -13,17 +13,16 @@
  */
 
 import type { SwapScenario, SwapPartyInput, RosterShift, SwapParty } from './types';
-import type { ShiftTimeRange } from '../types';
 
 /**
  * Exclude a specific shift from a roster.
  * Matching by ID when available, falling back to date+time equality.
  */
-function withoutShift(roster: RosterShift[], shift: RosterShift): ShiftTimeRange[] {
+function withoutShift(roster: RosterShift[], shift: RosterShift): RosterShift[] {
     return roster.filter(s => {
         if (shift.id && s.id) return s.id !== shift.id;
         return !(
-            s.shift_date === shift.shift_date &&
+            (s.shift_date ?? s.date) === (shift.shift_date ?? shift.date) &&
             s.start_time === shift.start_time &&
             s.end_time === shift.end_time
         );
@@ -68,12 +67,12 @@ export class ScenarioBuilder {
      * Build a standard 2-way swap scenario.
      */
     build(partyA: SwapPartyInput, partyB: SwapPartyInput): SwapScenario {
-        const partyASchedule: ShiftTimeRange[] = [
+        const partyASchedule: RosterShift[] = [
             ...withoutShift(partyA.current_shifts, partyA.shift_to_give),
             partyB.shift_to_give,
         ];
 
-        const partyBSchedule: ShiftTimeRange[] = [
+        const partyBSchedule: RosterShift[] = [
             ...withoutShift(partyB.current_shifts, partyB.shift_to_give),
             partyA.shift_to_give,
         ];
@@ -124,7 +123,7 @@ export class ScenarioBuilder {
 
         // Compute each party's hypothetical schedule:
         //   party[i] gives shift[i] and receives shift[(i-1+n) % n]
-        const hypotheticalSchedules: ShiftTimeRange[][] = parties.map((party, i) => {
+        const hypotheticalSchedules: RosterShift[][] = parties.map((party, i) => {
             const receivedShift = parties[(i - 1 + n) % n].shift_to_give;
             return [
                 ...withoutShift(party.current_shifts, party.shift_to_give),

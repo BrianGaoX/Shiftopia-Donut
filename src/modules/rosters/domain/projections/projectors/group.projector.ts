@@ -134,7 +134,7 @@ function subGroupStats(shifts: ProjectedShiftResult[]): SubGroupStats {
 function groupStatsFrom(subGroups: ProjectedSubGroup[]): GroupStats {
   const allShifts = subGroups.flatMap(sg =>
     Object.values(sg.shiftsByDate).flat()
-  ) as ProjectedShiftResult[];
+  ) as unknown as ProjectedShiftResult[];
   
   const assigned  = allShifts.filter(s => !!s.employeeId).length;
   const netMins   = allShifts.reduce((acc, s) => acc + s.netMinutes, 0);

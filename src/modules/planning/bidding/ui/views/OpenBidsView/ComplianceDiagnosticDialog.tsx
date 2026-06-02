@@ -122,7 +122,7 @@ export const ComplianceDiagnosticDialog: React.FC<ComplianceDiagnosticDialogProp
         };
     }, [shift, bid, employeeShifts]);
 
-    const runAllChecks = useCallback(() => {
+    const runAllChecks = useCallback(async () => {
         if (!shift || !bid) return;
 
         const input = buildComplianceInput();
@@ -142,9 +142,9 @@ export const ComplianceDiagnosticDialog: React.FC<ComplianceDiagnosticDialogProp
         // Rule Engines (Layer 2)
         const rules = getRegisteredRules();
         const newResults: Record<string, ComplianceResult | null> = {};
-        rules.forEach(rule => {
-            newResults[rule.id] = runRule(rule.id, input);
-        });
+        for (const rule of rules) {
+            newResults[rule.id] = (await runRule(rule.id, input)) as any;
+        }
 
         setRuleResults(newResults);
         setHasRun(true);
@@ -228,7 +228,7 @@ export const ComplianceDiagnosticDialog: React.FC<ComplianceDiagnosticDialogProp
                                     hardValidation={hardValidation}
                                     buildComplianceInput={buildComplianceInput}
                                     ruleResults={ruleResults}
-                                    setRuleResults={setRuleResults}
+                                    onRuleResult={(id, r) => setRuleResults(prev => ({ ...prev, [id]: r }))}
                                     onChecksComplete={() => { }}
                                     shiftId={shift?.id}
                                 />

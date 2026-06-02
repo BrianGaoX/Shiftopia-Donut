@@ -26,7 +26,6 @@
  */
 
 import { supabase } from '@/platform/realtime/client';
-import type { ShiftTimeRange } from '../../types';
 import type { ScenarioWindow } from './scenario-window';
 
 // =============================================================================
@@ -36,8 +35,12 @@ import type { ScenarioWindow } from './scenario-window';
 export type ShiftState = 'published' | 'draft' | 'pending_swap' | 'pending_assignment';
 
 /** A normalised shift from any schedule state. */
-export interface UnifiedShift extends ShiftTimeRange {
+export interface UnifiedShift {
     id: string;
+    shift_date: string;
+    start_time: string;
+    end_time: string;
+    unpaid_break_minutes: number;
     state: ShiftState;
 }
 

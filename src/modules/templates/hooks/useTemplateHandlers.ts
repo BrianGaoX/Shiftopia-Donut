@@ -50,6 +50,7 @@ export const useTemplateHandlers = ({
       color: newGroup.color,
       icon: newGroup.icon || 'clipboard',
       subGroups: [],
+      sortOrder: 0,
     };
 
     const updatedTemplate = {
@@ -182,7 +183,8 @@ export const useTemplateHandlers = ({
         shifts: [],
         startTime: '09:00 AM',
         endTime: '05:00 PM',
-      };
+        sortOrder: 0,
+      } as unknown as SubGroup;
 
       const updatedGroups = currentTemplate.groups.map((g) =>
         g.id === groupId

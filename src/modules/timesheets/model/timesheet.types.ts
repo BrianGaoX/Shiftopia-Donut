@@ -84,6 +84,7 @@ export interface TimesheetRow {
     timesheetStatus: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | string;
     // Attendance (from shifts.attendance_status)
     attendanceStatus?: string | null;
+    attendanceNote?: string | null;
     varianceMinutes?: number | null;
     clockInVarianceMinutes?: number | null;
     clockOutVarianceMinutes?: number | null;

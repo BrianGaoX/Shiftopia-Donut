@@ -22,7 +22,7 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // Mock search results based on the current route
     const path = window.location.pathname;
-    let results = [];
+    let results: any[] = [];
 
     if (path.includes('templates')) {
       results = mockTemplateSearch(term);

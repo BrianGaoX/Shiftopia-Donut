@@ -350,7 +350,7 @@ export const rostersApi = {
             (shift as any).status = 'Assigned';
 
             // Update the roster
-            const { data: updatedRoster, error: updateError } = await supabase
+            const { data: updatedRoster, error: updateError } = await (supabase as any)
                 .from('rosters')
                 .update({ groups: groups as any }) // Cast to any for Json compatibility
                 .eq('id', rosterId)

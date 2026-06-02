@@ -88,11 +88,11 @@ const getGroupColor = (groupType: string | null = null, deptName: string = '') =
     const type = groupType || '';
     const name = deptName.toLowerCase();
 
-    if (type === 'convention_centre' || name.includes('convention')) return 'bg-blue-500/[0.03] border-blue-500/20 text-blue-600 dark:text-blue-400';
-    if (type === 'exhibition_centre' || name.includes('exhibition')) return 'bg-emerald-500/[0.03] border-emerald-500/20 text-emerald-600 dark:text-emerald-400';
-    if (type === 'theatre' || name.includes('theatre')) return 'bg-rose-500/[0.03] border-rose-500/20 text-rose-600 dark:text-rose-400';
+    if (type === 'convention_centre' || name.includes('convention')) return 'bg-blue-600/10 border-blue-500/20 text-blue-400';
+    if (type === 'exhibition_centre' || name.includes('exhibition')) return 'bg-emerald-600/10 border-emerald-500/20 text-emerald-400';
+    if (type === 'theatre' || name.includes('theatre')) return 'bg-rose-600/10 border-rose-500/20 text-rose-400';
 
-    return 'bg-muted/30 border-border text-muted-foreground';
+    return 'bg-slate-800/50 border-slate-700 text-slate-300';
 };
 
 
@@ -228,7 +228,7 @@ export const ViewOffersModal: React.FC<ViewOffersModalProps> = ({
 
                                         {/* Swap comparison */}
                                         <div className="flex items-center gap-3">
-                                            <div className={cn('flex-1 p-4 rounded-2xl border flex flex-col items-center gap-2 text-center', getGroupColor(offer.offered_shift?.roles?.group_type || offer.offered_shift?.roles?.groupType, offer.offered_shift?.departments?.name))}>
+                                            <div className={cn('flex-1 p-4 rounded-2xl border flex flex-col items-center gap-2 text-center', getGroupColor(offer.offered_shift?.group_type || offer.offered_shift?.roles?.group_type || offer.offered_shift?.roles?.groupType, offer.offered_shift?.departments?.name))}>
                                                 <span className="text-[9px] font-black uppercase tracking-widest opacity-60">They Give</span>
                                                 <div className="text-xs font-black text-foreground">
                                                     {offer.offered_shift ? format(new Date(offer.offered_shift.shiftDate), 'EEE, MMM d') : 'N/A'}
@@ -240,7 +240,7 @@ export const ViewOffersModal: React.FC<ViewOffersModalProps> = ({
                                             <div className="h-8 w-8 rounded-full bg-muted border border-border flex items-center justify-center flex-shrink-0">
                                                 <ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />
                                             </div>
-                                            <div className={cn('flex-1 p-4 rounded-2xl border flex flex-col items-center gap-2 text-center', getGroupColor(myShift?.roles?.group_type || myShift?.roles?.groupType, myShift?.departments?.name))}>
+                                            <div className={cn('flex-1 p-4 rounded-2xl border flex flex-col items-center gap-2 text-center', getGroupColor((myShift as any)?.group_type || (myShift as any)?.roles?.group_type || (myShift as any)?.roles?.groupType, (myShift as any)?.departments?.name))}>
                                                 <span className="text-[9px] font-black uppercase tracking-widest opacity-60">You Give</span>
                                                 <div className="text-xs font-black text-foreground">
                                                     {myShift ? format(new Date(myShift.shiftDate), 'EEE, MMM d') : 'N/A'}
@@ -458,7 +458,7 @@ export const ViewOffersModal: React.FC<ViewOffersModalProps> = ({
                                             <div className="flex items-center gap-4 mb-8">
                                                 <div className={cn(
                                                     "flex-1 p-5 rounded-3xl border flex flex-col items-center gap-3",
-                                                    getGroupColor(selectedOffer.offered_shift?.roles?.group_type || selectedOffer.offered_shift?.roles?.groupType, selectedOffer.offered_shift?.departments?.name)
+                                                    getGroupColor(selectedOffer.offered_shift?.group_type || selectedOffer.offered_shift?.roles?.group_type || selectedOffer.offered_shift?.roles?.groupType, selectedOffer.offered_shift?.departments?.name)
                                                 )}>
                                                     <span className="text-[9px] font-black uppercase tracking-widest opacity-60">They Give</span>
                                                     <div className="text-center">
@@ -478,7 +478,7 @@ export const ViewOffersModal: React.FC<ViewOffersModalProps> = ({
 
                                                 <div className={cn(
                                                     "flex-1 p-5 rounded-3xl border flex flex-col items-center gap-3",
-                                                    getGroupColor(myShift?.roles?.group_type || myShift?.roles?.groupType, myShift?.departments?.name)
+                                                    getGroupColor((myShift as any)?.group_type || (myShift as any)?.roles?.group_type || (myShift as any)?.roles?.groupType, (myShift as any)?.departments?.name)
                                                 )}>
                                                     <span className="text-[9px] font-black uppercase tracking-widest opacity-60">You Give</span>
                                                     <div className="text-center">

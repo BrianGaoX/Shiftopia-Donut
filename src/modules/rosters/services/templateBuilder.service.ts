@@ -150,7 +150,7 @@ export async function tryAutoBuildTemplate(
     const { data: rawEvents, error: evErr } = await eventQuery;
     if (evErr) throw new Error(`tryAutoBuildTemplate (events) failed: ${evErr.message}`);
 
-    const events = (rawEvents ?? []) as EventRow[];
+    const events = (rawEvents ?? []) as unknown as EventRow[];
 
     // 2. Evaluate band membership in JS.
     const matchingEvents = events.filter(ev => {

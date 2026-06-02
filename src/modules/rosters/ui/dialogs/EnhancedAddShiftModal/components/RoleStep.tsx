@@ -208,7 +208,7 @@ export const RoleStep: React.FC<RoleStepProps> = ({
                                 <div className="text-sm font-medium text-foreground px-1">
                                     {field.value ? (
                                         employees.find(e => e.id === field.value) ? (
-                                            `${employees.find(e => e.id === field.value).first_name} ${employees.find(e => e.id === field.value).last_name}`
+                                            `${employees.find(e => e.id === field.value)!.first_name} ${employees.find(e => e.id === field.value)!.last_name}`
                                         ) : 'Employee records not found'
                                     ) : 'Unassigned'}
                                 </div>

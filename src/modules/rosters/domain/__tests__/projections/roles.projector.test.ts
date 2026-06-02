@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { projectRoles } from '../../projections/projectors/roles.projector';
 import type { Shift } from '../../shift.entity';
 import type { RoleRecord, LevelRecord } from '../../projections/types';
+import type { WorkerShiftDTO } from '../../projections/worker/protocol';
 
 // ── Factories ─────────────────────────────────────────────────────────────────
 
 let _id = 0;
 function makeShift(overrides: Partial<Shift> = {}): Shift {
   _id++;
-  return {
+  return ({
     id: `shift-${_id}`,
     organization_id: null,
     department_id: 'dept-1',
@@ -98,7 +99,7 @@ function makeShift(overrides: Partial<Shift> = {}): Shift {
       hourly_rate_min: 25,
     },
     ...overrides,
-  };
+  } as unknown as Shift);
 }
 
 const ROLES: RoleRecord[] = [
@@ -119,7 +120,7 @@ describe('projectRoles — level structure', () => {
     const shifts = [
       makeShift({ role_id: 'role-1', remuneration_level_id: 'level-1' }),
     ];
-    const result = projectRoles(shifts, { roles: ROLES, levels: LEVELS });
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[], { roles: ROLES as any, levels: LEVELS as any });
     const lv = result.levels.find(l => l.id === 'level-1');
     expect(lv).toBeDefined();
     expect(lv!.roles.find(r => r.id === 'role-1')).toBeDefined();
@@ -133,13 +134,13 @@ describe('projectRoles — level structure', () => {
         remuneration_levels: { id: 'level-2', level_name: 'Level 1 – Casual', level_number: 1, hourly_rate_min: 15 },
       }),
     ];
-    const result = projectRoles(shifts, { roles: ROLES, levels: LEVELS });
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[], { roles: ROLES as any, levels: LEVELS as any });
     expect(result.levels[0].levelNumber).toBeLessThan(result.levels[1].levelNumber);
   });
 
   it('levels with no shifts are omitted', () => {
     const shifts = [makeShift({ role_id: 'role-1', remuneration_level_id: 'level-1' })];
-    const result = projectRoles(shifts, { roles: ROLES, levels: LEVELS });
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[], { roles: ROLES as any, levels: LEVELS as any });
     // level-2 has no shifts
     expect(result.levels.find(l => l.id === 'level-2')).toBeUndefined();
   });
@@ -150,7 +151,7 @@ describe('projectRoles — unassigned roles', () => {
     const shifts = [
       makeShift({ remuneration_level_id: null, roles: { id: 'role-x', name: 'Runner' } }),
     ];
-    const result = projectRoles(shifts);
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[]);
     expect(result.unassignedRoles).toHaveLength(1);
     expect(result.unassignedRoles[0].name).toBe('Runner');
   });
@@ -162,7 +163,7 @@ describe('projectRoles — shiftsByDate', () => {
       makeShift({ shift_date: '2025-03-15', role_id: 'role-1', remuneration_level_id: 'level-1' }),
       makeShift({ shift_date: '2025-03-16', role_id: 'role-1', remuneration_level_id: 'level-1' }),
     ];
-    const result = projectRoles(shifts, { roles: ROLES, levels: LEVELS });
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[], { roles: ROLES as any, levels: LEVELS as any });
     const lv     = result.levels.find(l => l.id === 'level-1')!;
     const role   = lv.roles.find(r => r.id === 'role-1')!;
     expect(Object.keys(role.shiftsByDate)).toHaveLength(2);
@@ -179,7 +180,7 @@ describe('projectRoles — totalHours / totalCost aggregation', () => {
         roles: { id: 'role-2', name: 'AV Tech' },
       }),
     ];
-    const result = projectRoles(shifts, { roles: ROLES, levels: LEVELS });
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[], { roles: ROLES as any, levels: LEVELS as any });
     const lv = result.levels.find(l => l.id === 'level-1')!;
     expect(lv.totalHours).toBeCloseTo(12); // 8h + 4h
     expect(lv.totalCost).toBeCloseTo(360);  // 8*30 + 4*30
@@ -192,8 +193,8 @@ describe('projectRoles — levelColorClass', () => {
       remuneration_level_id: 'level-9',
       remuneration_levels: { id: 'level-9', level_name: 'Level 9', level_number: 9, hourly_rate_min: 50 },
     });
-    const result = projectRoles([lvShift], {
-      levels: [{ id: 'level-9', level_name: 'Level 9', level_number: 9 }],
+    const result = projectRoles([lvShift] as unknown as WorkerShiftDTO[], {
+      levels: [{ id: 'level-9', level_name: 'Level 9', level_number: 9 }] as any,
     });
     const lv = result.levels.find(l => l.id === 'level-9')!;
     expect(lv.colorClass).toContain('purple');
@@ -206,7 +207,7 @@ describe('projectRoles — stats', () => {
       makeShift({ is_cancelled: false }),
       makeShift({ is_cancelled: true }),
     ];
-    const result = projectRoles(shifts);
+    const result = projectRoles(shifts as unknown as WorkerShiftDTO[]);
     expect(result.stats.totalShifts).toBe(1);
   });
 });

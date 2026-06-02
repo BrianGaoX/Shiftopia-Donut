@@ -52,7 +52,7 @@ export const getRemunerationDisplay = (level: string | number): string => {
 
 // Generate applicant tags based on various criteria
 export const generateApplicantTags = (bid: any, allBids: any[]): { text: string; color: string; tooltip?: string }[] => {
-  const tags = [];
+  const tags: { text: string; color: string; tooltip?: string }[] = [];
   
   // First to apply tag
   if (isFirstApplicant(bid, allBids)) {

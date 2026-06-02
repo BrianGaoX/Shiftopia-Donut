@@ -13,6 +13,7 @@ import {
     UserX,
     Lock,
     ShieldCheck,
+    RotateCcw,
 } from "lucide-react";
 import { ShiftStatusBadge } from "./ShiftStatusBadge";
 import { TimesheetStatusBadge } from "./TimesheetStatusBadge";
@@ -46,6 +47,7 @@ interface TimesheetRowProps {
     onToggleSelect?: () => void;
     onSave?: (id: string, updates: Partial<TimesheetRowType>) => void;
     onMarkNoShow?: (id: string) => void;
+    onOverrideNoShow?: (id: string) => void;
     showDate?: boolean;
 }
 
@@ -56,6 +58,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     onToggleSelect,
     onSave,
     onMarkNoShow,
+    onOverrideNoShow,
     showDate = false,
 }) => {
     /* -- state -------------------------------------------------- */
@@ -104,7 +107,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     }, [entry.date, entry.scheduledEnd]);
 
     const protection = useMemo(() => getProtectionContext(
-        { lifecycle_status: entry.liveStatus },
+        { lifecycle_status: entry.liveStatus as any },
         isPast
     ), [entry.liveStatus, isPast]);
 
@@ -141,7 +144,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
         const end = editedAdjusted.adjustedEnd;
         const unpaidBreak = parseFloat(editedAdjusted.unpaidBreak) || 0;
         const length = calculateHoursBetween(start, end);
-        const netLength = Math.max(0, length - unpaidBreak);
+        const netLength = Math.max(0, length - (unpaidBreak / 60));
         const scheduledHours = calculateHoursBetween(entry.scheduledStart, entry.scheduledEnd);
         const differential = length - scheduledHours;
         return {
@@ -170,7 +173,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
         }
         const length = calculateHoursBetween(entry.adjustedStart, entry.adjustedEnd);
         const unpaidBreak = parseFloat(entry.unpaidBreak) || 0;
-        const netLength = Math.max(0, length - unpaidBreak);
+        const netLength = Math.max(0, length - (unpaidBreak / 60));
         const scheduledHours = calculateHoursBetween(entry.scheduledStart, entry.scheduledEnd);
         const differential = length - scheduledHours;
         return {
@@ -236,10 +239,27 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
 
     const handleSaveAdjusted = () => {
         // Timing validation
-        const { adjustedStart, adjustedEnd } = editedAdjusted;
+        let { adjustedStart, adjustedEnd } = editedAdjusted;
+        
+        // Auto-format "1600" -> "16:00"
+        const formatTimeStr = (t: string) => {
+            if (/^\d{3,4}$/.test(t)) {
+                return t.length === 3 ? `0${t.slice(0, 1)}:${t.slice(1)}` : `${t.slice(0, 2)}:${t.slice(2)}`;
+            }
+            return t;
+        };
+        adjustedStart = formatTimeStr(adjustedStart);
+        adjustedEnd = formatTimeStr(adjustedEnd);
+
         if (adjustedStart && adjustedEnd) {
             const [sh, sm] = adjustedStart.split(':').map(Number);
             const [eh, em] = adjustedEnd.split(':').map(Number);
+            if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) {
+                const msg = 'Invalid time format. Use HH:MM or HHMM.';
+                setTimingError(msg);
+                toast({ title: 'Invalid Times', description: msg, variant: 'destructive' });
+                return;
+            }
             const startMins = sh * 60 + sm;
             let endMins = eh * 60 + em;
             if (endMins < startMins) endMins += 24 * 60; // overnight
@@ -254,8 +274,8 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
 
         const fakeShift = {
             shift_date: String(entry.date),
-            start_time: editedAdjusted.adjustedStart,
-            end_time: editedAdjusted.adjustedEnd,
+            start_time: adjustedStart,
+            end_time: adjustedEnd,
             roles: { name: entry.role },
             unpaid_break_minutes: parseFloat(editedAdjusted.unpaidBreak) || 0,
             scheduled_length_minutes: calculateHoursBetween(entry.scheduledStart, entry.scheduledEnd) * 60,
@@ -265,8 +285,8 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
         const approximatePay = `$${cost.totalCost.toFixed(2)}`;
 
         onSave?.(String(entry.id), {
-            adjustedStart: editedAdjusted.adjustedStart,
-            adjustedEnd: editedAdjusted.adjustedEnd,
+            adjustedStart,
+            adjustedEnd,
             paidBreak: editedAdjusted.paidBreak,
             unpaidBreak: editedAdjusted.unpaidBreak,
             length: calculatedValues.length,
@@ -337,7 +357,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                 {/* Date column (Optional) */}
                 {showDate && (
                     <td className={`${cellClass} font-black text-xs text-primary border-r border-border/30`}>
-                        {entry.date}
+                        {String(entry.date)}
                     </td>
                 )}
 
@@ -713,6 +733,25 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                                 </Button>
                                             </TooltipTrigger>
                                             <TooltipContent>Mark as No-Show</TooltipContent>
+                                        </Tooltip>
+                                    </TooltipProvider>
+                                )}
+
+                                {/* Override No-Show */}
+                                {entry.attendanceStatus === 'no_show' && !readOnly && onOverrideNoShow && (
+                                    <TooltipProvider>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={() => onOverrideNoShow(String(entry.id))}
+                                                    className="h-8 w-8 rounded-xl text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                                                >
+                                                    <RotateCcw size={16} />
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>Override No-Show</TooltipContent>
                                         </Tooltip>
                                     </TooltipProvider>
                                 )}

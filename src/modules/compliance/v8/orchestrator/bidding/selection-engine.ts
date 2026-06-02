@@ -56,8 +56,8 @@ const MINUTES_PER_DAY = 1440;
 // =============================================================================
 
 function absoluteEnd(shift: V8OrchestratorShift): number {
-    const s = toAbsoluteMinutes(shift.shift_date, shift.start_time);
-    const e = toAbsoluteMinutes(shift.shift_date, shift.end_time);
+    const s = toAbsoluteMinutes(shift.date, shift.start_time);
+    const e = toAbsoluteMinutes(shift.date, shift.end_time);
     return e <= s ? e + MINUTES_PER_DAY : e;
 }
 
@@ -70,11 +70,11 @@ function hasStructuralConflict(
     schedule:         V8OrchestratorShift[],
     rest_gap_minutes: number,
 ): boolean {
-    const cStart = toAbsoluteMinutes(candidate.shift_date, candidate.start_time);
+    const cStart = toAbsoluteMinutes(candidate.date, candidate.start_time);
     const cEnd   = absoluteEnd(candidate);
 
     for (const s of schedule) {
-        const sStart = toAbsoluteMinutes(s.shift_date, s.start_time);
+        const sStart = toAbsoluteMinutes(s.date, s.start_time);
         const sEnd   = absoluteEnd(s);
 
         // Time overlap
@@ -195,11 +195,11 @@ export function selectBids(
 
         const result = runV8Orchestrator(input, { stage: config.compliance_stage });
 
-        if (result.status === 'BLOCKING') {
+        if (result.overall_status === 'BLOCKING') {
             rejected.push({
                 bid_id:    bid.bid_id,
-                reason:    `Compliance check against current selection failed: ${result.rule_hits.filter(h => h.severity === 'BLOCKING').map(h => h.rule_id).join(', ')}.`,
-                rule_hits: result.rule_hits,
+                reason:    `Compliance check against current selection failed: ${result.hits.filter(h => h.status === 'BLOCKING').map(h => h.rule_id).join(', ')}.`,
+                rule_hits: result.hits,
             });
             // Track which shifts have rejected bids (for unfilled_shifts reporting)
             if (!seen_shifts_bids.has(bid.shift_id)) seen_shifts_bids.set(bid.shift_id, new Set());
@@ -212,7 +212,7 @@ export function selectBids(
             shift_id:          bid.shift_id,
             bid_id:            bid.bid_id,
             employee_id:       bid.employee_id,
-            compliance_status: result.status,
+            compliance_status: result.overall_status,
         });
 
         filled_shifts.add(bid.shift_id);
@@ -223,8 +223,8 @@ export function selectBids(
     // ── Unfilled shifts: shifts that had bids but none were accepted ──────────
     const all_bid_shift_ids = new Set(evaluated.map(eb => eb.bid.shift_id));
     const unfilled_shifts   = shifts
-        .filter(s => all_bid_shift_ids.has(s.shift_id) && !filled_shifts.has(s.shift_id))
-        .map(s => s.shift_id);
+        .filter(s => all_bid_shift_ids.has(s.id) && !filled_shifts.has(s.id))
+        .map(s => s.id);
 
     return { selected, rejected, unfilled_shifts };
 }

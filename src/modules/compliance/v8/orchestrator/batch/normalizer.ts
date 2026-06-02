@@ -248,7 +248,7 @@ export function normalizeOperations(
     operations: BatchOperation[],
     base_state:  BatchBaseState,
 ): NormalizationResult {
-    const catalog     = new Map<V8ShiftId, V8OrchestratorShift>(base_state.shifts.map(s => [s.shift_id, s]));
+    const catalog     = new Map<V8ShiftId, V8OrchestratorShift>(base_state.shifts.map(s => [s.id, s]));
     const employeeSet = new Set<V8EmpId>(base_state.employees.map(e => e.employee_id));
 
     // 1. Structural validation

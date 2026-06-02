@@ -110,7 +110,7 @@ const PerformanceSection: React.FC<PerformanceSectionProps> = ({ employeeId, qua
     const m = fetchedMetrics ? { ...EMPTY_METRICS, ...fetchedMetrics } : EMPTY_METRICS;
 
     const assignedCount = m.shifts_assigned || 0;
-    const offeredCount = m.shifts_offered;
+    const offeredCount = (m as any).shifts_offered;
 
     const hasAssigned = assignedCount > 0;
     const hasOffered = offeredCount > 0;
@@ -246,7 +246,7 @@ const PerformanceSection: React.FC<PerformanceSectionProps> = ({ employeeId, qua
                                 <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Summary Metrics</span>
                             </div>
                             <div className="flex flex-wrap justify-start gap-4 px-2">
-                                <CountPill label="No. of Shifts Offered" value={m.shifts_offered} />
+                                <CountPill label="No. of Shifts Offered" value={(m as any).shifts_offered} />
                                 <CountPill label="No. of Shifts Currently Assigned" value={m.shifts_assigned} />
                                 <CountPill label="No. of Times Emergency Assigned" value={m.emergency_assignments} />
                             </div>

@@ -183,7 +183,7 @@ export function checkBulkRestGaps(
                     shiftId: prevSegment.shiftId,
                     otherV8ShiftId: segment.shiftId,
                     gapHours: effectiveGap,
-                    requiredHours: MIN_REST_HOURS,
+                    requiredHours: minRestHours,
                     violationType: 'after',
                     shiftDate: prevSegment.originalDate,
                     shiftTime: `${prevSegment.originalStart} - ${prevSegment.originalEnd}`
@@ -194,7 +194,7 @@ export function checkBulkRestGaps(
                     shiftId: segment.shiftId,
                     otherV8ShiftId: prevSegment.shiftId,
                     gapHours: effectiveGap,
-                    requiredHours: MIN_REST_HOURS,
+                    requiredHours: minRestHours,
                     violationType: 'before',
                     shiftDate: segment.originalDate,
                     shiftTime: `${segment.originalStart} - ${segment.originalEnd}`

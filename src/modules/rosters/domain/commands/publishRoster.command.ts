@@ -44,12 +44,13 @@ export async function executePublishRoster(
         }
 
         // Get roster details to find associated shifts
-        const { data: roster, error: fetchError } = await supabase
+        const { data: rosterData, error: fetchError } = await supabase
             .from('rosters')
-            .select('department_id, sub_department_id, date')
+            .select('department_id, sub_department_id, start_date')
             .eq('id', rosterId)
             .single();
 
+        const roster = rosterData as any;
         if (fetchError || !roster) {
             return { success: false, error: 'Could not fetch roster details' };
         }
@@ -63,7 +64,7 @@ export async function executePublishRoster(
             })
             .eq('department_id', roster.department_id)
             .eq('sub_department_id', roster.sub_department_id)
-            .eq('shift_date', roster.date)
+            .eq('shift_date', roster.start_date)
             .eq('is_draft', true)
             .select('id');
 

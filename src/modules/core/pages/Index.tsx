@@ -70,12 +70,14 @@ const scaleIn = {
 const AnimatedSection: React.FC<{
   children: React.ReactNode;
   className?: string;
-}> = ({ children, className }) => {
+  id?: string;
+}> = ({ children, className, id }) => {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: '-100px' });
 
   return (
     <motion.section
+      id={id}
       ref={ref}
       initial="hidden"
       animate={isInView ? 'visible' : 'hidden'}

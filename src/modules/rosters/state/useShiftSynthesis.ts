@@ -54,7 +54,7 @@ export function useGenerateShifts() {
         subDepartmentId: input.subDepartmentId,
         rosterId: input.rosterId,
         shiftDate: input.shiftDate,
-        tensorCount: input.demandTensors.length,
+        tensorCount: input.demandTensors?.length ?? 0,
       });
 
       const run = await synthesisRunsQueries.createRun({

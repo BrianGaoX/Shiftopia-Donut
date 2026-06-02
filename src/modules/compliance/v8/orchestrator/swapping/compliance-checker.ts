@@ -28,7 +28,7 @@
 import type { SwapSimulation, SwapComplianceResult, SwapConfig } from './types';
 import type { V8EmpId, V8EmployeeContext, V8OrchestratorInput } from '../types';
 import { runV8Orchestrator }  from '../index';
-import { combineSwapResults }  from '../aggregator';
+import { combineV8SwapResults }  from '../aggregator';
 
 // =============================================================================
 // PER-SWAP CHECKER
@@ -49,11 +49,11 @@ function checkSwapCompliance(
         employee_context:  emp_a,
         // Existing shifts = A's ORIGINAL schedule (before swap).
         // The candidate_changes delta captures exactly what changes.
-        existing_shifts:   sim.a_new_shifts.filter(s => s.shift_id !== sim.shift_y.shift_id)
+        existing_shifts:   sim.a_new_shifts.filter(s => s.id !== sim.shift_y.id)
                             .concat([sim.shift_x]),    // reconstruct original A
         candidate_changes: {
             add_shifts:    [sim.shift_y],              // A receives shift_Y
-            remove_shifts: [sim.shift_x.shift_id],     // A gives shift_X
+            remove_shifts: [sim.shift_x.id],           // A gives shift_X
         },
         mode:           'SIMULATED',
         operation_type: 'SWAP',
@@ -66,11 +66,11 @@ function checkSwapCompliance(
     const input_b: V8OrchestratorInput = {
         employee_id:       sim.request.employee_b_id,
         employee_context:  emp_b,
-        existing_shifts:   sim.b_new_shifts.filter(s => s.shift_id !== sim.shift_x.shift_id)
+        existing_shifts:   sim.b_new_shifts.filter(s => s.id !== sim.shift_x.id)
                             .concat([sim.shift_y]),    // reconstruct original B
         candidate_changes: {
             add_shifts:    [sim.shift_x],              // B receives shift_X
-            remove_shifts: [sim.shift_y.shift_id],     // B gives shift_Y
+            remove_shifts: [sim.shift_y.id],           // B gives shift_Y
         },
         mode:           'SIMULATED',
         operation_type: 'SWAP',
@@ -81,7 +81,7 @@ function checkSwapCompliance(
     const result_a = runV8Orchestrator(input_a, { stage: config.compliance_stage });
     const result_b = runV8Orchestrator(input_b, { stage: config.compliance_stage });
 
-    const { status } = combineSwapResults(result_a, result_b);
+    const { status } = combineV8SwapResults(result_a, result_b);
 
     return {
         swap_id:         sim.swap_id,

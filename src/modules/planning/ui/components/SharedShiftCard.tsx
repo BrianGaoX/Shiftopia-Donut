@@ -118,7 +118,7 @@ export const SharedShiftCard = forwardRef<HTMLDivElement, SharedShiftCardProps>(
     estimatedPay,
 }, ref) => {
     const protection = React.useMemo(() => getProtectionContext(
-        { lifecycle_status: lifecycleStatus },
+        { lifecycle_status: lifecycleStatus as 'Draft' | 'Published' | 'InProgress' | 'Completed' | 'Cancelled' },
         isPast
     ), [lifecycleStatus, isPast]);
 
@@ -257,7 +257,15 @@ export const SharedShiftCard = forwardRef<HTMLDivElement, SharedShiftCardProps>(
                         <DataRow label="Shift Date" value={shiftDate} emphasis />
                         <DataRow label="Scheduled" value={`${startTime} – ${endTime}`} emphasis />
                         <DataRow label="Breaks" value={`Paid ${paidBreak}m · Unpaid ${unpaidBreak}m`} />
-                        <DataRow label="Net Length" value={`${(netLength / 60).toFixed(1)} Hours`} accentColor={theme.accent} />
+                        <DataRow 
+                            label="Net Length" 
+                            value={(() => {
+                                const h = Math.floor(netLength / 60);
+                                const m = Math.round(netLength % 60);
+                                return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+                            })()} 
+                            accentColor={theme.accent} 
+                        />
                         
                         {(clockIn || clockOut || adjustedStart || adjustedEnd) && (
                             <div className="pt-1.5 mt-1.5 border-t border-foreground/[0.03] space-y-0">
@@ -388,7 +396,13 @@ export const SharedShiftCard = forwardRef<HTMLDivElement, SharedShiftCardProps>(
                         <span className="font-black font-mono">Paid {paidBreak}m · Unpaid {unpaidBreak}m</span>
                     </div>
                     <span className="text-border">|</span>
-                    <span className="text-primary font-black font-mono">Net Length: {(netLength / 60).toFixed(1)}h</span>
+                    <span className="text-primary font-black font-mono">
+                        Net Length: {(() => {
+                            const h = Math.floor(netLength / 60);
+                            const m = Math.round(netLength % 60);
+                            return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+                        })()}
+                    </span>
                 </div>
 
                 {estimatedPay && (

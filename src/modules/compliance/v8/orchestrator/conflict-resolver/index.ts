@@ -60,7 +60,7 @@ function buildCatalogs(input: ConflictResolverInput): {
     existing_shifts_map: Map<V8EmpId, V8OrchestratorShift[]>;
 } {
     const shift_catalog = new Map<V8ShiftId, V8OrchestratorShift>(
-        input.base_state.shifts.map(s => [s.shift_id, s]),
+        input.base_state.shifts.map(s => [s.id, s]),
     );
     const employee_catalog = new Map<V8EmpId, V8EmployeeContext>(
         input.base_state.employees.map(e => [e.employee_id, e]),

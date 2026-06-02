@@ -1,0 +1,9 @@
+{
+  "models": {
+    "Usher": "v1.0",
+    "Security": "v1.0",
+    "Food Staff": "v1.0",
+    "Supervisor": "v1.0"
+  },
+  "encoders": "v1.0"
+}

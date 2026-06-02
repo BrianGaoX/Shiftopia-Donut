@@ -960,7 +960,7 @@ export const shiftsQueries = {
 
             // 2. Apply identity filter based on events if available, otherwise fallback to column matching
             if (eventData && eventData.length > 0) {
-                const shiftIds = [...new Set(eventData.map(e => e.shift_id))];
+                const shiftIds = [...new Set(eventData.map(e => e.shift_id))].filter((id): id is string => id !== null);
                 query = query.in('id', shiftIds);
             } else if (!eventError) {
                 // If query succeeded but returned no events, and we aren't in error,

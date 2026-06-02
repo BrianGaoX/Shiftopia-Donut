@@ -5065,6 +5065,7 @@ export type Database = {
     Enums: {
       access_level: "alpha" | "beta" | "gamma" | "delta" | "epsilon" | "zeta"
       actor_type: "USER" | "SYSTEM"
+      audit_action: "create" | "update" | "delete" | "publish" | "unpublish"
       assignment_method: "manual" | "template" | "bid" | "trade" | "auto"
       assignment_status:
         | "assigned"

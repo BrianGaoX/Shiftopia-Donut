@@ -37,6 +37,7 @@ export interface HardValidationInput {
     existing_shifts?: ShiftTimeRange[];  // Employee's existing shifts
     current_time?: Date;          // For testing (defaults to now)
     is_template?: boolean;        // Skip date/time validation for templates
+    shift_id?: string;            // For edit mode - exclude self
 }
 
 // =============================================================================
@@ -88,7 +89,14 @@ function validateNoOverlap(input: HardValidationInput): HardValidationError | nu
         shift_date: input.shift_date
     };
 
+    const excludeId = input.shift_id;
+
     for (const existing of input.existing_shifts) {
+        // Skip self in edit mode
+        if (excludeId && (existing.shift_id === excludeId || (existing as any).id === excludeId)) {
+            continue;
+        }
+
         if (doShiftsOverlap(candidateShift, existing)) {
             return {
                 field: 'start_time',
@@ -155,11 +163,14 @@ export function runHardValidation(input: HardValidationInput): HardValidationRes
     const errors: HardValidationError[] = [];
 
     // Run all rules and collect errors
-    const pastDateError = validateNotPastDate(input);
-    if (pastDateError) errors.push(pastDateError);
+    // Past date and future time errors are skipped for existing shifts (edit mode)
+    if (!input.shift_id) {
+        const pastDateError = validateNotPastDate(input);
+        if (pastDateError) errors.push(pastDateError);
 
-    const futureTimeError = validateFutureTime(input);
-    if (futureTimeError) errors.push(futureTimeError);
+        const futureTimeError = validateFutureTime(input);
+        if (futureTimeError) errors.push(futureTimeError);
+    }
 
     const rangeError = validateTimeRange(input);
     if (rangeError) errors.push(rangeError);

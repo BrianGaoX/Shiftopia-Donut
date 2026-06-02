@@ -77,11 +77,11 @@ export const shiftsCommands = {
 
         const { data, error } = await supabase.rpc('sm_move_shift', {
             p_shift_id: shiftId,
-            p_group_type: params.groupType ?? null,
-            p_sub_group_name: params.subGroupName ?? null,
-            p_shift_group_id: safeUuid(params.shiftGroupId) ?? null,
-            p_roster_subgroup_id: safeUuid(params.rosterSubgroupId) ?? null,
-            p_shift_date: params.shiftDate ?? null,
+            p_group_type: params.groupType ?? undefined,
+            p_sub_group_name: params.subGroupName ?? undefined,
+            p_shift_group_id: safeUuid(params.shiftGroupId) ?? undefined,
+            p_roster_subgroup_id: safeUuid(params.rosterSubgroupId) ?? undefined,
+            p_shift_date: params.shiftDate ?? undefined,
             p_user_id: user.id,
         });
 
@@ -321,6 +321,37 @@ export const shiftsCommands = {
         if (shiftIds.length === 0) return [];
 
         const user = await requireUser();
+
+        // Fetch current assignment state before clearing it so the audit log
+        // records which employee was removed from each shift.  Unassign never
+        // adds compliance violations (it only removes them), so this is purely
+        // observability — the mutation is not blocked.
+        const { data: preState } = await supabase
+            .from('shifts')
+            .select('id, assigned_employee_id, shift_date, start_time, end_time')
+            .in('id', shiftIds)
+            .is('deleted_at', null);
+
+        const removedAssignments = (preState ?? [])
+            .filter((s: any) => s.assigned_employee_id !== null)
+            .map((s: any) => ({
+                shift_id:             s.id,
+                removed_employee_id:  s.assigned_employee_id,
+                shift_date:           s.shift_date,
+                start_time:           s.start_time,
+                end_time:             s.end_time,
+            }));
+
+        // Structured audit log — consumed by downstream observability tooling.
+        // Unassign is never blocked (removing a shift can only reduce violations),
+        // but every removal must be observable for compliance audit trails.
+        console.info(JSON.stringify({
+            operation:           'bulk_unassign',
+            actor_id:            user.id,
+            shift_ids:           shiftIds,
+            removed_assignments: removedAssignments,
+            timestamp:           new Date().toISOString(),
+        }));
 
         const { data, error } = await supabase
             .from('shifts')

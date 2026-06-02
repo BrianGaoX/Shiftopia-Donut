@@ -58,8 +58,10 @@ export interface UserProfileProps {
     name: string;
     role: string;
     avatar?: string;
+    email?: string;
   } | null;
   isCollapsed?: boolean;
+  handleLogout?: () => void;
 }
 
 export interface LogoSectionProps {

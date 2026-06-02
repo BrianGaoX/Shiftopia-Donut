@@ -43,7 +43,8 @@ const AnalysisPage: React.FC = () => {
     );
   }
 
-  const data = liveData || {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any = (liveData as any) || {
     title: `Analysis for ${metricId.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}`,
     summary: 'Detailed analysis for this metric is not yet available.',
     details: 'Please check back later for a full breakdown, historical trends, and actionable insights related to this performance indicator.',

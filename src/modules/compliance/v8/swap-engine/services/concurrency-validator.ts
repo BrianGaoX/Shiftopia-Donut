@@ -107,7 +107,7 @@ export async function validateBeforeCommit(
         throw new ConcurrencyValidationError({
             feasible: false,
             violations: ['One or both shifts could not be found in the database.'],
-            solverResult: { feasible: false, violations: [], warnings: [], all_results: [], scenario: null as any },
+            solverResult: { feasible: false, violations: [], warnings: [], all_results: [], solve_time_ms: 0, scenario: null as any },
             revalidatedAt: new Date().toISOString(),
         });
     }
@@ -119,7 +119,7 @@ export async function validateBeforeCommit(
         throw new ConcurrencyValidationError({
             feasible: false,
             violations: ['Could not resolve shift data for one or both parties.'],
-            solverResult: { feasible: false, violations: [], warnings: [], all_results: [], scenario: null as any },
+            solverResult: { feasible: false, violations: [], warnings: [], all_results: [], solve_time_ms: 0, scenario: null as any },
             revalidatedAt: new Date().toISOString(),
         });
     }
@@ -140,10 +140,13 @@ export async function validateBeforeCommit(
     const offererSchedule   = scheduleMap.get(input.offererId)   ?? [];
 
     // ── 4. Re-run the constraint solver ─────────────────────────────────────
-    const toTimeRange = (s: any) => ({
-        shift_date:           s.shift_date,
+    const toRosterShift = (s: any) => ({
+        id:                   s.id ?? '__unknown__',
+        date:                 s.shift_date ?? s.date ?? '',
+        shift_date:           s.shift_date ?? s.date ?? '',
         start_time:           s.start_time,
         end_time:             s.end_time,
+        is_ordinary_hours:    s.is_ordinary_hours ?? true,
         unpaid_break_minutes: s.unpaid_break_minutes ?? 0,
     });
 
@@ -151,14 +154,14 @@ export async function validateBeforeCommit(
         partyA: {
             employee_id:    input.requesterId,
             name:           'Requester',
-            current_shifts: requesterSchedule.map(s => ({ ...toTimeRange(s), id: s.id })),
-            shift_to_give:  { ...toTimeRange(requesterShift), id: requesterShift.id },
+            current_shifts: requesterSchedule.map(toRosterShift),
+            shift_to_give:  toRosterShift(requesterShift),
         },
         partyB: {
             employee_id:    input.offererId,
             name:           'Offerer',
-            current_shifts: offererSchedule.map(s => ({ ...toTimeRange(s), id: s.id })),
-            shift_to_give:  { ...toTimeRange(offererShift), id: offererShift.id },
+            current_shifts: offererSchedule.map(toRosterShift),
+            shift_to_give:  toRosterShift(offererShift),
         },
     });
 

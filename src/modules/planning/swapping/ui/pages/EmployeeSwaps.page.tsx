@@ -43,7 +43,9 @@ import {
     ThumbsUp,
     CheckCircle,
     Minus,
-    ChevronRight
+    ChevronRight,
+    ListChecks,
+    Check
 } from 'lucide-react';
 import { cn } from '@/modules/core/lib/utils';
 import { useToast } from '@/modules/core/hooks/use-toast';
@@ -54,7 +56,8 @@ import { format, differenceInMinutes, parse } from 'date-fns';
 import { SYDNEY_TZ, parseZonedDateTime, formatInTimezone } from '@/modules/core/lib/date.utils';
 import { ViewOffersModal } from '../components/ViewOffersModal';
 import { UnifiedSwapModal } from '../components/UnifiedSwapModal';
-import { Drawer, DrawerContent, DrawerTitle, DrawerClose } from '@/modules/core/ui/primitives/drawer';
+import { SwapSelectionToolbar } from '../components/SwapSelectionToolbar';
+import { Drawer, DrawerContent, DrawerTitle, DrawerDescription, DrawerClose } from '@/modules/core/ui/primitives/drawer';
 import { useQuery } from '@tanstack/react-query';
 import { GoldStandardHeader } from '@/modules/core/ui/components/GoldStandardHeader';
 import { useScopeFilter } from '@/platform/auth/useScopeFilter';
@@ -99,6 +102,16 @@ function getCardBg(groupType: string | null | undefined, dept: string): string {
     if (groupType === 'theatre' || dept.toLowerCase().includes('theatre'))
         return `${base} dept-card-glass-theatre`;
     return `${base} dept-card-glass-default`;
+}
+
+function getRowClass(groupType: string | null | undefined, dept: string): string {
+    if (groupType === 'convention_centre' || dept.toLowerCase().includes('convention'))
+        return 'dept-row-convention';
+    if (groupType === 'exhibition_centre' || dept.toLowerCase().includes('exhibition'))
+        return 'dept-row-exhibition';
+    if (groupType === 'theatre' || dept.toLowerCase().includes('theatre'))
+        return 'dept-row-theatre';
+    return 'dept-row-default';
 }
 
 // Status configuration with icons, colors, and labels
@@ -346,9 +359,35 @@ export const EmployeeSwapsPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState<TabType>('available-swaps');
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [priorityFilter, setPriorityFilter] = useState<ShiftUrgency | 'all'>('all');
-    const [startDate, setStartDate] = useState<Date>(() => new Date());
-    const [endDate, setEndDate]     = useState<Date>(() => new Date());
+    const [startDate, setStartDate] = useState<Date>(() => {
+        const saved = localStorage.getItem('swaps_filter_start_date');
+        if (saved) {
+            const parsed = new Date(saved);
+            if (!isNaN(parsed.getTime())) return parsed;
+        }
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        return d;
+    });
+    const [endDate, setEndDate]     = useState<Date>(() => {
+        const saved = localStorage.getItem('swaps_filter_end_date');
+        if (saved) {
+            const parsed = new Date(saved);
+            if (!isNaN(parsed.getTime())) return parsed;
+        }
+        const d = new Date();
+        d.setDate(d.getDate() + 30);
+        return d;
+    });
     const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+
+    React.useEffect(() => {
+        localStorage.setItem('swaps_filter_start_date', startDate.toISOString());
+    }, [startDate]);
+
+    React.useEffect(() => {
+        localStorage.setItem('swaps_filter_end_date', endDate.toISOString());
+    }, [endDate]);
 
     // Modal State
     const [offerSwapTarget, setOfferSwapTarget] = useState<ShiftSwap | null>(null);
@@ -365,12 +404,13 @@ export const EmployeeSwapsPage: React.FC = () => {
 
     // Selection State
     const [selectedSwapIds, setSelectedSwapIds] = useState<string[]>([]);
+    const [isBulkModeActive, setIsBulkModeActive] = useState<boolean>(false);
     const [drawerSwap, setDrawerSwap] = useState<{ swap: ShiftSwap; tab: TabType } | null>(null);
 
-    // Clear selection when switching tabs
+    // Clear selection when switching tabs or exiting bulk mode
     React.useEffect(() => {
         setSelectedSwapIds([]);
-    }, [activeTab]);
+    }, [activeTab, isBulkModeActive]);
 
     // Handle refresh
     const handleRefresh = useCallback(async () => {
@@ -630,19 +670,17 @@ export const EmployeeSwapsPage: React.FC = () => {
                         </div>
                     }
                     topContent={
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                checked={selectedSwapIds.includes(swap.id)}
-                                onChange={() => handleSelectSwap(swap.id, `Offer: ${shift?.roles?.name || 'Shift'}`)}
-                                className="h-4 w-4 rounded border-border/50 text-indigo-600 focus:ring-indigo-500 accent-indigo-500 cursor-pointer"
-                            />
-                            {selectedSwapIds.includes(swap.id) && (
-                                <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider animate-in fade-in slide-in-from-left-1">
-                                    Selected
-                                </span>
-                            )}
-                        </div>
+                        isBulkModeActive ? (
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedSwapIds.includes(swap.id)}
+                                    onChange={() => handleSelectSwap(swap.id, `Offer: ${shift?.roles?.name || 'Shift'}`)}
+                                    className="h-4 w-4 rounded border-border/50 text-indigo-600 focus:ring-indigo-500 accent-indigo-500 cursor-pointer"
+                                />
+                                <span className="text-[10px] text-muted-foreground/60 font-bold uppercase tracking-wider">Select</span>
+                            </div>
+                        ) : undefined
                     }
                 />
             </motion.div>
@@ -742,19 +780,17 @@ export const EmployeeSwapsPage: React.FC = () => {
                     </div>
                 }
                     topContent={
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                checked={selectedSwapIds.includes(swap.id)}
-                                onChange={() => handleSelectSwap(swap.id, `Swap: ${shift?.roles?.name || 'Shift'}`)}
-                                className="h-4 w-4 rounded border-border/50 text-indigo-600 focus:ring-indigo-500 accent-indigo-500 cursor-pointer"
-                            />
-                            {selectedSwapIds.includes(swap.id) && (
-                                <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider animate-in fade-in slide-in-from-left-1">
-                                    Selected
-                                </span>
-                            )}
-                        </div>
+                        isBulkModeActive ? (
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedSwapIds.includes(swap.id)}
+                                    onChange={() => handleSelectSwap(swap.id, `Swap: ${shift?.roles?.name || 'Shift'}`)}
+                                    className="h-4 w-4 rounded border-border/50 text-indigo-600 focus:ring-indigo-500 accent-indigo-500 cursor-pointer"
+                                />
+                                <span className="text-[10px] text-muted-foreground/60 font-bold uppercase tracking-wider">Select</span>
+                            </div>
+                        ) : undefined
                     }
                 />
             </motion.div>
@@ -815,20 +851,18 @@ export const EmployeeSwapsPage: React.FC = () => {
                     )
                 }
                 topContent={
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            checked={selectedSwapIds.includes(swap.id)}
-                            onChange={() => handleSelectSwap(swap.id, `Market: ${shift?.roles?.name || 'Shift'}`)}
-                            className="h-4 w-4 rounded border-border/50 text-indigo-600 focus:ring-indigo-500 accent-indigo-500 cursor-pointer"
-                            disabled={hasOffered}
-                        />
-                        {selectedSwapIds.includes(swap.id) && (
-                            <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider animate-in fade-in slide-in-from-left-1">
-                                Selected
-                            </span>
-                        )}
-                    </div>
+                    isBulkModeActive ? (
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={selectedSwapIds.includes(swap.id)}
+                                onChange={() => handleSelectSwap(swap.id, `Market: ${shift?.roles?.name || 'Shift'}`)}
+                                className="h-4 w-4 rounded border-border/50 text-indigo-600 focus:ring-indigo-500 accent-indigo-500 cursor-pointer"
+                                disabled={hasOffered}
+                            />
+                            <span className="text-[10px] text-muted-foreground/60 font-bold uppercase tracking-wider">Select</span>
+                        </div>
+                    ) : undefined
                 }
             />
             </motion.div>
@@ -855,6 +889,8 @@ export const EmployeeSwapsPage: React.FC = () => {
             (shift?.group_type === 'exhibition_centre' || (shift?.departments?.name || '').toLowerCase().includes('exhibition')) ? 'exhibition' :
             (shift?.group_type === 'theatre' || (shift?.departments?.name || '').toLowerCase().includes('theatre')) ? 'theatre' : 'default';
 
+        const isSelected = selectedSwapIds.includes(swap.id);
+
         return (
             <motion.div
                 key={swap.id}
@@ -863,30 +899,69 @@ export const EmployeeSwapsPage: React.FC = () => {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
-                className="border-b border-border/40 last:border-0"
+                className={cn(
+                    "border-b border-border/40 last:border-0",
+                    isBulkModeActive ? "flex items-center" : ""
+                )}
             >
-                <SharedShiftCard
-                    variant="default"
-                    isFlat={true}
-                    organization={shift?.organizations?.name || 'ICC Sydney'}
-                    department={shift?.departments?.name || 'Department'}
-                    subGroup={shift?.sub_departments?.name}
-                    role={shift?.roles?.name || 'Shift'}
-                    shiftDate={shift?.start_at ? formatInTimezone(new Date(shift.start_at), shift.tz_identifier || SYDNEY_TZ, 'EEE d MMM') : (shift?.shift_date ? format(parse(shift.shift_date, 'yyyy-MM-dd', new Date()), 'EEE d MMM') : '—')}
-                    startTime={shift?.start_at ? formatInTimezone(new Date(shift.start_at), shift.tz_identifier || SYDNEY_TZ, 'HH:mm') : (shift?.start_time ? shift.start_time.slice(0, 5) : '—')}
-                    endTime={shift?.end_at ? formatInTimezone(new Date(shift.end_at), shift.tz_identifier || SYDNEY_TZ, 'HH:mm') : (shift?.end_time ? shift.end_time.slice(0, 5) : '—')}
-                    netLength={shift?.net_length_minutes || shift?.net_length || 0}
-                    paidBreak={shift?.paid_break_minutes || 0}
-                    unpaidBreak={shift?.unpaid_break_minutes || 0}
-                    timerText={isExpired ? 'Closed' : timerText}
-                    isExpired={isExpired}
-                    urgency={priority}
-                    groupVariant={groupVariant}
-                    shiftData={{
-                        lifecycle_status: swap.status,
-                    }}
-                    onClick={() => setDrawerSwap({ swap, tab })}
-                />
+                {isBulkModeActive && (
+                    <button
+                        type="button"
+                        onClick={e => {
+                            e.stopPropagation();
+                            if (tab !== 'available-swaps' || !hasOffered) {
+                                handleSelectSwap(swap.id, `${tab === 'my-offers' ? 'Offer' : 'Swap'}: ${shift?.roles?.name || 'Shift'}`);
+                            }
+                        }}
+                        disabled={tab === 'available-swaps' && hasOffered}
+                        aria-label={isSelected ? 'Deselect swap' : 'Select swap'}
+                        aria-pressed={isSelected}
+                        className="pl-3 pr-1 h-full flex items-center justify-center shrink-0 disabled:opacity-40"
+                    >
+                        <span
+                            className={cn(
+                                'h-5 w-5 rounded-md border-2 flex items-center justify-center transition-colors',
+                                isSelected
+                                    ? 'bg-[#7b61ff] border-[#7b61ff]'
+                                    : 'border-border/70 bg-background/60'
+                            )}
+                        >
+                            {isSelected && <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
+                        </span>
+                    </button>
+                )}
+                <div className="flex-1 min-w-0">
+                    <SharedShiftCard
+                        variant="default"
+                        isFlat={true}
+                        organization={shift?.organizations?.name || 'ICC Sydney'}
+                        department={shift?.departments?.name || 'Department'}
+                        subGroup={shift?.sub_departments?.name}
+                        role={shift?.roles?.name || 'Shift'}
+                        shiftDate={shift?.start_at ? formatInTimezone(new Date(shift.start_at), shift.tz_identifier || SYDNEY_TZ, 'EEE d MMM') : (shift?.shift_date ? format(parse(shift.shift_date, 'yyyy-MM-dd', new Date()), 'EEE d MMM') : '—')}
+                        startTime={shift?.start_at ? formatInTimezone(new Date(shift.start_at), shift.tz_identifier || SYDNEY_TZ, 'HH:mm') : (shift?.start_time ? shift.start_time.slice(0, 5) : '—')}
+                        endTime={shift?.end_at ? formatInTimezone(new Date(shift.end_at), shift.tz_identifier || SYDNEY_TZ, 'HH:mm') : (shift?.end_time ? shift.end_time.slice(0, 5) : '—')}
+                        netLength={shift?.net_length_minutes || shift?.net_length || 0}
+                        paidBreak={shift?.paid_break_minutes || 0}
+                        unpaidBreak={shift?.unpaid_break_minutes || 0}
+                        timerText={isExpired ? 'Closed' : timerText}
+                        isExpired={isExpired}
+                        urgency={priority}
+                        groupVariant={groupVariant}
+                        shiftData={{
+                            lifecycle_status: swap.status,
+                        }}
+                        onClick={() => {
+                            if (isBulkModeActive) {
+                                if (tab !== 'available-swaps' || !hasOffered) {
+                                    handleSelectSwap(swap.id, `${tab === 'my-offers' ? 'Offer' : 'Swap'}: ${shift?.roles?.name || 'Shift'}`);
+                                }
+                            } else {
+                                setDrawerSwap({ swap, tab });
+                            }
+                        }}
+                    />
+                </div>
             </motion.div>
         );
     };
@@ -910,17 +985,68 @@ export const EmployeeSwapsPage: React.FC = () => {
                 }}
                 onRefresh={handleRefresh}
                 isLoading={isLoading || isRefreshing}
+                subFunctionBar={isBulkModeActive ? (
+                    <SwapSelectionToolbar
+                        selectedIds={selectedSwapIds}
+                        visibleSwaps={
+                            activeTab === 'available-swaps' ? filteredAvailableSwaps :
+                            activeTab === 'my-offers' ? filteredMyOffers : filteredMySwaps
+                        }
+                        onSelectAllVisible={(ids) => setSelectedSwapIds(ids)}
+                        onClear={() => setSelectedSwapIds([])}
+                        onActionSelected={
+                            activeTab === 'my-offers' ? handleBulkWithdraw :
+                            activeTab === 'my-swaps' ? handleBulkCancel : () => {}
+                        }
+                        actionType={
+                            activeTab === 'available-swaps' ? 'none' :
+                            activeTab === 'my-offers' ? 'withdraw' : 'cancel'
+                        }
+                        isPending={activeTab === 'my-offers' ? isDeclining : isCancelling}
+                        isBulkModeActive={isBulkModeActive}
+                        onCloseBulkMode={() => {
+                            setIsBulkModeActive(false);
+                            setSelectedSwapIds([]);
+                        }}
+                        inline={true}
+                    />
+                ) : undefined}
+                functionBarChildren={
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                            setIsBulkModeActive(prev => {
+                                const next = !prev;
+                                if (!next) setSelectedSwapIds([]);
+                                return next;
+                            });
+                        }}
+                        className={cn(
+                            "flex items-center justify-center md:gap-2 transition-all font-black text-[10px] uppercase tracking-wider flex-shrink-0 active:scale-95",
+                            "h-11 w-full rounded-xl p-0", // Mobile: uniform 44px, full width
+                            "md:h-9 md:w-auto md:px-3.5 md:rounded-xl", // Desktop
+                            isBulkModeActive 
+                                ? "bg-[#7b61ff]/20 text-[#7b61ff] border border-[#7b61ff]/30 hover:bg-[#7b61ff]/30" 
+                                : isDark ? "bg-[#111827]/60 hover:bg-[#111827]/80 text-muted-foreground" : "bg-slate-100 hover:bg-slate-200 text-muted-foreground"
+                        )}
+                    >
+                        <ListChecks className="h-5 w-5 md:h-4 md:w-4" />
+                        <span className="hidden md:inline">Bulk Mode</span>
+                    </Button>
+                }
                 leftContent={
                     <div className={cn(
                         "flex items-center gap-1 p-1 rounded-xl",
                         isDark ? "bg-[#111827]/60" : "bg-slate-200/50"
                     )}>
                         {([
-                            { id: 'available-swaps' as TabType, label: 'Available', mobileLabel: 'Available', count: filteredAvailableSwaps.length },
-                            { id: 'my-offers'       as TabType, label: 'My Offers', mobileLabel: 'Offers',    count: filteredMyOffers.length },
-                            { id: 'my-swaps'        as TabType, label: 'My Swaps',  mobileLabel: 'Mine',      count: filteredMySwaps.length },
+                            { id: 'available-swaps' as TabType, label: 'Available', mobileLabel: 'Available', icon: ArrowLeftRight, count: filteredAvailableSwaps.length },
+                            { id: 'my-offers'       as TabType, label: 'My Offers', mobileLabel: 'Offers',    icon: ThumbsUp,       count: filteredMyOffers.length },
+                            { id: 'my-swaps'        as TabType, label: 'My Swaps',  mobileLabel: 'Mine',      icon: Calendar,       count: filteredMySwaps.length },
                         ] as const).map(tab => {
                             const isActive = activeTab === tab.id;
+                            const Icon = tab.icon;
                             return (
                                 <button
                                     key={tab.id}
@@ -932,6 +1058,7 @@ export const EmployeeSwapsPage: React.FC = () => {
                                             : (isDark ? 'text-white/40 hover:text-white hover:bg-white/5' : 'text-slate-900/40 hover:text-slate-900 hover:bg-slate-900/5')
                                     )}
                                 >
+                                    <Icon className="h-3.5 w-3.5 shrink-0" />
                                     <span className="hidden sm:inline">{tab.label}</span>
                                     <span className="sm:hidden">{tab.mobileLabel}</span>
                                     <span className={cn(
@@ -947,50 +1074,48 @@ export const EmployeeSwapsPage: React.FC = () => {
                         })}
                     </div>
                 }
-                filters={
-                    <div className={cn(
-                        "flex items-center gap-1 p-1 h-9 rounded-lg",
-                        isDark ? "bg-[#111827]/60" : "bg-slate-200/50"
-                    )}>
-                        <button
-                            onClick={() => setPriorityFilter('all')}
-                            className={cn(
-                                'px-3 h-7 rounded-md text-[10px] font-black uppercase tracking-wider transition-all',
-                                priorityFilter === 'all'
-                                    ? (isDark ? 'bg-white/20 text-white' : 'bg-slate-900 text-white shadow-sm')
-                                    : (isDark ? 'text-white/40 hover:text-white hover:bg-white/5' : 'text-slate-900/40 hover:text-slate-900 hover:bg-slate-900/5')
-                            )}
-                        >
-                            All
-                        </button>
-                        {(['normal', 'urgent', 'emergent'] as const).map(p => {
-                            const conf = PRIORITY_CONFIG[p];
-                            const active = priorityFilter === p;
-                            return (
-                                <button
-                                    key={p}
-                                    onClick={() => setPriorityFilter(p)}
-                                    className={cn(
-                                        'flex items-center gap-1.5 px-2 lg:px-2.5 h-7 rounded-md text-[10px] font-black uppercase tracking-wider transition-all',
-                                        active
-                                            ? (isDark ? 'bg-white/20 text-white' : 'bg-slate-900 text-white shadow-sm')
-                                            : (isDark ? 'text-white/40 hover:text-white hover:bg-white/5' : 'text-slate-900/40 hover:text-slate-900 hover:bg-slate-900/5')
-                                    )}
-                                >
-                                    <conf.icon className="w-3 h-3 lg:hidden" />
-                                    <div className={cn("hidden lg:block w-1.5 h-1.5 rounded-full", conf.color.replace('text-', 'bg-'))} />
-                                    <span className="hidden sm:inline">{conf.label}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                }
+
             />
 
             {/* ── ROW 3: CONTENT AREA ───────────────────────────────────────── */}
-            <div className="flex-1 min-h-0 overflow-hidden px-4 lg:px-6 pb-4 lg:pb-6">
+            <div className="flex-1 min-h-0 overflow-hidden px-4 lg:px-6 pb-4 lg:pb-6 flex flex-col">
+                {/* Mobile Tabs Switcher */}
+                <div className="lg:hidden mb-3 p-1 rounded-2xl bg-slate-100/85 dark:bg-[#1c2333]/85 border border-slate-200/50 dark:border-white/5 flex items-center justify-between gap-1 shadow-sm shrink-0">
+                    {([
+                        { id: 'available-swaps' as TabType, label: 'Available', mobileLabel: 'Available', icon: ArrowLeftRight, count: filteredAvailableSwaps.length },
+                        { id: 'my-offers'       as TabType, label: 'My Offers', mobileLabel: 'Offers',    icon: ThumbsUp,       count: filteredMyOffers.length },
+                        { id: 'my-swaps'        as TabType, label: 'My Swaps',  mobileLabel: 'Mine',      icon: Calendar,       count: filteredMySwaps.length },
+                    ] as const).map(tab => {
+                        const isActive = activeTab === tab.id;
+                        const Icon = tab.icon;
+                        return (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={cn(
+                                    'flex-1 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-[0.98]',
+                                    isActive
+                                        ? 'bg-[#7b61ff] text-white shadow-sm'
+                                        : (isDark ? 'text-white/40 hover:text-white hover:bg-white/5' : 'text-slate-900/40 hover:text-slate-900 hover:bg-slate-900/5')
+                                )}
+                            >
+                                <Icon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="xs:inline">{tab.mobileLabel}</span>
+                                <span className={cn(
+                                    "inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full text-[9px] font-black tabular-nums",
+                                    isActive
+                                        ? "bg-white/20 text-white"
+                                        : (isDark ? "bg-white/5 text-white/40" : "bg-slate-900/5 text-slate-900/40")
+                                )}>
+                                    {tab.count}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+
                 <div className={cn(
-                    "h-full rounded-[32px] overflow-hidden transition-all border flex flex-col",
+                    "flex-1 min-h-0 rounded-[32px] overflow-hidden transition-all border flex flex-col",
                     isDark 
                         ? "bg-[#1c2333]/40 border-white/5 shadow-2xl shadow-black/20" 
                         : "bg-white/70 backdrop-blur-md border-white shadow-xl shadow-slate-200/50"
@@ -1001,97 +1126,566 @@ export const EmployeeSwapsPage: React.FC = () => {
                     <span className="ml-2 text-muted-foreground">Loading swaps...</span>
                 </div>
             ) : activeTab === 'available-swaps' ? (
-                <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 scrollbar-none">
-                    <AnimatePresence mode="wait">
-                        <motion.div
-                            key={`available-${priorityFilter}`}
-                            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4"
-                            variants={pageVariants}
-                            initial="hidden"
-                            animate="show"
-                            exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                        >
-                            {filteredAvailableSwaps.length === 0 ? (
-                                <motion.div variants={itemVariants} className="col-span-full">
+                viewMode === 'card' ? (
+                    <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 scrollbar-none">
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={`available-card-${priorityFilter}`}
+                                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4"
+                                variants={pageVariants}
+                                initial="hidden"
+                                animate="show"
+                                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                            >
+                                {filteredAvailableSwaps.length === 0 ? (
+                                    <motion.div variants={itemVariants} className="col-span-full">
+                                        <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                                            <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
+                                                <ArrowLeftRight className="h-6 w-6 text-muted-foreground/40" />
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-semibold text-foreground/60">No available swaps</p>
+                                                <p className="text-xs text-muted-foreground/40 mt-1">
+                                                    {priorityFilter !== 'all' ? 'Try clearing the priority filter.' : 'Check back later for opportunities.'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                ) : (
+                                    filteredAvailableSwaps.map(renderAvailableSwapCard)
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-none">
+                        {/* Mobile: list row view */}
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={`available-list-${priorityFilter}`}
+                                className="md:hidden border border-border/40 rounded-xl overflow-hidden"
+                                variants={pageVariants}
+                                initial="hidden"
+                                animate="show"
+                                exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                            >
+                                {filteredAvailableSwaps.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                                         <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
                                             <ArrowLeftRight className="h-6 w-6 text-muted-foreground/40" />
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-semibold text-foreground/60">No available swaps</p>
-                                            <p className="text-xs text-muted-foreground/40 mt-1">
-                                                {priorityFilter !== 'all' ? 'Try clearing the priority filter.' : 'Check back later for opportunities.'}
-                                            </p>
-                                        </div>
+                                        <p className="text-sm font-semibold text-foreground/60">No available swaps</p>
                                     </div>
-                                </motion.div>
-                            ) : (
-                                filteredAvailableSwaps.map(renderAvailableSwapCard)
-                            )}
-                        </motion.div>
-                    </AnimatePresence>
-                </div>
+                                ) : (
+                                    filteredAvailableSwaps.map(swap => renderSwapListItem(swap, 'available-swaps'))
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+
+                        {/* Desktop: traditional sortable table */}
+                        <div className="hidden md:block overflow-x-auto border border-border rounded-lg">
+                            <table className="w-full text-sm text-foreground">
+                                <thead className="bg-muted/60 text-xs text-muted-foreground uppercase tracking-wider font-black">
+                                    <tr>
+                                        {isBulkModeActive && (
+                                            <th className="p-3 text-left w-[40px]">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={
+                                                        filteredAvailableSwaps.length > 0 &&
+                                                        filteredAvailableSwaps.every(s => selectedSwapIds.includes(s.id))
+                                                    }
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            handleSelectAll(filteredAvailableSwaps.map(s => s.id));
+                                                        } else {
+                                                            handleDeselectAll();
+                                                        }
+                                                    }}
+                                                    className="h-4 w-4 rounded border-border/50 accent-primary cursor-pointer"
+                                                />
+                                            </th>
+                                        )}
+                                        <SortableTableHeader sortKey="requested_by.full_name" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Requester</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.departments.name" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Dept</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.sub_departments.name" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Sub</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.roles.name" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Role</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.shift_date" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Date</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.start_time" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Time</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.net_length_minutes" currentSort={availableSort.sortConfig} onSort={availableSort.handleSort}>Net</SortableTableHeader>
+                                        <th className="p-3 text-left w-[180px]">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredAvailableSwaps.map(swap => {
+                                        const shift = swap.requester_shift;
+                                        const requesterName = swap.requested_by?.full_name || swap.requested_by?.email || 'Someone';
+                                        const hasOffered = myActiveOfferSwapIds.has(swap.id);
+                                        
+                                        const deadline = shift?.start_at || (shift?.shift_date && shift?.start_time ? `${shift?.shift_date}T${shift?.start_time}` : '');
+                                        const tr = calculateTimeRemaining(deadline);
+                                        const isExpired = tr.isExpired;
+
+                                        return (
+                                            <tr
+                                                key={swap.id}
+                                                className={cn(
+                                                    "border-t border-border/50 transition-colors",
+                                                    isBulkModeActive && !hasOffered && "cursor-pointer hover:bg-muted/20",
+                                                    getRowClass(shift?.group_type || shift?.roles?.group_type, shift?.departments?.name || '')
+                                                )}
+                                                onClick={() => {
+                                                    if (isBulkModeActive && !hasOffered) {
+                                                        handleSelectSwap(swap.id, `Market: ${shift?.roles?.name || 'Shift'}`);
+                                                    }
+                                                }}
+                                            >
+                                                {isBulkModeActive && (
+                                                    <td className="p-3" onClick={e => e.stopPropagation()}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedSwapIds.includes(swap.id)}
+                                                            onChange={() => handleSelectSwap(swap.id, `Market: ${shift?.roles?.name || 'Shift'}`)}
+                                                            disabled={hasOffered}
+                                                            className="h-4 w-4 rounded border-border/50 accent-primary cursor-pointer"
+                                                        />
+                                                    </td>
+                                                )}
+                                                <td className="p-3 font-semibold">{requesterName}</td>
+                                                <td className="p-3 font-medium">{shift?.departments?.name || '—'}</td>
+                                                <td className="p-3">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                                        {shift?.sub_departments?.name || '—'}
+                                                    </div>
+                                                </td>
+                                                <td className="p-3 font-bold text-[#7b61ff]">{shift?.roles?.name || 'Shift'}</td>
+                                                <td className="p-3">{shift?.shift_date ? format(parse(shift.shift_date, 'yyyy-MM-dd', new Date()), 'EEE d MMM') : '—'}</td>
+                                                <td className="p-3 font-mono">{shift?.start_time ? shift.start_time.slice(0, 5) : '00:00'}–{shift?.end_time ? shift.end_time.slice(0, 5) : '00:00'}</td>
+                                                <td className="p-3 font-mono text-muted-foreground">
+                                                    {(() => {
+                                                        const net = shift?.net_length_minutes || 0;
+                                                        const h = Math.floor(net / 60);
+                                                        const m = Math.round(net % 60);
+                                                        return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+                                                    })()}
+                                                </td>
+                                                <td className="p-3">
+                                                    {isExpired ? (
+                                                        <span className="text-xs text-slate-400 flex items-center gap-1 font-medium italic"><Ban size={12} /> Expired</span>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            className="h-8 text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+                                                            onClick={() => setOfferSwapTarget(swap)}
+                                                            disabled={isMakingOffer}
+                                                        >
+                                                            <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" />
+                                                            Offer
+                                                        </Button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    {filteredAvailableSwaps.length === 0 && (
+                                        <tr>
+                                            <td colSpan={9} className="p-12 text-center text-muted-foreground/60 italic text-sm">
+                                                No matching shifts found.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )
             ) : activeTab === 'my-offers' ? (
-                <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 scrollbar-none">
-                    <AnimatePresence mode="wait">
-                        <motion.div
-                            key={`my-offers-${priorityFilter}`}
-                            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                            variants={pageVariants}
-                            initial="hidden"
-                            animate="show"
-                            exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                        >
-                            {filteredMyOffers.length === 0 ? (
-                                <motion.div variants={itemVariants} className="col-span-full">
+                viewMode === 'card' ? (
+                    <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 scrollbar-none">
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={`my-offers-card-${priorityFilter}`}
+                                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                                variants={pageVariants}
+                                initial="hidden"
+                                animate="show"
+                                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                            >
+                                {filteredMyOffers.length === 0 ? (
+                                    <motion.div variants={itemVariants} className="col-span-full">
+                                        <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                                            <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
+                                                <ArrowLeftRight className="h-6 w-6 text-muted-foreground/40" />
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-semibold text-foreground/60">No swap offers yet</p>
+                                                <p className="text-xs text-muted-foreground/40 mt-1">Go to Available Swaps and offer on a colleague's request.</p>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                ) : (
+                                    filteredMyOffers.map(renderMyOfferCard)
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-none">
+                        {/* Mobile: list row view */}
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={`my-offers-list-${priorityFilter}`}
+                                className="md:hidden border border-border/40 rounded-xl overflow-hidden"
+                                variants={pageVariants}
+                                initial="hidden"
+                                animate="show"
+                                exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                            >
+                                {filteredMyOffers.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                                         <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
                                             <ArrowLeftRight className="h-6 w-6 text-muted-foreground/40" />
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-semibold text-foreground/60">No swap offers yet</p>
-                                            <p className="text-xs text-muted-foreground/40 mt-1">Go to Available Swaps and offer on a colleague's request.</p>
-                                        </div>
+                                        <p className="text-sm font-semibold text-foreground/60">No swap offers yet</p>
                                     </div>
-                                </motion.div>
-                            ) : (
-                                filteredMyOffers.map(renderMyOfferCard)
-                            )}
-                        </motion.div>
-                    </AnimatePresence>
-                </div>
+                                ) : (
+                                    filteredMyOffers.map(swap => renderSwapListItem(swap, 'my-offers'))
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+
+                        {/* Desktop: traditional sortable table */}
+                        <div className="hidden md:block overflow-x-auto border border-border rounded-lg">
+                            <table className="w-full text-sm text-foreground">
+                                <thead className="bg-muted/60 text-xs text-muted-foreground uppercase tracking-wider font-black">
+                                    <tr>
+                                        {isBulkModeActive && (
+                                            <th className="p-3 text-left w-[40px]">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={
+                                                        filteredMyOffers.length > 0 &&
+                                                        filteredMyOffers.every(s => selectedSwapIds.includes(s.id))
+                                                    }
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            handleSelectAll(filteredMyOffers.map(s => s.id));
+                                                        } else {
+                                                            handleDeselectAll();
+                                                        }
+                                                    }}
+                                                    className="h-4 w-4 rounded border-border/50 accent-primary cursor-pointer"
+                                                />
+                                            </th>
+                                        )}
+                                        <SortableTableHeader sortKey="requested_by.full_name" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Owner</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.departments.name" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Dept</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.sub_departments.name" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Sub</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.roles.name" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Role</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.shift_date" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Date</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.start_time" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Time</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.net_length_minutes" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Net</SortableTableHeader>
+                                        <SortableTableHeader sortKey="status" currentSort={myOffersSort.sortConfig} onSort={myOffersSort.handleSort}>Status / Action</SortableTableHeader>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredMyOffers.map(swap => {
+                                        const shift = swap.requester_shift;
+                                        const myOffer = ((swap as any).swap_offers || []).find((o: any) => o.offerer_id === userId || o.offerer?.id === userId);
+                                        const ownerName = swap.requested_by?.full_name || swap.requested_by?.email || 'Someone';
+
+                                        const deadline = shift?.start_at || (shift?.shift_date && shift?.start_time ? `${shift?.shift_date}T${shift?.start_time}` : '');
+                                        const tr = calculateTimeRemaining(deadline);
+                                        const isExpired = tr.isExpired;
+
+                                        const deriveOfferStatus = () => {
+                                            if (isExpired) return { label: 'Expired', color: 'bg-slate-100 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-400 dark:text-white/40' };
+                                            if (myOffer?.status === 'WITHDRAWN') return { label: 'Withdrawn', color: 'bg-slate-100 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-400 dark:text-white/40' };
+                                            if (myOffer?.status === 'REJECTED') return { label: 'Peer Rejected', color: 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-700 dark:text-rose-400' };
+                                            if (swap.status === 'APPROVED') return { label: 'Accepted', color: 'bg-emerald-50 dark:bg-emerald-500/15 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400' };
+                                            if (swap.status === 'REJECTED') return { label: 'Rejected', color: 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-700 dark:text-rose-400' };
+                                            if (myOffer?.status === 'SELECTED' && swap.status === 'MANAGER_PENDING') return { label: 'Pending Manager', color: 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-400' };
+                                            if (myOffer?.status === 'SUBMITTED') return { label: 'Pending Peer', color: 'bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20 text-blue-700 dark:text-blue-400' };
+                                            return { label: 'Pending', color: 'bg-slate-100 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-400 dark:text-white/40' };
+                                        };
+
+                                        const status = deriveOfferStatus();
+
+                                        return (
+                                            <tr
+                                                key={swap.id}
+                                                className={cn(
+                                                    "border-t border-border/50 transition-colors",
+                                                    isBulkModeActive && "cursor-pointer hover:bg-muted/20",
+                                                    getRowClass(shift?.group_type || shift?.roles?.group_type, shift?.departments?.name || '')
+                                                )}
+                                                onClick={() => {
+                                                    if (isBulkModeActive) {
+                                                        handleSelectSwap(swap.id, `Offer: ${shift?.roles?.name || 'Shift'}`);
+                                                    }
+                                                }}
+                                            >
+                                                {isBulkModeActive && (
+                                                    <td className="p-3" onClick={e => e.stopPropagation()}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedSwapIds.includes(swap.id)}
+                                                            onChange={() => handleSelectSwap(swap.id, `Offer: ${shift?.roles?.name || 'Shift'}`)}
+                                                            className="h-4 w-4 rounded border-border/50 accent-primary cursor-pointer"
+                                                        />
+                                                    </td>
+                                                )}
+                                                <td className="p-3 font-semibold">{ownerName}</td>
+                                                <td className="p-3 font-medium">{shift?.departments?.name || '—'}</td>
+                                                <td className="p-3">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                                        {shift?.sub_departments?.name || '—'}
+                                                    </div>
+                                                </td>
+                                                <td className="p-3 font-bold text-[#7b61ff]">{shift?.roles?.name || 'Shift'}</td>
+                                                <td className="p-3">{shift?.shift_date ? format(parse(shift.shift_date, 'yyyy-MM-dd', new Date()), 'EEE d MMM') : '—'}</td>
+                                                <td className="p-3 font-mono">{shift?.start_time ? shift.start_time.slice(0, 5) : '00:00'}–{shift?.end_time ? shift.end_time.slice(0, 5) : '00:00'}</td>
+                                                <td className="p-3 font-mono text-muted-foreground">
+                                                    {(() => {
+                                                        const net = shift?.net_length_minutes || 0;
+                                                        const h = Math.floor(net / 60);
+                                                        const m = Math.round(net % 60);
+                                                        return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+                                                    })()}
+                                                </td>
+                                                <td className="p-3">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={cn("px-2 py-1 rounded text-xs font-semibold border", status.color)}>
+                                                            {status.label}
+                                                        </span>
+                                                        {myOffer && myOffer.status === 'SUBMITTED' && swap.status === 'OPEN' && !isExpired && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                className="h-7 text-[10px] font-black uppercase tracking-widest border-border/40 hover:bg-red-500/10 hover:text-red-400"
+                                                                onClick={() => declineOffer(myOffer.id)}
+                                                                disabled={isDeclining}
+                                                            >
+                                                                Withdraw
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    {filteredMyOffers.length === 0 && (
+                                        <tr>
+                                            <td colSpan={9} className="p-12 text-center text-muted-foreground/60 italic text-sm">
+                                                No matching offers found.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )
             ) : (
-                <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 scrollbar-none">
-                    <AnimatePresence mode="wait">
-                        <motion.div
-                            key={`my-swaps-${priorityFilter}`}
-                            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                            variants={pageVariants}
-                            initial="hidden"
-                            animate="show"
-                            exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                        >
-                            {filteredMySwaps.length === 0 ? (
-                                <motion.div variants={itemVariants} className="col-span-full">
+                viewMode === 'card' ? (
+                    <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 scrollbar-none">
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={`my-swaps-card-${priorityFilter}`}
+                                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                                variants={pageVariants}
+                                initial="hidden"
+                                animate="show"
+                                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                            >
+                                {filteredMySwaps.length === 0 ? (
+                                    <motion.div variants={itemVariants} className="col-span-full">
+                                        <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                                            <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
+                                                <ArrowLeftRight className="h-6 w-6 text-muted-foreground/40" />
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-semibold text-foreground/60">No swap requests</p>
+                                                <p className="text-xs text-muted-foreground/40 mt-1">
+                                                    {priorityFilter !== 'all' ? 'Try clearing the priority filter.' : 'Create a swap request from your roster to get started.'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                ) : (
+                                    filteredMySwaps.map(renderMySwapCard)
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-none">
+                        {/* Mobile: list row view */}
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={`my-swaps-list-${priorityFilter}`}
+                                className="md:hidden border border-border/40 rounded-xl overflow-hidden"
+                                variants={pageVariants}
+                                initial="hidden"
+                                animate="show"
+                                exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                            >
+                                {filteredMySwaps.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                                         <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
                                             <ArrowLeftRight className="h-6 w-6 text-muted-foreground/40" />
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-semibold text-foreground/60">No swap requests</p>
-                                            <p className="text-xs text-muted-foreground/40 mt-1">
-                                                {priorityFilter !== 'all' ? 'Try clearing the priority filter.' : 'Create a swap request from your roster to get started.'}
-                                            </p>
-                                        </div>
+                                        <p className="text-sm font-semibold text-foreground/60">No swap requests</p>
                                     </div>
-                                </motion.div>
-                            ) : (
-                                filteredMySwaps.map(renderMySwapCard)
-                            )}
-                        </motion.div>
-                    </AnimatePresence>
-                </div>
-            )}
+                                ) : (
+                                    filteredMySwaps.map(swap => renderSwapListItem(swap, 'my-swaps'))
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+
+                        {/* Desktop: traditional sortable table */}
+                        <div className="hidden md:block overflow-x-auto border border-border rounded-lg">
+                            <table className="w-full text-sm text-foreground">
+                                <thead className="bg-muted/60 text-xs text-muted-foreground uppercase tracking-wider font-black">
+                                    <tr>
+                                        {isBulkModeActive && (
+                                            <th className="p-3 text-left w-[40px]">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={
+                                                        filteredMySwaps.length > 0 &&
+                                                        filteredMySwaps.every(s => selectedSwapIds.includes(s.id))
+                                                    }
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            handleSelectAll(filteredMySwaps.map(s => s.id));
+                                                        } else {
+                                                            handleDeselectAll();
+                                                        }
+                                                    }}
+                                                    className="h-4 w-4 rounded border-border/50 accent-primary cursor-pointer"
+                                                />
+                                            </th>
+                                        )}
+                                        <SortableTableHeader sortKey="requester_shift.departments.name" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Dept</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.sub_departments.name" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Sub</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.roles.name" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Role</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.shift_date" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Date</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.start_time" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Time</SortableTableHeader>
+                                        <SortableTableHeader sortKey="requester_shift.net_length_minutes" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Net</SortableTableHeader>
+                                        <SortableTableHeader sortKey="status" currentSort={mySwapsSort.sortConfig} onSort={mySwapsSort.handleSort}>Status / Action</SortableTableHeader>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredMySwaps.map(swap => {
+                                        const shift = swap.requester_shift;
+                                        
+                                        const deadline = shift?.start_at || (shift?.shift_date && shift?.start_time ? `${shift?.shift_date}T${shift?.start_time}` : '');
+                                        const tr = calculateTimeRemaining(deadline);
+                                        const isExpired = tr.isExpired;
+
+                                        return (
+                                            <tr
+                                                key={swap.id}
+                                                className={cn(
+                                                    "border-t border-border/50 transition-colors",
+                                                    isBulkModeActive && "cursor-pointer hover:bg-muted/20",
+                                                    getRowClass(shift?.group_type || shift?.roles?.group_type, shift?.departments?.name || '')
+                                                )}
+                                                onClick={() => {
+                                                    if (isBulkModeActive) {
+                                                        handleSelectSwap(swap.id, `Swap: ${shift?.roles?.name || 'Shift'}`);
+                                                    }
+                                                }}
+                                            >
+                                                {isBulkModeActive && (
+                                                    <td className="p-3" onClick={e => e.stopPropagation()}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedSwapIds.includes(swap.id)}
+                                                            onChange={() => handleSelectSwap(swap.id, `Swap: ${shift?.roles?.name || 'Shift'}`)}
+                                                            className="h-4 w-4 rounded border-border/50 accent-primary cursor-pointer"
+                                                        />
+                                                    </td>
+                                                )}
+                                                <td className="p-3 font-medium">{shift?.departments?.name || '—'}</td>
+                                                <td className="p-3">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                                        {shift?.sub_departments?.name || '—'}
+                                                    </div>
+                                                </td>
+                                                <td className="p-3 font-bold text-[#7b61ff]">{shift?.roles?.name || 'Shift'}</td>
+                                                <td className="p-3">{shift?.shift_date ? format(parse(shift.shift_date, 'yyyy-MM-dd', new Date()), 'EEE d MMM') : '—'}</td>
+                                                <td className="p-3 font-mono">{shift?.start_time ? shift.start_time.slice(0, 5) : '00:00'}–{shift?.end_time ? shift.end_time.slice(0, 5) : '00:00'}</td>
+                                                <td className="p-3 font-mono text-muted-foreground">
+                                                    {(() => {
+                                                        const net = shift?.net_length_minutes || 0;
+                                                        const h = Math.floor(net / 60);
+                                                        const m = Math.round(net % 60);
+                                                        return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+                                                    })()}
+                                                </td>
+                                                <td className="p-3">
+                                                    <div className="flex items-center gap-2">
+                                                        {isExpired ? (
+                                                            <span className="text-xs text-slate-400 flex items-center gap-1 font-medium italic"><Ban size={12} /> Expired</span>
+                                                        ) : swap.status === 'APPROVED' ? (
+                                                            <span className="text-xs text-emerald-400 flex items-center gap-1 font-bold"><CheckCircle size={12} /> Accepted</span>
+                                                        ) : swap.status === 'REJECTED' ? (
+                                                            <span className="text-xs text-rose-500 flex items-center gap-1 font-bold"><XCircle size={12} /> Rejected</span>
+                                                        ) : swap.status === 'CANCELLED' ? (
+                                                            <span className="text-xs text-slate-400 flex items-center gap-1 font-medium"><Ban size={12} /> Cancelled</span>
+                                                        ) : swap.status === 'MANAGER_PENDING' ? (
+                                                            <>
+                                                                <span className="text-xs text-amber-500 flex items-center gap-1 font-bold"><Clock size={12} /> Pending Manager</span>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-8 border-border/10 hover:bg-primary/10"
+                                                                    onClick={() => setViewOffersSwapId(swap.id)}
+                                                                >
+                                                                    <Eye className="mr-1.5 h-3.5 w-3.5" /> Details
+                                                                </Button>
+                                                            </>
+                                                        ) : (
+                                                            /* OPEN State */
+                                                            <>
+                                                                <SwapTableOfferButton
+                                                                    swapId={swap.id}
+                                                                    onClick={() => setViewOffersSwapId(swap.id)}
+                                                                />
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-8 border-border/10 hover:bg-rose-500/10 hover:text-rose-400"
+                                                                    onClick={() => setConfirmDialog({ isOpen: true, swap })}
+                                                                    disabled={isCancelling}
+                                                                >
+                                                                    <X className="mr-1.5 h-3.5 w-3.5" /> Cancel
+                                                                </Button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    {filteredMySwaps.length === 0 && (
+                                        <tr>
+                                            <td colSpan={9} className="p-12 text-center text-muted-foreground/60 italic text-sm">
+                                                No matching swaps found.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ))
+            }
                 </div>
             </div>
 
@@ -1155,77 +1749,14 @@ export const EmployeeSwapsPage: React.FC = () => {
                 </DialogContent>
             </Dialog>
 
-            {/* FLOATING ACTION BAR */}
-            <AnimatePresence>
-                {selectedSwapIds.length > 0 && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 50, x: '-50%' }}
-                        animate={{ opacity: 1, y: 0, x: '-50%' }}
-                        exit={{ opacity: 0, y: 50, x: '-50%' }}
-                        className="fixed bottom-6 left-1/2 z-50 bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-3 rounded-full shadow-2xl flex items-center gap-4 border border-slate-700 dark:border-slate-200 pointer-events-auto"
-                    >
-                        <div className="flex items-center gap-2">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500 text-[12px] font-bold text-white shadow-sm">
-                                {selectedSwapIds.length}
-                            </span>
-                            <span className="text-sm font-semibold">Selected</span>
-                        </div>
-                        
-                        <div className="h-5 w-[1px] bg-white/20 dark:bg-black/10 mx-1" />
-                        
-                        <div className="flex items-center gap-1">
-                            {/* Select All */}
-                            <Button 
-                                size="sm" 
-                                variant="ghost" 
-                                className="hover:bg-white/10 dark:hover:bg-slate-100 text-white dark:text-slate-900 rounded-full h-8 px-3 text-xs font-medium" 
-                                onClick={() => {
-                                    if (activeTab === 'available-swaps') handleSelectAll(filteredAvailableSwaps.map(s => s.id));
-                                    else if (activeTab === 'my-offers') handleSelectAll(filteredMyOffers.map(s => s.id));
-                                    else if (activeTab === 'my-swaps') handleSelectAll(filteredMySwaps.map(s => s.id));
-                                }}
-                            >
-                                Select All
-                            </Button>
 
-                            {/* Deselect All */}
-                            <Button 
-                                size="sm" 
-                                variant="ghost" 
-                                className="hover:bg-white/10 dark:hover:bg-slate-100 text-white dark:text-slate-900 rounded-full h-8 px-3 text-xs font-medium" 
-                                onClick={handleDeselectAll}
-                            >
-                                Deselect All
-                            </Button>
-                            
-                            {/* Contextual Action */}
-                            <Button 
-                                size="sm" 
-                                className="bg-indigo-500 hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700 text-white rounded-full h-8 px-5 text-xs font-bold ml-2 shadow-md transition-transform active:scale-95" 
-                                onClick={() => {
-                                    if (activeTab === 'my-offers') handleBulkWithdraw();
-                                    else if (activeTab === 'my-swaps') handleBulkCancel();
-                                    else {
-                                        toast({ description: "Select individual cards to offer swaps." });
-                                    }
-                                }}
-                            >
-                                {activeTab === 'available-swaps' ? (
-                                    <><ThumbsUp className="mr-1.5 h-3.5 w-3.5" /> Bulk Action</>
-                                ) : activeTab === 'my-offers' ? (
-                                    <><XCircle className="mr-1.5 h-3.5 w-3.5" /> Withdraw Selected</>
-                                ) : (
-                                    <><Ban className="mr-1.5 h-3.5 w-3.5" /> Cancel Selected</>
-                                )}
-                            </Button>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
 
             {/* ── SWAP DETAIL DRAWER (mobile list tap) ── */}
             <Drawer open={drawerSwap !== null} onOpenChange={open => { if (!open) setDrawerSwap(null); }}>
                 <DrawerContent className="max-h-[88dvh] flex flex-col rounded-t-[32px]" aria-describedby={undefined}>
+                    {/* Screen reader only Title and Description for Radix/Vaul accessibility */}
+                    <DrawerTitle className="sr-only">Swap Details</DrawerTitle>
+                    <DrawerDescription className="sr-only">View full swap request details and offer actions</DrawerDescription>
                     <div className="flex-1 px-4 pb-8 pt-6">
                         {drawerSwap && (() => {
                             const { swap, tab } = drawerSwap;
@@ -1348,6 +1879,39 @@ export const EmployeeSwapsPage: React.FC = () => {
                 </DrawerContent>
             </Drawer>
         </div>
+    );
+};
+
+// Sub-component for View Offers button with count styled for tables
+const SwapTableOfferButton: React.FC<{ swapId: string; onClick: () => void }> = ({ swapId, onClick }) => {
+    const { data: offers, isLoading } = useQuery({
+        queryKey: ['swapOffers', swapId],
+        queryFn: () => swapsApi.getSwapOffers(swapId),
+    });
+
+    const pendingCount = offers?.filter(o => o.status === 'SUBMITTED').length || 0;
+
+    return (
+        <Button
+            size="sm"
+            className={cn(
+                "h-8 text-xs font-black uppercase tracking-wider shadow-sm",
+                pendingCount > 0
+                    ? "bg-[#7b61ff] hover:bg-[#684ff0] text-white"
+                    : "bg-muted/60 hover:bg-muted/80 text-foreground/60"
+            )}
+            onClick={onClick}
+            disabled={isLoading}
+        >
+            <Eye className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {isLoading ? (
+                '...'
+            ) : pendingCount > 0 ? (
+                `Offers (${pendingCount})`
+            ) : (
+                'No Offers'
+            )}
+        </Button>
     );
 };
 

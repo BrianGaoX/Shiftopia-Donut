@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "feature_order": [
+    "event_type",
+    "expected_attendance",
+    "day_of_week",
+    "month",
+    "function_type",
+    "room_count",
+    "total_sqm",
+    "room_capacity",
+    "simultaneous_event_count",
+    "total_venue_attendance_same_time",
+    "entry_peak_flag",
+    "exit_peak_flag",
+    "meal_window_flag",
+    "time_slice_index"
+  ],
+  "categorical": ["event_type", "function_type"]
+}

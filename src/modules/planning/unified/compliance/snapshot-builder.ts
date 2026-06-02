@@ -11,7 +11,8 @@
  * All functions are pure — no DB calls, no side effects.
  */
 
-import type { V8OrchestratorResult, V8Status, V8Hit } from '@/modules/compliance/v8/types';
+import type { V8Status, V8Hit } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 import type { BidComplianceSnapshot, SwapComplianceSnapshot, BlockingHit } from '../types';
 
 // =============================================================================
@@ -85,7 +86,7 @@ export function buildSwapSnapshot(params: {
   const { resultA, resultB, shiftUpdatedAt, targetShiftUpdatedAt } = params;
 
   return {
-    combined_status: combinedStatus(resultA.status, resultB.status),
+    combined_status: combinedStatus(resultA.overall_status, resultB.overall_status),
     party_a: resultA,
     party_b: resultB,
     shift_updated_at: shiftUpdatedAt,
@@ -120,11 +121,11 @@ export function extractBlockingHits(
   if (!isSwap) {
     // BID snapshot — single result
     const bidSnap = snapshot as BidComplianceSnapshot;
-    return bidSnap.rule_hits
-      .filter(h => h.severity === 'BLOCKING')
+    return bidSnap.hits
+      .filter(h => h.status === 'BLOCKING')
       .map(h => ({
         rule_id: h.rule_id,
-        summary: h.message,
+        summary: h.summary,
         party: 'A' as const,
         severity: 'BLOCKING' as const,
       }));
@@ -132,8 +133,8 @@ export function extractBlockingHits(
 
   // SWAP snapshot — two results; detect overlap by rule_id
   const swapSnap = snapshot as SwapComplianceSnapshot;
-  const hitsA = swapSnap.party_a.rule_hits.filter(h => h.severity === 'BLOCKING');
-  const hitsB = swapSnap.party_b.rule_hits.filter(h => h.severity === 'BLOCKING');
+  const hitsA = swapSnap.party_a.hits.filter(h => h.status === 'BLOCKING');
+  const hitsB = swapSnap.party_b.hits.filter(h => h.status === 'BLOCKING');
 
   const ruleIdsA = new Set(hitsA.map(h => h.rule_id));
   const ruleIdsB = new Set(hitsB.map(h => h.rule_id));
@@ -155,7 +156,7 @@ export function extractBlockingHits(
     if (ruleIdsA.has(hit.rule_id)) continue;
     result.push({
       rule_id: hit.rule_id,
-      summary: hit.message,
+      summary: hit.summary,
       party: 'B',
       severity: 'BLOCKING',
     });
@@ -170,7 +171,7 @@ export function extractBlockingHits(
 
 function buildSwapHitSummary(hit: V8Hit, party: 'A' | 'B' | 'BOTH'): string {
   if (party === 'BOTH') {
-    return `[Both parties] ${hit.message}`;
+    return `[Both parties] ${hit.summary}`;
   }
-  return hit.message;
+  return hit.summary;
 }

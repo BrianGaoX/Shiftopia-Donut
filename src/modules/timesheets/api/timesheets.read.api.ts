@@ -36,8 +36,8 @@ export const timesheetReadApi = {
     ): Promise<Timesheet[]> => {
         const start = new Date(startDate);
         const end = new Date(endDate);
-        const filtered = timesheets.filter(({ date }) => {
-            const d = new Date(date);
+        const filtered = (timesheets as any[]).filter((t: any) => {
+            const d = new Date(t.date);
             return d >= start && d <= end;
         });
         return Promise.resolve(filtered as any);
@@ -45,7 +45,7 @@ export const timesheetReadApi = {
 
     getTimesheetByDate: async (date: string): Promise<Timesheet | null> => {
         const dateStr = date.split('T')[0];
-        const ts = timesheets.find((t) => (t.date as string).split('T')[0] === dateStr);
+        const ts = (timesheets as any[]).find((t: any) => (t.date as string).split('T')[0] === dateStr);
 
         if (ts) return Promise.resolve(ts as any);
 

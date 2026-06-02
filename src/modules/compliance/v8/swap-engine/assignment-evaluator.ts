@@ -29,7 +29,7 @@ import type {
     SolverConfig,
     SolverResult,
 } from './types';
-import type { ComplianceResult, ComplianceCalculation, ShiftTimeRange } from '../types';
+import type { ComplianceResult, ComplianceCalculation } from '../../types';
 
 // =============================================================================
 // TYPES
@@ -58,10 +58,13 @@ export interface AssignmentEvaluationInput {
 // DUMMY PARTY (always passes every constraint — empty schedule)
 // =============================================================================
 
-const DUMMY_SHIFT: ShiftTimeRange = {
+const DUMMY_SHIFT: RosterShift = {
+    id: '__dummy__',
+    date: '1970-01-01',
     shift_date: '1970-01-01',
     start_time: '00:00',
     end_time: '00:00',
+    is_ordinary_hours: false,
     unpaid_break_minutes: 0,
 };
 
@@ -181,11 +184,12 @@ export class AssignmentEvaluator {
         const blockingViolations = violations.filter(r => r.blocking);
 
         return {
-            feasible:    blockingViolations.length === 0,
+            feasible:      blockingViolations.length === 0,
             violations,
             warnings,
-            all_results: employeeResults,
-            scenario:    result.scenario,
+            all_results:   employeeResults,
+            solve_time_ms: result.solve_time_ms ?? 0,
+            scenario:      result.scenario,
         };
     }
 }

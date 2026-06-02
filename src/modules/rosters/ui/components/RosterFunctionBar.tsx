@@ -259,9 +259,9 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
   // Auto-select template
   React.useEffect(() => {
     if (templates.length > 0 && !selectedTemplateId) {
-      const baseTemplate = templates.find((t: TemplateData) =>
+      const baseTemplate = (templates as TemplateData[]).find((t: TemplateData) =>
         t.name.includes('Base Template')
-      ) || templates[0];
+      ) || (templates as TemplateData[])[0];
       setSelectedTemplateId(baseTemplate.id);
       onTemplateChange?.(baseTemplate.id, undefined);
     }
@@ -532,12 +532,12 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
         <ApplyTemplateDialog
           isOpen={isApplyTemplateDialogOpen}
           onOpenChange={setIsApplyTemplateDialogOpen}
-          organizationId={selectedOrganizationId}
-          departmentId={selectedDepartmentId}
-          subDepartmentId={selectedSubDepartmentId}
+          organizationId={selectedOrganizationId ?? null}
+          departmentId={selectedDepartmentId ?? null}
+          subDepartmentId={selectedSubDepartmentId ?? null}
           selectedDate={selectedDate}
           appliedTemplateIds={currentRosterStructure?.appliedTemplateIds || []}
-          rosterId={currentRosterStructure?.rosterId || null}
+          rosterId={currentRosterStructure?.rosterId ?? null}
         />
       )}
 

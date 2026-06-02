@@ -484,7 +484,7 @@ function ResultBuckets({
                                     <div className="flex items-center gap-3 min-w-0">
                                         <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                                         <span className="text-[9px] font-black font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 shrink-0 min-w-[2.2rem] text-center">
-                                            {getRuleCode(rule.id)}
+                                            {getRuleCode(rule.rule_id)}
                                         </span>
                                         <p className="text-[11px] text-foreground/70 dark:text-muted-foreground font-medium truncate">{rule.description}</p>
                                     </div>
@@ -566,13 +566,13 @@ function HitRow({
     let statusB: 'PASS' | 'FAIL' | 'WARN' = 'PASS';
 
     if (isSwap) {
-        const hitA = result.rawResult.rule_hits.find(h => h.rule_id === hit.rule_id);
-        const hitB = result.partyB?.rawResult.rule_hits.find(h => h.rule_id === hit.rule_id);
+        const hitA = result.rawResult.hits?.find(h => h.rule_id === hit.rule_id);
+        const hitB = result.partyB?.rawResult.hits?.find(h => h.rule_id === hit.rule_id);
 
-        if (hitA) statusA = hitA.severity === 'BLOCKING' ? 'FAIL' : 'WARN';
-        if (hitB) statusB = hitB.severity === 'BLOCKING' ? 'FAIL' : 'WARN';
+        if (hitA) statusA = hitA.status === 'BLOCKING' ? 'FAIL' : 'WARN';
+        if (hitB) statusB = hitB.status === 'BLOCKING' ? 'FAIL' : 'WARN';
     } else {
-        statusA = hit.severity === 'BLOCKING' ? 'FAIL' : 'WARN';
+        statusA = hit.status === 'BLOCKING' ? 'FAIL' : 'WARN';
     }
 
     return (
@@ -598,7 +598,7 @@ function HitRow({
                             </p>
                         </div>
                         <p className="text-[10px] text-muted-foreground/60 leading-snug mt-0.5 max-w-[90%]">
-                            {hit.message}
+                            {hit.summary}
                         </p>
                     </div>
                     <ChevronDown className={cn(
@@ -619,13 +619,13 @@ function HitRow({
                 ) : null}
             </div>
 
-            {expanded && hit.resolution_hint && (
+            {expanded && hit.details && (
                 <div className={cn(
                     "flex items-start gap-2 p-2.5 bg-muted/40 rounded-lg border border-border/50",
                     isSwap ? "mr-[176px]" : "ml-5" // match the button width if swap
                 )}>
                     <Info className="h-3 w-3 text-muted-foreground/40 mt-0.5 shrink-0" />
-                    <p className="text-[10px] text-muted-foreground/70 leading-relaxed">{hit.resolution_hint}</p>
+                    <p className="text-[10px] text-muted-foreground/70 leading-relaxed">{hit.details}</p>
                 </div>
             )}
         </div>

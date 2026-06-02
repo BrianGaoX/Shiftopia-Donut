@@ -51,18 +51,18 @@ export const employeeService = {
         }
 
         const now = new Date().toISOString();
-        return (data || []).map(p => ({
+        return (data || []).map((p: any) => ({
             id: p.id,
             firstName: p.first_name || '',
             lastName: p.last_name || '',
             fullName: p.full_name || `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unknown',
             email: p.email || '',
-            avatarUrl: p.avatar_url,
+            avatarUrl: p.avatar_url ?? undefined,
             is_active: true,
             createdAt: now,
             updatedAt: now,
             contracts: p.user_contracts as any
-        }));
+        })) as Employee[];
     },
 
     getEmployeeById: async (id: string): Promise<Employee | null> => {
@@ -83,11 +83,11 @@ export const employeeService = {
             lastName: data.last_name || '',
             fullName: data.full_name || `${data.first_name || ''} ${data.last_name || ''}`.trim() || 'Unknown',
             email: data.email || '',
-            avatarUrl: data.avatar_url,
+            avatarUrl: data.avatar_url ?? undefined,
             is_active: true,
             createdAt: now,
             updatedAt: now
-        };
+        } as Employee;
     },
 
     getEmployeesByDepartment: async (department: string): Promise<Employee[]> => {

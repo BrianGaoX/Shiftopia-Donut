@@ -10,13 +10,8 @@
 
 import { supabase } from '@/platform/realtime/client';
 import { format, addDays, subDays, parseISO } from 'date-fns';
-import type {
-    V8EmployeeContext,
-    ContractRecordV2,
-    QualificationV2,
-    V8OrchestratorShift,
-    ContractType,
-} from './v2/types';
+import type { ContractRecordV2, QualificationV2, ContractType } from './v8/types';
+import type { V8EmployeeContext, V8OrchestratorShift } from './v8/orchestrator/types';
 
 // =============================================================================
 // SESSION-SCOPED CACHE  (TTL: 5 minutes per entry)
@@ -209,8 +204,8 @@ export async function fetchEmployeeShiftsV2(
         end_time:             string;
         unpaid_break_minutes: number | null;
     }>).map(s => ({
-        shift_id:                s.id,
-        shift_date:              s.shift_date,
+        id:                      s.id,
+        date:                    s.shift_date,
         start_time:              s.start_time,
         end_time:                s.end_time,
         // Existing shifts don't need role/quals — time-based rules only.

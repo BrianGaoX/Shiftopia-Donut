@@ -31,6 +31,7 @@ import {
     CheckCircle2,
 } from 'lucide-react';
 import { type Shift } from './shift.entity';
+import { parseZonedDateTime } from '@/modules/core/lib/date.utils';
 
 // ─── Tone ────────────────────────────────────────────────────────────────────
 
@@ -391,6 +392,9 @@ export interface ShiftDotInput {
     shift_date?:        string | null;
     start_time?:        string | null;
     end_time?:          string | null;
+    attendance_note?:   string | null;
+    adjusted_start?:    string | null;
+    adjusted_end?:      string | null;
 }
 
 export interface StatusBadge {
@@ -399,29 +403,67 @@ export interface StatusBadge {
 }
 
 /**
+ * Robustly parses standard ISO date strings or time-only strings (e.g. "14:00:00", "2:00 PM")
+ * into milliseconds epoch time, or returns null if invalid.
+ */
+function parseToMs(dateStr: string | Date | null | undefined, shiftDate?: string | null): number | null {
+    if (!dateStr || dateStr === '-') return null;
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d.getTime();
+    
+    if (shiftDate && typeof dateStr === 'string') {
+        let timePart = dateStr;
+        if (/^\d{3,4}$/.test(timePart)) {
+            timePart = timePart.length === 3 
+                ? `0${timePart.slice(0, 1)}:${timePart.slice(1)}:00`
+                : `${timePart.slice(0, 2)}:${timePart.slice(2)}:00`;
+        } else if (timePart.split(':').length === 2) {
+            timePart = `${timePart}:00`;
+        }
+
+        if (dateStr.includes('AM') || dateStr.includes('PM')) {
+            const match = dateStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+            if (match) {
+                let hour = parseInt(match[1], 10);
+                const min = match[2];
+                const ampm = match[3].toUpperCase();
+                if (ampm === 'PM' && hour < 12) hour += 12;
+                if (ampm === 'AM' && hour === 12) hour = 0;
+                timePart = `${hour.toString().padStart(2, '0')}:${min}:00`;
+            }
+        }
+        const combined = new Date(`${shiftDate}T${timePart}`);
+        if (!isNaN(combined.getTime())) return combined.getTime();
+    }
+    return null;
+}
+
+/**
  * Returns the status badge info (color + label) for the status dot and text
  * that replaces the left vertical strip on shift cards.
  *
  * One dot, one label, one color — same signal, clearer communication.
- *
- * Scenario map (matches the product spec table):
- *   Scenario                  | State                  | Color          | Hex     | Label
- *   ------------------------- | ---------------------- | -------------- | ------- | --------------------
- *   > 24h before start        | Normal                 | Blue           | #3B82F6 | Normal
- *   < 24h & > 4h              | Urgent                 | Orange         | #F59E0B | Urgent
- *   < 4h before start         | Emergency              | Red            | #EF4444 | Emergency
- *   Clock-in before start     | In Progress (Early)    | Indigo         | #6366F1 | In Progress (Early)
- *   Clock-in exactly on time  | In Progress (On Time)  | Green          | #10B981 | In Progress (On Time)
- *   Clock-in after start      | In Progress (Late)     | Amber          | #FBBF24 | In Progress (Late)
- *   Start passed, no clock-in | Late (Missing)         | Yellow         | #EAB308 | Late (Missing)
- *   Clock-out before end      | Completed (Early Exit) | Teal           | #14B8A6 | Completed (Early Exit)
- *   Clock-out exactly on time | Completed (On Time)    | Purple         | #8B5CF6 | Completed (On Time)
- *   Clock-out after end       | Completed (Overtime)   | Deep Purple    | #6D28D9 | Completed (Overtime)
- *   No clock-in at all        | No Show                | BLOOD RED      | #7F1D1D | No Show
  */
 export function getStatusDotInfo(shift: ShiftDotInput): StatusBadge | null {
     const lc = (shift.lifecycle_status || '').toLowerCase();
     const isCancelled = lc === 'cancelled' || shift.is_cancelled;
+
+    // ── Check Override No-Show ───────────────────────────────────────────────
+    const isOverridden = shift.attendance_note === 'No-Show overridden by manager' || 
+                        (shift.attendance_status === 'unknown' && shift.attendance_note?.toLowerCase().includes('override'));
+
+    if (isOverridden) {
+        const schedEndMs = shift.end_at ? parseToMs(shift.end_at) : parseToMs(shift.end_time, shift.shift_date);
+        const adjustedEndMs = parseToMs(shift.adjusted_end, shift.shift_date);
+        const effectiveEndMs = adjustedEndMs ?? schedEndMs;
+        if (effectiveEndMs !== null && schedEndMs !== null) {
+            const diff = effectiveEndMs - schedEndMs;
+            if (diff < 0) return { color: '#14B8A6', label: 'Overridden (Early-Out)' };
+            if (diff > 0) return { color: '#6D28D9', label: 'Overridden (OverTime)' };
+            return { color: '#8B5CF6', label: 'Overridden (OnTime)' };
+        }
+        return { color: '#8B5CF6', label: 'Overridden (OnTime)' };
+    }
 
     // 1. No Show — checked first, can coexist with any lifecycle
     if (shift.assignment_outcome === 'no_show') {
@@ -437,20 +479,11 @@ export function getStatusDotInfo(shift: ShiftDotInput): StatusBadge | null {
     if (isCancelled) return null;
 
     // ── Pre-calculate times ───────────────────────────────────────────────────
-    const schedStartMs = shift.start_at
-        ? new Date(shift.start_at).getTime()
-        : shift.shift_date && shift.start_time
-            ? new Date(`${shift.shift_date}T${shift.start_time}`).getTime()
-            : null;
+    const schedStartMs = shift.start_at ? parseToMs(shift.start_at) : parseToMs(shift.start_time, shift.shift_date);
+    const schedEndMs = shift.end_at ? parseToMs(shift.end_at) : parseToMs(shift.end_time, shift.shift_date);
 
-    const schedEndMs = shift.end_at
-        ? new Date(shift.end_at).getTime()
-        : shift.shift_date && shift.end_time
-            ? new Date(`${shift.shift_date}T${shift.end_time}`).getTime()
-            : null;
-
-    const actualStartMs = shift.actual_start ? new Date(shift.actual_start).getTime() : null;
-    const actualEndMs = shift.actual_end ? new Date(shift.actual_end).getTime() : null;
+    const actualStartMs = parseToMs(shift.actual_start, shift.shift_date);
+    const actualEndMs = parseToMs(shift.actual_end, shift.shift_date);
     const now = Date.now();
 
     // 3. Completed (has actual_end)

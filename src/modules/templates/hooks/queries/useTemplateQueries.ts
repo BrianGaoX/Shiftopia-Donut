@@ -315,7 +315,7 @@ export function usePublishTemplate() {
             }
 
             // RPC returns an array, access first element
-            const result = Array.isArray(data) ? data[0] : data;
+            const result = (Array.isArray(data) ? data[0] : data) as any;
 
             if (!result?.success) {
                 throw new Error(result?.error_message || 'Publish failed');

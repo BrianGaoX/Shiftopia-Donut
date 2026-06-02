@@ -6,6 +6,7 @@ import {
     CheckSquare,
     Check,
     X,
+    RotateCcw,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/modules/core/lib/utils';
@@ -26,6 +27,7 @@ interface TimesheetMobileCardProps {
     onToggleSelect: () => void;
     onSave?: (id: string, updates: Partial<TimesheetRow>) => void;
     onMarkNoShow?: (id: string) => void;
+    onOverrideNoShow?: (id: string) => void;
     readOnly?: boolean;
     isManager?: boolean;
     employeeHeader?: React.ReactNode;
@@ -128,6 +130,7 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     onToggleSelect,
     onSave,
     onMarkNoShow,
+    onOverrideNoShow,
     readOnly = false,
     isManager = true,
     employeeHeader,
@@ -210,7 +213,7 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     }, [entry.date, entry.scheduledEnd]);
 
     const protection = useMemo(() => getProtectionContext(
-        { lifecycle_status: entry.liveStatus },
+        { lifecycle_status: entry.liveStatus as any },
         isPast
     ), [entry.liveStatus, isPast]);
 
@@ -227,9 +230,18 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     };
 
     const handleSaveAdjustment = () => {
+        const formatTimeStr = (t: string) => {
+            if (/^\d{3,4}$/.test(t)) {
+                return t.length === 3 ? `0${t.slice(0, 1)}:${t.slice(1)}` : `${t.slice(0, 2)}:${t.slice(2)}`;
+            }
+            return t;
+        };
+        const finalStart = formatTimeStr(localAdjStart);
+        const finalEnd = formatTimeStr(localAdjEnd);
+
         onSave?.(String(entry.id), {
-            adjustedStart: localAdjStart,
-            adjustedEnd: localAdjEnd,
+            adjustedStart: finalStart,
+            adjustedEnd: finalEnd,
             paidBreak: localPaidBreak,
             unpaidBreak: localUnpaidBreak,
             isAdjustedManual: true,
@@ -245,10 +257,17 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
             department={entry.department}
             subGroup={entry.subGroup}
             role={entry.role}
-            shiftDate={entry.date}
+            shiftDate={String(entry.date)}
             startTime={formatTime(entry.scheduledStart)}
             endTime={formatTime(entry.scheduledEnd)}
-            netLength={parseInt(entry.netLength) || 0}
+            netLength={(() => {
+                if (!entry.netLength) return 0;
+                const parts = entry.netLength.split(':').map(Number);
+                if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                    return parts[0] * 60 + parts[1];
+                }
+                return (parseInt(entry.netLength, 10) || 0) * 60;
+            })()}
             paidBreak={parseInt(entry.paidBreak) || 0}
             unpaidBreak={parseInt(entry.unpaidBreak) || 0}
             lifecycleStatus={entry.liveStatus}
@@ -269,8 +288,12 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
             shiftData={{
                 lifecycle_status: entry.liveStatus,
                 assignment_outcome: entry.attendanceStatus,
+                attendance_status: entry.attendanceStatus,
+                attendance_note: entry.attendanceNote,
                 actual_start: entry.clockIn,
                 actual_end: entry.clockOut,
+                adjusted_start: entry.adjustedStart,
+                adjusted_end: entry.adjustedEnd,
                 shift_date: entry.date,
                 start_time: entry.scheduledStart,
                 end_time: entry.scheduledEnd,
@@ -381,8 +404,19 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
                             </div>
 
                         ) : (
-                            <div className="w-full flex items-center justify-center px-4 py-3 bg-foreground/[0.04] border border-foreground/5 rounded-2xl text-foreground/40 text-[10px] font-black uppercase tracking-widest">
-                                Finalized Record
+                            <div className="w-full flex flex-col gap-2">
+                                <div className="w-full flex items-center justify-center px-4 py-3 bg-foreground/[0.04] border border-foreground/5 rounded-2xl text-foreground/40 text-[10px] font-black uppercase tracking-widest">
+                                    Finalized Record
+                                </div>
+                                {entry.attendanceStatus === 'no_show' && !readOnly && onOverrideNoShow && (
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => onOverrideNoShow(String(entry.id))}
+                                        className="h-11 rounded-xl border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 font-bold tracking-wide transition-all active:scale-95"
+                                    >
+                                        <RotateCcw className="h-4 w-4 mr-2" /> Override No-Show
+                                    </Button>
+                                )}
                             </div>
                         )
                     ) : (

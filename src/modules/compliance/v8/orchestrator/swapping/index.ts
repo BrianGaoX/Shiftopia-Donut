@@ -77,7 +77,7 @@ function buildAllShiftsCatalog(
 ): Map<V8ShiftId, V8OrchestratorShift> {
     const catalog = new Map<V8ShiftId, V8OrchestratorShift>();
     for (const [, shifts] of existing_shifts_map) {
-        for (const s of shifts) catalog.set(s.shift_id, s);
+        for (const s of shifts) catalog.set(s.id, s);
     }
     return catalog;
 }
@@ -106,10 +106,13 @@ function buildBatchInput(
     const base_state: BatchBaseState = {
         shifts:                  [...buildAllShiftsCatalog(input, buildExistingShiftsMap(input.existing_assignments)).values()],
         current_assignments:     input.existing_assignments.flatMap(a =>
-            a.shifts.map(s => ({ shift_id: s.shift_id, employee_id: a.employee_id })),
+            a.shifts.map(s => ({ shift_id: s.id, employee_id: a.employee_id })),
         ),
         employees:               input.employees,
-        employee_existing_shifts: input.existing_assignments,
+        employee_existing_shifts: input.existing_assignments.map(a => ({
+            employee_id:     a.employee_id,
+            existing_shifts: a.shifts,
+        })),
     };
 
     return {
@@ -193,8 +196,8 @@ export function runSwapApproval(input: SwapInput): SwapResult {
             (status === 'WARNING' && !config.accept_warnings);
 
         if (should_reject) {
-            const blocking_hits_a = comp.result_a.rule_hits.filter(h => h.severity === 'BLOCKING');
-            const blocking_hits_b = comp.result_b.rule_hits.filter(h => h.severity === 'BLOCKING');
+            const blocking_hits_a = comp.result_a.hits.filter(h => h.status === 'BLOCKING');
+            const blocking_hits_b = comp.result_b.hits.filter(h => h.status === 'BLOCKING');
             const reason = status === 'BLOCKING'
                 ? `Swap rejected: BLOCKING compliance violation(s) — `
                   + [...new Set([...blocking_hits_a, ...blocking_hits_b].map(h => h.rule_id))].join(', ')
@@ -203,8 +206,8 @@ export function runSwapApproval(input: SwapInput): SwapResult {
             all_rejected.push({
                 swap_id:     swap.swap_id,
                 reason,
-                rule_hits_a: comp.result_a.rule_hits,
-                rule_hits_b: comp.result_b.rule_hits,
+                rule_hits_a: comp.result_a.hits,
+                rule_hits_b: comp.result_b.hits,
             });
         } else {
             tentatively_approved.push({
@@ -213,8 +216,8 @@ export function runSwapApproval(input: SwapInput): SwapResult {
                 employee_b_id:       swap.employee_b_id,
                 shift_x_id:          swap.shift_x_id,
                 shift_y_id:          swap.shift_y_id,
-                compliance_status_a: comp.result_a.status,
-                compliance_status_b: comp.result_b.status,
+                compliance_status_a: comp.result_a.overall_status,
+                compliance_status_b: comp.result_b.overall_status,
                 compliance_status:   comp.combined_status,
                 original_priority:   swap.priority,
             });

@@ -11,10 +11,10 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/modules/core/ui/primitives/dropdown-menu';
-import { SearchBar } from './SearchBar';
-import { BroadcastNotifications } from './broadcast/BroadcastNotifications';
-import { ThemeSelector } from './ThemeSelector';
-import { NavBreadcrumb } from './NavBreadcrumb';
+import { SearchBar } from '../components/SearchBar';
+import { BroadcastNotifications } from '../components/broadcast/BroadcastNotifications';
+import { ThemeSelector } from '../components/ThemeSelector';
+import { NavBreadcrumb } from '../components/NavBreadcrumb';
 import { Menu, Bell, User, Search, LogOut, Settings } from 'lucide-react';
 import { 
   Tooltip,

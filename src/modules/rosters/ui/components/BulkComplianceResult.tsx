@@ -79,8 +79,8 @@ export const BulkComplianceResult: React.FC<BulkComplianceResultProps> = ({
                     affectedV8ShiftIds: new Set(),
                     data: detail.data,
                     dailyData: new Map(),
-                    shiftLengthData: [],
-                    restImpactData: []
+                    shiftLengthData: [] as { date: string; time: string; net_hours: number }[],
+                    restImpactData: [] as { date: string; shift_time: string; rest_before_hours: number | null; rest_after_hours: number | null; limit: number }[]
                 };
 
                 // Upgrade status: FAIL > WARNING > PASS

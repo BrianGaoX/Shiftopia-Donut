@@ -433,7 +433,7 @@ export function PlanningRequestCard({
     (isSwapSnapshot(request.compliance_snapshot)
       ? request.compliance_snapshot.combined_status === 'BLOCKING'
       : isBidSnapshot(request.compliance_snapshot)
-      ? request.compliance_snapshot.status === 'BLOCKING'
+      ? request.compliance_snapshot.overall_status === 'BLOCKING'
       : false);
 
   const handleCancel = async () => {

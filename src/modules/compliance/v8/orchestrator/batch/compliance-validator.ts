@@ -26,7 +26,7 @@ import type {
     BatchConfig,
     AtomicOperation,
 } from './types';
-import type { V8EmpId, any, V8OrchestratorInput, V8OperationType } from '../types';
+import type { V8EmpId, V8OrchestratorInput, V8OperationType } from '../types';
 import { runV8Orchestrator }  from '../index';
 import { getEmployeeDelta }    from './simulator';
 
@@ -147,7 +147,7 @@ export function validateCompliance(
         // Build any
         const candidateChanges: any = {
             add_shifts:    delta.added,
-            remove_shifts: delta.removed.map(s => s.shift_id),
+            remove_shifts: delta.removed.map(s => s.id),
         };
 
         const opType = deriveV8OperationType(empId, applied_ops, atomics);
@@ -176,7 +176,7 @@ export function validateCompliance(
         });
 
         // Mark operations as blocking if this employee has BLOCKING hits
-        if (result.status === 'BLOCKING') {
+        if (result.overall_status === 'BLOCKING') {
             for (const opId of changedByOps) {
                 blocking_operations.add(opId);
             }

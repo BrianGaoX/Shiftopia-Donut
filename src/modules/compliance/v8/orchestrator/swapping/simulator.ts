@@ -48,13 +48,13 @@ export function simulateSwap(
 
     // A loses shift_X, gains shift_Y
     const a_new_shifts = [
-        ...a_current.filter(s => s.shift_id !== shift_x.shift_id),
+        ...a_current.filter(s => s.id !== shift_x.id),
         shift_y,
     ];
 
     // B loses shift_Y, gains shift_X
     const b_new_shifts = [
-        ...b_current.filter(s => s.shift_id !== shift_y.shift_id),
+        ...b_current.filter(s => s.id !== shift_y.id),
         shift_x,
     ];
 

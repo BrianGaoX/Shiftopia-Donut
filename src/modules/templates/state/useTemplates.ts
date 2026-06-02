@@ -352,7 +352,7 @@ export function useTemplates(): UseTemplatesReturn {
             p_organization_id: input.organizationId,
             p_department_id: input.departmentId,
             p_sub_department_id: input.subDepartmentId,
-            p_exclude_id: null,
+            p_exclude_id: undefined,
           }
         );
 
@@ -1208,7 +1208,7 @@ export function useTemplates(): UseTemplatesReturn {
       try {
         const { error: err } = await supabase
           .from('roster_templates')
-          .update({ status })
+          .update({ status: status as any })
           .eq('id', id);
 
         if (err) throw err;

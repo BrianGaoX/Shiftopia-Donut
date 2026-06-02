@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Roster, Group, DepartmentName, DepartmentColor } from '@/modules/core/types';
+import { Roster } from '@/modules/core/types';
+import type { RosterDay } from '@/modules/rosters/model/roster.types';
+
+type DepartmentName = string;
+type DepartmentColor = string;
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isToday } from 'date-fns';
-import { RosterDayView } from './views/RosterDayView';
-import { RosterThreeDayView } from './views/RosterThreeDayView';
-import { RosterWeekView } from './views/RosterWeekView';
-import { RosterMonthView } from './views/RosterMonthView';
-import { RosterListView } from './views/RosterListView';
+import { RosterDayView } from '../views/RosterDayView';
+import { RosterThreeDayView } from '../views/RosterThreeDayView';
+import { RosterWeekView } from '../views/RosterWeekView';
+import { RosterMonthView } from '../views/RosterMonthView';
+import { RosterListView } from '../views/RosterListView';
 import { RosterEmployeeView } from './RosterEmployeeView';
 import { RosterFilter } from './RosterFilter';
 import { AssignShiftDialog } from './AssignShiftDialog';
-import AddGroupDialog from './dialogs/AddGroupDialog';
+import AddGroupDialog from '../dialogs/AddGroupDialog';
 import { Clock, Filter, Plus, Calendar as CalendarIcon, List, Grid2X2, Users } from 'lucide-react';
 import { Button } from '@/modules/core/ui/primitives/button';
 import { ToggleGroup, ToggleGroupItem } from '@/modules/core/ui/primitives/toggle-group';
@@ -71,9 +75,9 @@ export const RosterCalendar: React.FC<RosterCalendarProps> = ({
   }> = [];
 
   if (roster) {
-    roster.groups.forEach(group => {
-      group.subGroups.forEach(subGroup => {
-        subGroup.shifts.forEach(shift => {
+    ((roster as any).groups as any[] || []).forEach((group: any) => {
+      (group.subGroups || group.subgroups || []).forEach((subGroup: any) => {
+        (subGroup.shifts || []).forEach((shift: any) => {
           allShifts.push({
             shift,
             groupName: group.name,
@@ -205,8 +209,8 @@ export const RosterCalendar: React.FC<RosterCalendarProps> = ({
       
       {/* Week View */}
       {viewMode === 'week' && (
-        <RosterWeekView 
-          roster={roster || null} 
+        <RosterWeekView
+          roster={(roster as unknown as RosterDay) || null}
           selectedDate={selectedDate}
           readOnly={readOnly}
         />

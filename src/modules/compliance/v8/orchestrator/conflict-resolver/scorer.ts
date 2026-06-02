@@ -86,7 +86,7 @@ function standaloneComplianceStatus(
         };
 
         const result = runV8Orchestrator(input, { stage: config.compliance_stage });
-        if (rank(result.status) > rank(worst)) worst = result.status;
+        if (rank(result.overall_status) > rank(worst)) worst = result.overall_status;
     }
 
     return worst;

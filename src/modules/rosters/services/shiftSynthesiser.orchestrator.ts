@@ -35,6 +35,7 @@ import { deriveRoomCount } from './eventFeatureBuilder.service';
 //       When it is added (planned for a later phase), stamp it here on insert.
 //       For now we log the compliance result and proceed with Draft insertion.
 import { runV8Orchestrator } from '@/modules/compliance/v8/index';
+import { buildSkeletonInput } from '@/modules/planning/unified/compliance/input-builder';
 import type { V8OrchestratorInput, V8OrchestratorShift } from '@/modules/compliance/v8/index';
 
 const logger = createModuleLogger('shiftSynthesiser.orchestrator');
@@ -154,8 +155,8 @@ function runSkeletonCompliance(
   shiftDate: string,
 ): { status: string; blocked: boolean } {
   const candidateShift: V8OrchestratorShift = {
-    shift_id: `synth-${shift.roleId}-${shift.startMinutes}-${shift.endMinutes}`,
-    shift_date: shiftDate,
+    id: `synth-${shift.roleId}-${shift.startMinutes}-${shift.endMinutes}`,
+    date: shiftDate,
     start_time: minutesToTime(shift.startMinutes),
     end_time: minutesToTime(shift.endMinutes),
     role_id: shift.roleId,
@@ -164,29 +165,11 @@ function runSkeletonCompliance(
     break_minutes: 0,
   };
 
-  const input: V8OrchestratorInput = {
-    employee_id: 'skeleton',
-    employee_context: {
-      employee_id: 'skeleton',
-      contract_type: 'CASUAL',
-      contracted_weekly_hours: 0,
-      assigned_role_ids: [],
-      contracts: [],
-      qualifications: [],
-    },
-    existing_shifts: [],
-    candidate_changes: {
-      add_shifts: [candidateShift],
-      remove_shifts: [],
-    },
-    mode: 'SIMULATED',
-    operation_type: 'ASSIGN',
-    stage: 'DRAFT',
-  };
+  const input = buildSkeletonInput({ candidateShift });
 
   const result = runV8Orchestrator(input);
-  const blocked = result.status === 'BLOCKING';
-  return { status: result.status, blocked };
+  const blocked = result.overall_status === 'BLOCKING';
+  return { status: result.overall_status, blocked };
 }
 
 /**
@@ -215,7 +198,7 @@ function expandToCreatePayloads(
       creation_source: 'synthesizer',
       synthesis_run_id: params.synthesisRunId ?? null,
       shift_subgroup_id: rosterSubgroupId,
-      notes: shift.reason,
+      notes: shift.reasons?.[0],
       demand_source: shift.demand_source,
       target_employment_type: shift.target_employment_type,
       demand_group_id: shift.demand_group_id,
@@ -239,10 +222,12 @@ async function mapRowsToTensors(rows: DemandTensorInsertRow[]): Promise<DemandTe
 
   // 1. Fetch the taxonomy mappings
   const { data: fmap, error: fErr } = await supabase.from('function_map').select('*');
-  const { data: roles, error: rErr } = await supabase.from('roles').select('id, level, sub_department_id, employment_type');
+  // TODO: 'employment_type' does not exist on the roles table in the generated types (schema drift).
+  // Cast as any to access the column until the generated types are regenerated.
+  const { data: roles, error: rErr } = await (supabase as any).from('roles').select('id, level, sub_department_id, employment_type') as { data: any[] | null; error: any };
 
   if (fErr || rErr) {
-    logger.error('Failed to fetch taxonomy for demand mapping', { fErr, rErr });
+    logger.error('Failed to fetch taxonomy for demand mapping', { fErr, rErr, operation: 'mapRowsToTensors' });
     return [];
   }
 
@@ -340,7 +325,7 @@ async function runTemplateBuilderForEvents(
           .single();
 
         if (evErr || !ev) {
-          logger.warn('templateBuilder: could not fetch event row', { eventId, error: evErr?.message });
+          logger.warn('templateBuilder: could not fetch event row', { operation: 'runTemplateBuilderForEvents', eventId, error: evErr?.message });
           return;
         }
 
@@ -355,15 +340,17 @@ async function runTemplateBuilderForEvents(
         const template = await tryAutoBuildTemplate(clusterKey);
         if (template) {
           logger.info('templateBuilder: template upserted', {
+            operation: 'runTemplateBuilderForEvents',
             eventId,
             templateCode: template.template_code,
             clusterKey,
           });
         } else {
-          logger.info('templateBuilder: insufficient sample size, skipped', { eventId, clusterKey });
+          logger.info('templateBuilder: insufficient sample size, skipped', { operation: 'runTemplateBuilderForEvents', eventId, clusterKey });
         }
       } catch (err) {
         logger.warn('templateBuilder: error processing event', {
+          operation: 'runTemplateBuilderForEvents',
           eventId,
           error: err instanceof Error ? err.message : String(err),
         });

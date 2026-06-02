@@ -157,6 +157,12 @@ class StrategyInput:
     coverage_weight: int = 100
 
 
+def _strategy_mult(weight: int) -> float:
+    # Symmetric exponential: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x.
+    # Lets operators halve a term as well as double it (Gap 6 audit fix).
+    return 2.0 ** ((weight - 50) / 50.0)
+
+
 @dataclass
 class SolverParameters:
     max_time_seconds: float = 30.0
@@ -203,6 +209,7 @@ class OptimizerOutput:
     best_objective_bound: float
     proven_optimal: bool
     metrics: OptimizerDebugMetrics
+    objective_breakdown: Optional[dict[str, int]] = None
 
 
 # =============================================================================
@@ -509,6 +516,45 @@ class ScheduleModelBuilder:
         )
         self._emp_workload_vars: dict[str, cp_model.IntVar] = {}
         self._relaxed_violations_vars: list[cp_model.BoolVar] = []
+        # Per-category objective term accounting (same expressions as in
+        # `terms`, kept separately so objective_breakdown() can evaluate them
+        # against the solver solution after solve).
+        self._term_categories: dict[str, list] = {
+            'cost': [],
+            'fairness': [],
+            'fatigue': [],
+            'coverage': [],
+            'continuity': [],
+            'overqual': [],
+            'employment_mix': [],
+            'relaxed_violations': [],
+            'availability': [],
+            'other': [],
+        }
+
+    # -- Objective breakdown ---------------------------------------------------
+
+    def objective_breakdown(self, solver: cp_model.CpSolver) -> dict[str, int]:
+        """Return per-category contribution to the objective value.
+
+        Evaluates each category's linear expression list against the solver's
+        solution via solver.value(). Only categories with at least one term are
+        included in the result. Call this only after a OPTIMAL/FEASIBLE solve.
+        """
+        result: dict[str, int] = {}
+        for category, term_list in self._term_categories.items():
+            if not term_list:
+                continue
+            total = 0
+            for term in term_list:
+                try:
+                    total += solver.value(term)
+                except Exception:
+                    # If a term is a plain int (constant), add it directly.
+                    if isinstance(term, int):
+                        total += term
+            result[category] = total
+        return result
 
     # -- Public entry ----------------------------------------------------------
 
@@ -966,6 +1012,11 @@ class ScheduleModelBuilder:
     def _add_objective(self):
         terms = []
 
+        # Helper to append a term to both the main list and a category bucket.
+        def _t(expr, category: str):
+            terms.append(expr)
+            self._term_categories[category].append(expr)
+
         # -- SC-1: Base cost + preference discount ----------------------------
         for emp in self.data.employees:
             pref = set(emp.preferred_shift_ids)
@@ -979,17 +1030,18 @@ class ScheduleModelBuilder:
                         base_rate *= 2.50
                     elif shift.is_sunday:
                         base_rate *= 1.50
-                    
+
                     cost_cents = int(round((shift.duration_minutes / 60.0) * base_rate * 100))
-                    
-                    # Apply cost weight (0-100, default 50 -> multiplier 1.0)
-                    cost_mult = self.data.strategy.cost_weight / 50.0
+
+                    # Apply cost weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
+                    cost_mult = _strategy_mult(self.data.strategy.cost_weight)
                     weighted_cost = int(cost_cents * cost_mult)
-                    
+
                     # Preference gives a small discount
                     discount = 500 if shift.id in pref else 0
-                    
-                    # SOFT Availability penalty
+
+                    # SOFT Availability penalty — tracked separately so the
+                    # availability category captures the soft-window portion.
                     availability_penalty = 0
                     s0, s1 = shift_window(shift)
                     for start, end, severity in emp.availability_overrides:
@@ -999,13 +1051,17 @@ class ScheduleModelBuilder:
                         if s0 < a1 and a0 < s1:
                             if severity == 'SOFT': availability_penalty += 5000
                             if severity == 'PREFERENCE': availability_penalty += 1000
-                    
+
                     # Note: relaxed-pair penalties are applied via
                     # _relaxed_violations_vars in the SC-9 block below — those
                     # vars track *actual* per-pair overlap/rest violations
                     # introduced when relax_constraints is true. Don't duplicate
                     # them here.
-                    terms.append((weighted_cost - discount + availability_penalty) * var)
+                    cost_expr = (weighted_cost - discount) * var
+                    _t(cost_expr, 'cost')
+                    if availability_penalty:
+                        avail_expr = availability_penalty * var
+                        _t(avail_expr, 'availability')
 
 
         # -- SC-3: Uncovered penalty (Tier -1: highest) ----------------------
@@ -1022,34 +1078,34 @@ class ScheduleModelBuilder:
         #   With weight=100 default → multiplier 1.0; coverage_weight=200 doubles.
         coverage_penalty = int(1_000_000 * self.data.strategy.coverage_weight)
         for shift in self.data.shifts:
-            terms.append(coverage_penalty * shift.priority * self._uncovered[shift.id])
+            _t(coverage_penalty * shift.priority * self._uncovered[shift.id], 'coverage')
 
         # -- SC-4: Production Fairness (Tier 2: 1,000) --------------------------
         total_demand = sum(s.duration_minutes for s in self.data.shifts)
         # Apply fairness only if demand > 40% of total staff capacity
         capacity_threshold = 0.4 * sum(e.max_weekly_minutes for e in self.data.employees)
-        
+
         if total_demand >= capacity_threshold:
             for emp in self.data.employees:
                 w_var = self._emp_workload_vars.get(emp.id)
                 if w_var is None: continue
-                
+
                 baseline = emp.min_contract_minutes if emp.min_contract_minutes > 0 else emp.contract_weekly_minutes
                 if baseline <= 0: baseline = 2280
                 lower_ideal = int(0.80 * baseline)
                 upper_ideal = int(1.05 * baseline)
-                
+
                 low_v = self.model.NewIntVar(0, 5000, f'low_v_{emp.id[:6]}')
                 high_v = self.model.NewIntVar(0, 5000, f'high_v_{emp.id[:6]}')
                 self.model.Add(w_var >= lower_ideal - low_v)
                 self.model.Add(w_var <= upper_ideal + high_v)
-                
-                # Fairness Weight (0-100, default 50 -> mult 1.0)
-                fair_mult = self.data.strategy.fairness_weight / 50.0
+
+                # Fairness Weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
+                fair_mult = _strategy_mult(self.data.strategy.fairness_weight)
                 if emp.employment_type in ('FT', 'PT'):
-                    terms.append(int(10 * fair_mult) * low_v + int(20 * fair_mult) * high_v)
+                    _t(int(10 * fair_mult) * low_v + int(20 * fair_mult) * high_v, 'fairness')
                 else:
-                    terms.append(int(5 * fair_mult) * low_v + int(10 * fair_mult) * high_v)
+                    _t(int(5 * fair_mult) * low_v + int(10 * fair_mult) * high_v, 'fairness')
 
         # -- SC-Alignment: Skill Hierarchy & Employment Isolation --------------
         # Pre-build dict lookups so we don't do `next(e for e in ...)` for
@@ -1071,14 +1127,14 @@ class ScheduleModelBuilder:
             skill_gap = emp_level - shift_level
             if skill_gap > 0:
                 # Small penalty per level gap to encourage tightest-fit first
-                terms.append(100 * skill_gap * var)
+                _t(100 * skill_gap * var, 'overqual')
 
             # SC-1: Employment Isolation (Precision Fix #8: SOFT)
             target = getattr(shift, 'target_employment_type', None)
             if target and emp.employment_type != target:
                 # Penalty for assigning FT to Casual shift or vice versa
                 # Strategic Importance: 5000 (equivalent to $50 penalty)
-                terms.append(5000 * var)
+                _t(5000 * var, 'employment_mix')
 
         # -- SC-5: Overtime penalty (150% rate beyond contract) ----------------
         # For employees with min_contract_minutes, any minutes above that
@@ -1091,17 +1147,17 @@ class ScheduleModelBuilder:
                 continue
             existing_minutes = sum(es.duration_minutes for es in emp.existing_shifts)
             contract_remaining = max(0, emp.min_contract_minutes - existing_minutes)
-            
+
             overtime = self.model.NewIntVar(0, 5000, f'ot_{emp.id[:6]}')
             self.model.AddMaxEquality(overtime, [w_var - contract_remaining, 0])
-            
-            # 3-line fix for OT/Penalty interaction: 
+
+            # 3-line fix for OT/Penalty interaction:
             # OT rate should scale with the highest penalty multiplier active in the window.
             effective_mult = max([2.5 if s.is_public_holiday else 1.5 if s.is_sunday else 1.0 for s in self.data.shifts] + [1.0])
             ot_rate_cents_per_min = int(round(emp.hourly_rate * effective_mult * 0.5 / 60.0 * 100))
-            
+
             if ot_rate_cents_per_min > 0:
-                terms.append(ot_rate_cents_per_min * overtime)
+                _t(ot_rate_cents_per_min * overtime, 'cost')
 
         # -- SC-7: Safety Penalty (Non-linear Fatigue) ------------------------
         # Uses piecewise linear approximation to simulate the exponential drain
@@ -1116,41 +1172,41 @@ class ScheduleModelBuilder:
             ]
             if not eff_terms:
                 continue
-            
+
             # Initial fatigue (from previous week) converted to "effective minutes"
             # Calibration: 1 fatigue unit ~= 60 effective minutes in the simplified linear band.
-            # This constant maps severity-based fatigue scores from the timekeeping layer 
+            # This constant maps severity-based fatigue scores from the timekeeping layer
             # into the optimizer's circadian penalty space.
             init_eff_mins = int(emp.initial_fatigue_score * 60)
-            
+
             eff_total = self.model.NewIntVar(0, 5000, f'eff_{emp.id[:6]}')
             self.model.Add(eff_total == cp_model.LinearExpr.Sum(eff_terms) + init_eff_mins)
-            
+
             # Non-linear penalty bands (in cents):
             # 0-1200 mins (20h): $0/min
             # 1200-1800 mins (30h): $5/min surcharge (Amber)
             # 1800+ mins (30h+): $50/min surcharge (Critical/Red)
             # This simulates the -76*log curve's rapid ascent.
-            
+
             # Helper: AddPiecewiseLinearConstraint is available in newer OR-Tools.
             # If not, we can use 3 linear variables and max constraints.
-            
+
             amber_mins = self.model.NewIntVar(0, 5000, f'amber_{emp.id[:6]}')
             critical_mins = self.model.NewIntVar(0, 5000, f'crit_{emp.id[:6]}')
-            
+
             # amber_mins = max(0, eff_total - 1200)
             self.model.AddMaxEquality(amber_mins, [eff_total - 1200, 0])
             # critical_mins = max(0, eff_total - 1800)
             self.model.AddMaxEquality(critical_mins, [eff_total - 1800, 0])
-            
-            # Fatigue Weight (0-100, default 50 -> mult 1.0)
-            fatigue_mult = self.data.strategy.fatigue_weight / 50.0
-            
+
+            # Fatigue Weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
+            fatigue_mult = _strategy_mult(self.data.strategy.fatigue_weight)
+
             # Penalties:
-            terms.append(int(500 * fatigue_mult) * amber_mins)       # $5.00 per minute base
-            terms.append(int(4500 * fatigue_mult) * critical_mins)   # Extra $45.00
-            
-        # -- SC-6: Shift Continuity - reward keeping same employee on adjacent 
+            _t(int(500 * fatigue_mult) * amber_mins, 'fatigue')       # $5.00 per minute base
+            _t(int(4500 * fatigue_mult) * critical_mins, 'fatigue')   # Extra $45.00
+
+        # -- SC-6: Shift Continuity - reward keeping same employee on adjacent
         # For each pair of adjacent (contiguous, non-overlapping) shifts,
         # give a $2.00 (200 cents) bonus if the same employee works both.
         shifts_sorted = sorted(self.data.shifts, key=lambda s: shift_window(s)[0])
@@ -1171,7 +1227,7 @@ class ScheduleModelBuilder:
                         self.model.Add(both == 1).OnlyEnforceIf([v1, v2])
                         self.model.Add(both == 0).OnlyEnforceIf(v1.Not())
                         self.model.Add(both == 0).OnlyEnforceIf(v2.Not())
-                        terms.append(-continuity_bonus * both)
+                        _t(-continuity_bonus * both, 'continuity')
 
         # -- SC-8: Workload Slack Penalties --------------------------------
         # Spread, visa, streak, and min-contract slack vars were collected
@@ -1179,13 +1235,13 @@ class ScheduleModelBuilder:
         # this loop they would never make it into the objective and the
         # "softened" hard constraints would silently be free to violate.
         for slack_term in self._workload_slack_terms:
-            terms.append(slack_term)
+            _t(slack_term, 'other')
 
         # -- SC-9: Relaxed Violations penalty (added in _add_overlap/rest_gap) ---
         if self.data.constraints.relax_constraints:
             for v_var in self._relaxed_violations_vars:
                 # $10M penalty per internal overlap
-                terms.append(1_000_000_000 * v_var)
+                _t(1_000_000_000 * v_var, 'relaxed_violations')
 
         self.model.Minimize(cp_model.LinearExpr.Sum(terms))
 
@@ -1264,6 +1320,13 @@ class ScheduleModelBuilder:
                 if solver.value(self._uncovered[shift.id]) == 1:
                     unassigned.append(shift.id)
 
+        breakdown: Optional[dict[str, int]] = None
+        if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            try:
+                breakdown = self.objective_breakdown(solver)
+            except Exception as _exc:
+                logger.warning('[ModelBuilder] objective_breakdown failed: %s', _exc)
+
         return OptimizerOutput(
             status=status,
             assignments=assignments,
@@ -1272,4 +1335,5 @@ class ScheduleModelBuilder:
             best_objective_bound=solver.best_objective_bound if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0.0,
             proven_optimal=(status_code == cp_model.OPTIMAL),
             metrics=self._metrics,
+            objective_breakdown=breakdown,
         )

@@ -45,7 +45,7 @@ export function buildInitialState(base: BatchBaseState): SimulatedState {
 
     // Seed shift assignments from current_assignments
     for (const shift of base.shifts) {
-        shift_assignments.set(shift.shift_id, null);    // default unassigned
+        shift_assignments.set(shift.id, null);    // default unassigned
     }
     for (const assignment of base.current_assignments) {
         shift_assignments.set(assignment.shift_id, assignment.employee_id);
@@ -93,7 +93,7 @@ export function applyAtomics(
         const snapAssignments  = new Map<V8ShiftId, V8EmpId | null>();
         for (const a of sorted) {
             const eid = a.employee_id;
-            const sid = a.shift.shift_id;
+            const sid = a.shift.id;
             if (!snapEmpShifts.has(eid)) {
                 snapEmpShifts.set(eid, [...(state.employee_shifts.get(eid) ?? [])]);
             }
@@ -104,7 +104,7 @@ export function applyAtomics(
 
         for (const atomic of sorted) {
             const eid = atomic.employee_id;
-            const sid = atomic.shift.shift_id;
+            const sid = atomic.shift.id;
 
             if (atomic.type === 'ADD_EMPLOYEE_SHIFT') {
                 const currentHolder = state.shift_assignments.get(sid);
@@ -116,7 +116,7 @@ export function applyAtomics(
 
                 // Apply
                 const empShifts = state.employee_shifts.get(eid) ?? [];
-                if (!empShifts.find(s => s.shift_id === sid)) {
+                if (!empShifts.find(s => s.id === sid)) {
                     empShifts.push(atomic.shift);
                     state.employee_shifts.set(eid, empShifts);
                 }
@@ -134,7 +134,7 @@ export function applyAtomics(
 
                 // Apply
                 const empShifts = state.employee_shifts.get(eid) ?? [];
-                state.employee_shifts.set(eid, empShifts.filter(s => s.shift_id !== sid));
+                state.employee_shifts.set(eid, empShifts.filter(s => s.id !== sid));
                 state.shift_assignments.set(sid, null);
             }
         }
@@ -172,11 +172,11 @@ export function getEmployeeDelta(
     state:           SimulatedState,
 ): { added: V8OrchestratorShift[]; removed: V8OrchestratorShift[] } {
     const current  = state.employee_shifts.get(employee_id) ?? [];
-    const origIds  = new Set(original_shifts.map(s => s.shift_id));
-    const currIds  = new Set(current.map(s => s.shift_id));
+    const origIds  = new Set(original_shifts.map(s => s.id));
+    const currIds  = new Set(current.map(s => s.id));
 
-    const added   = current.filter(s => !origIds.has(s.shift_id));
-    const removed = original_shifts.filter(s => !currIds.has(s.shift_id));
+    const added   = current.filter(s => !origIds.has(s.id));
+    const removed = original_shifts.filter(s => !currIds.has(s.id));
 
     return { added, removed };
 }

@@ -3,7 +3,8 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { runV8Orchestrator, V8Result, V8Hit } from '@/modules/compliance/v8';
+import { runV8Orchestrator, V8Hit } from '@/modules/compliance/v8';
+import type { V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 import { classifyBuckets, getV8BucketSummary } from './bucket-map';
 import type { BucketMap, BucketSummary } from './bucket-map';
 
@@ -13,11 +14,11 @@ export interface PanelResult {
     buckets:      BucketMap;
     summary:      BucketSummary;
     evaluatedAt:  Date;
-    rawResult:    V8Result;
+    rawResult:    V8OrchestratorResult;
     partyB?: {
         buckets: BucketMap;
         summary: BucketSummary;
-        rawResult: V8Result;
+        rawResult: V8OrchestratorResult;
     };
 }
 
@@ -60,8 +61,8 @@ export function useCompliancePanel(opts: UseCompliancePanelOptions): UseComplian
             const inputs = await opts.buildInputs();
 
             if (inputs.length === 2) {
-                const rawResult  = runV8Orchestrator(inputs[0], { stage }) as V8Result;
-                const rawResultB = runV8Orchestrator(inputs[1], { stage }) as V8Result;
+                const rawResult  = runV8Orchestrator(inputs[0], { stage });
+                const rawResultB = runV8Orchestrator(inputs[1], { stage });
                 
                 const bucketsA = classifyBuckets(rawResult.hits);
                 const summaryA = getV8BucketSummary(bucketsA);
@@ -90,7 +91,7 @@ export function useCompliancePanel(opts: UseCompliancePanelOptions): UseComplian
                     }
                 });
             } else {
-                const rawResult = runV8Orchestrator(inputs[0], { stage }) as V8Result;
+                const rawResult = runV8Orchestrator(inputs[0], { stage });
                 const buckets = classifyBuckets(rawResult.hits);
                 const summary = getV8BucketSummary(buckets);
 

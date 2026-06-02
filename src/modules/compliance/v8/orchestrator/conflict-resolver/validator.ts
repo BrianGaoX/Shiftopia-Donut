@@ -34,7 +34,7 @@ import type {
 import type {
     V8OrchestratorShift, V8ShiftId, V8EmpId, V8EmployeeContext,
 } from '../types';
-import { validateCombinedState } from '../validate-combined-state';
+import { validateV8State } from '../validate-combined-state';
 
 // =============================================================================
 // RESULT
@@ -100,7 +100,7 @@ export function finalValidate(
                 .map(id => shift_catalog.get(id))
                 .filter((s): s is V8OrchestratorShift => s !== undefined);
 
-            const result = validateCombinedState({
+            const result = validateV8State({
                 employee_id:      emp_id,
                 employee_context,
                 original_shifts:  original,
@@ -111,15 +111,15 @@ export function finalValidate(
                 config:           config.compliance_config,
             });
 
-            if (result.status !== 'BLOCKING') continue;
+            if (result.overall_status !== 'BLOCKING') continue;
 
             // Demote the lowest-scoring op that affects this employee
             const candidates = emp_ops.sort((a, b) => a.composite_score - b.composite_score);
             const to_demote  = candidates[0];
             if (!to_demote) break;
 
-            const blocking_rules = result.rule_hits
-                .filter(h => h.severity === 'BLOCKING')
+            const blocking_rules = result.hits
+                .filter(h => h.status === 'BLOCKING')
                 .map(h => h.rule_id);
 
             demoted.push({
@@ -128,7 +128,7 @@ export function finalValidate(
                     `Final validation: employee ${emp_id} has BLOCKING violations when all `
                     + `selected operations are combined. Lowest-scoring op demoted. `
                     + `Rules: ${blocking_rules.join(', ')}.`,
-                rule_hits:                 result.rule_hits,
+                rule_hits:                 (result as any).rule_hits,
                 conflicting_operation_ids: emp_ops
                     .filter(s => s.op.operation_id !== to_demote.op.operation_id)
                     .map(s => s.op.operation_id),

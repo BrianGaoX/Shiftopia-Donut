@@ -104,7 +104,7 @@ export const useMyRoster = (view: CalendarView, selectedDate: Date, scope?: Scop
             if (scope) {
                 // Filter by Organization (if specific ones selected)
                 if (scope.org_ids && scope.org_ids.length > 0) {
-                    daysShifts = daysShifts.filter(s => scope.org_ids.includes(s.organization_id));
+                    daysShifts = daysShifts.filter(s => s.organization_id && scope.org_ids.includes(s.organization_id));
                 }
 
                 // Filter by Department (if specific ones selected)

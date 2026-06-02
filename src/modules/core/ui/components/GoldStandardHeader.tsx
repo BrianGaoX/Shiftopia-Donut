@@ -72,6 +72,7 @@ export interface GoldStandardHeaderProps
      * Use for pages with non-standard controls (e.g. Roster, Broadcasts).
      */
     functionBar?: React.ReactNode;
+    subFunctionBar?: React.ReactNode;
     className?: string;
 }
 
@@ -88,6 +89,7 @@ export const GoldStandardHeader: React.FC<GoldStandardHeaderProps> = ({
     multiSelect,
     // Row 3 (custom slot)
     functionBar,
+    subFunctionBar,
     // Row 3 (structured)
     viewMode,
     onViewModeChange,
@@ -155,6 +157,13 @@ export const GoldStandardHeader: React.FC<GoldStandardHeaderProps> = ({
                             {functionBarChildren}
                         </UnifiedModuleFunctionBar>
                     )
+                )}
+
+                {/* ── Row 4: Sub-Function Bar (e.g. Bulk Selection Toolbar) ── */}
+                {subFunctionBar && (
+                    <div className="mt-1 pt-1 border-t border-border/10 md:mt-3 md:pt-3">
+                        {subFunctionBar}
+                    </div>
                 )}
             </div>
         </div>

@@ -119,7 +119,7 @@ export function calculateFatigueWithRecovery(
     const windowEndHours = parseDateMidnightHours(referenceDate) + 24; // End of the reference day
     const windowStartHours = windowEndHours - 7 * 24; // Past 7 days
 
-    const shiftsWithinWindow = [];
+    const shiftsWithinWindow: Array<Pick<Shift, 'shift_date' | 'start_time' | 'end_time' | 'unpaid_break_minutes'> & { startHours: number; endHours: number }> = [];
     
     for (let i = 0; i < existingShifts.length; i++) {
       const s = existingShifts[i];

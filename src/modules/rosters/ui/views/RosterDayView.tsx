@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { Roster, DepartmentName, DepartmentColor } from '@/modules/core/types';
+import { Roster } from '@/modules/core/types';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { ShiftChip } from '../ShiftChip';
+import { ShiftChip } from '../components/ShiftChip';
 import { cn } from '@/modules/core/lib/utils';
+
+type DepartmentName = string;
+type DepartmentColor = string;
 
 export interface RosterDayViewProps {
   date: Date;
@@ -61,7 +64,7 @@ export const RosterDayView: React.FC<RosterDayViewProps> = ({
 
   return (
     <div className="space-y-4">
-      {roster && roster.groups.map(group => {
+      {roster && (roster as any).groups && (roster as any).groups.map((group: any) => {
         const isGroupExpanded = expandedGroups.has(group.id);
 
         return (

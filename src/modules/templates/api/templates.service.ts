@@ -1,5 +1,6 @@
 import { supabase } from '@/platform/realtime/client';
-import { Group, SubGroup, Template, Shift } from '../models/types';
+import { Group, SubGroup, Template } from '../model/templates.types';
+import type { Shift } from '@/modules/rosters/model/shift.types';
 import type { CaptureTemplateInput, CaptureTemplateResult } from '../model/templates.types';
 
 /* ============================================================
@@ -46,13 +47,15 @@ const dbToAppTemplate = (db: any): Template => {
     groups,
     createdAt: db.created_at,
     updatedAt: db.updated_at,
-    department_id: db.department_id,
-    sub_department_id: db.sub_department_id,
-    start_date: db.start_date,
-    end_date: db.end_date,
+    departmentId: db.department_id,
+    subDepartmentId: db.sub_department_id,
+    organizationId: db.organization_id ?? '',
+    appliedCount: db.applied_count ?? 0,
+    startDate: db.start_date,
+    endDate: db.end_date,
     status: db.status === 'published' ? 'published' : 'draft',
     version: db.version ?? 1,
-  };
+  } as Template;
 };
 
 /* ============================================================
@@ -97,12 +100,12 @@ export const templatesService = {
       .insert({
         name: template.name,
         description: template.description,
-        department_id: template.department_id,
-        sub_department_id: template.sub_department_id,
+        department_id: template.departmentId,
+        sub_department_id: template.subDepartmentId,
         status: 'draft',
         version: 1,
         groups: JSON.stringify(template.groups ?? []),
-      })
+      } as any)
       .select('*')
       .single();
 
@@ -125,10 +128,10 @@ export const templatesService = {
       dbUpdates.description = updates.description;
     if (updates.groups !== undefined)
       dbUpdates.groups = JSON.stringify(updates.groups);
-    if (updates.department_id !== undefined)
-      dbUpdates.department_id = updates.department_id;
-    if (updates.sub_department_id !== undefined)
-      dbUpdates.sub_department_id = updates.sub_department_id;
+    if (updates.departmentId !== undefined)
+      dbUpdates.department_id = updates.departmentId;
+    if (updates.subDepartmentId !== undefined)
+      dbUpdates.sub_department_id = updates.subDepartmentId;
 
     const { data, error } = await supabase
       .from('roster_templates')
@@ -199,7 +202,7 @@ export const templatesService = {
       return { success: false, error: 'No response from publish operation' };
     }
 
-    return data as PublishResult;
+    return data as unknown as PublishResult;
   },
 
   /* ============================================================
@@ -301,8 +304,9 @@ export async function captureRosterAsTemplate(
   }
 
   // Handle both snake_case and camelCase to be safe
+  const d = data as any;
   return {
-    templateId: data.templateId || data.template_id,
-    shiftsCaptured: data.shiftsCaptured ?? data.shifts_captured,
+    templateId: d.templateId || d.template_id,
+    shiftsCaptured: d.shiftsCaptured ?? d.shifts_captured,
   };
 }

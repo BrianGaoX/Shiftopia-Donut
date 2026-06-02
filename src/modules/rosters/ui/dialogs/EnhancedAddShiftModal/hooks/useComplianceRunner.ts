@@ -72,8 +72,8 @@ export function useComplianceRunner({
             const solverResult = assignmentEvaluator.evaluate({
                 employee_id:    input.employee_id,
                 name:           input.employee_id,   // name shown in violation details
-                current_shifts: input.existing_shifts.map(s => ({ ...s })),
-                candidate_shift: { ...input.candidate_shift },
+                current_shifts: input.existing_shifts.map(s => ({ ...s })) as any,
+                candidate_shift: { ...input.candidate_shift } as any,
                 action_type:    (input.action_type as 'add' | 'assign' | 'bid') ?? 'assign',
                 config: {
                     rest_gap_hours:           input.rest_gap_hours,

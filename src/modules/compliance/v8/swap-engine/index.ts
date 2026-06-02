@@ -11,7 +11,6 @@ export type {
     SwapParty,
     SwapScenario,
     SolverConfig,
-    SolverConstraint,
     ConstraintViolation,
     SolverResult,
     SwapPartyInput,

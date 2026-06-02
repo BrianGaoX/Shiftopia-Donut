@@ -127,11 +127,11 @@ export function useBulkBidCompliance(
                 existing_shifts: existingShifts,
             };
 
-            const checkResult = runV8LegacyBridge(input);
+            const checkResult = runV8LegacyBridge(input) as any;
 
             // Count passed rules
-            const passedCount = checkResult.results.filter(r => r.status === 'pass').length;
-            const totalCount = checkResult.results.length;
+            const passedCount = (checkResult.results || []).filter((r: any) => r.status === 'pass').length;
+            const totalCount = (checkResult.results || []).length;
 
             // Determine overall status
             let status: 'pass' | 'warning' | 'fail' = 'pass';
@@ -143,7 +143,7 @@ export function useBulkBidCompliance(
 
             resultsMap[candidate.id] = {
                 shiftId: candidate.id,
-                result: checkResult,
+                result: checkResult as ComplianceCheckResult,
                 passedCount,
                 totalCount,
                 status,

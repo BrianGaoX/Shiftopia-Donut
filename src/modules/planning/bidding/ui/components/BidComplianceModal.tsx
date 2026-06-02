@@ -174,11 +174,29 @@ export function BidComplianceModal({
         //
         // Bidding uses the same AssignmentEvaluator as assignment/add.
         // WORKING_DAYS_CAP is excluded for 'bid' (bids don't commit to days worked yet).
+        const toV8Shift = (s: { shift_date: string; start_time: string; end_time: string; unpaid_break_minutes?: number }, idx: number) => ({
+            id:                   `existing-${idx}`,
+            date:                 s.shift_date,
+            shift_date:           s.shift_date,
+            start_time:           s.start_time,
+            end_time:             s.end_time,
+            unpaid_break_minutes: s.unpaid_break_minutes ?? 0,
+            is_ordinary_hours:    true,
+        });
+
         const solverResult = assignmentEvaluator.evaluate({
             employee_id:     input.employee_id,
             name:            input.employee_id,
-            current_shifts:  input.existing_shifts,
-            candidate_shift: input.candidate_shift,
+            current_shifts:  input.existing_shifts.map(toV8Shift),
+            candidate_shift: {
+                id:                   shift.id ? String(shift.id) : 'candidate',
+                date:                 input.candidate_shift.shift_date,
+                shift_date:           input.candidate_shift.shift_date,
+                start_time:           input.candidate_shift.start_time,
+                end_time:             input.candidate_shift.end_time,
+                unpaid_break_minutes: input.candidate_shift.unpaid_break_minutes ?? 0,
+                is_ordinary_hours:    true,
+            },
             action_type:     'bid',
         });
 
@@ -303,7 +321,13 @@ export function BidComplianceModal({
                         <span className="opacity-30">•</span>
                         <span>{shift.startTime} - {shift.endTime}</span>
                         <span className="opacity-30">•</span>
-                        <span className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded text-xs font-bold">{Math.round(shift.netLength)}m</span>
+                        <span className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded text-xs font-bold">
+                            {(() => {
+                                const h = Math.floor(shift.netLength / 60);
+                                const m = Math.round(shift.netLength % 60);
+                                return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+                            })()}
+                        </span>
                     </div>
                     <div className="text-xs text-muted-foreground/70 mt-3 flex items-center gap-1.5 font-medium">
                         <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
@@ -342,7 +366,7 @@ export function BidComplianceModal({
                     <ComplianceTabContent
                         hardValidation={hardValidation}
                         ruleResults={ruleResults}
-                        setRuleResults={setRuleResults}
+                        onRuleResult={(ruleId, result) => setRuleResults(prev => ({ ...prev, [ruleId]: result }))}
                         buildComplianceInput={buildComplianceInput}
                         onChecksComplete={() => setChecksComplete(true)}
                         onRunAll={handleRunAllChecks}

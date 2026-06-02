@@ -48,7 +48,7 @@ const SUPABASE_CODE_MAP: Record<string, RPCErrorCode> = {
 };
 
 function mapSupabaseError(error: { code?: string; message: string; hint?: string }, rpcName: string): AppError {
-  const code: RPCErrorCode = (error.code && SUPABASE_CODE_MAP[error.code]) ?? 'RPC_NETWORK';
+  const code: RPCErrorCode = ((error.code && SUPABASE_CODE_MAP[error.code]) || 'RPC_NETWORK') as RPCErrorCode;
   return new AppError({
     code,
     message: error.message,

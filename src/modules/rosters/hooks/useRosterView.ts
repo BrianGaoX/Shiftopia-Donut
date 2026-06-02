@@ -53,7 +53,7 @@ export const useRosterView = () => {
 
     // Navigate based on view - pure functions that depend only on state
     const navigatePrevious = useCallback(() => {
-        setSelectedDate((prev: Date) => {
+        (setSelectedDate as any)((prev: Date) => {
             switch (view) {
                 case 'day':
                     return subDays(prev, 1);
@@ -72,7 +72,7 @@ export const useRosterView = () => {
     }, [view, setSelectedDate]);
 
     const navigateNext = useCallback(() => {
-        setSelectedDate((prev: Date) => {
+        (setSelectedDate as any)((prev: Date) => {
             switch (view) {
                 case 'day':
                     return addDays(prev, 1);

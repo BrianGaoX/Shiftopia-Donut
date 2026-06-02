@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { projectGroup } from '../../projections/projectors/group.projector';
 import type { Shift } from '../../shift.entity';
+import type { WorkerShiftDTO } from '../../projections/worker/protocol';
 
 // ── Shift factory ─────────────────────────────────────────────────────────────
 
 let _id = 0;
 function makeShift(overrides: Partial<Shift> = {}): Shift {
   _id++;
-  return {
+  return ({
     id: `shift-${_id}`,
     organization_id: null,
     department_id: 'dept-1',
@@ -91,7 +92,7 @@ function makeShift(overrides: Partial<Shift> = {}): Shift {
     confirmed_at: null,
     roles: { id: 'role-1', name: 'V8Stage Hand' },
     ...overrides,
-  };
+  } as unknown as Shift);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -107,13 +108,13 @@ describe('projectGroup — canonical groups', () => {
 
   it('omits the unassigned group when all shifts have a group_type', () => {
     const shifts = [makeShift({ group_type: 'convention_centre' })];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     expect(result.groups.find(g => g.type === 'unassigned')).toBeUndefined();
   });
 
   it('includes the unassigned group when a shift has no group_type', () => {
     const shifts = [makeShift({ group_type: null })];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     expect(result.groups.find(g => g.type === 'unassigned')).toBeDefined();
   });
 });
@@ -123,7 +124,7 @@ describe('projectGroup — shift routing', () => {
     const shifts = [
       makeShift({ group_type: 'convention_centre', sub_group_name: 'Hall A', shift_date: '2025-03-15' }),
     ];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     const cc = result.groups.find(g => g.type === 'convention_centre')!;
     expect(cc.subGroups.length).toBeGreaterThanOrEqual(1);
     const hallA = cc.subGroups.find(sg => sg.name === 'Hall A');
@@ -133,7 +134,7 @@ describe('projectGroup — shift routing', () => {
 
   it('places null sub_group_name shifts under "General" subgroup', () => {
     const shifts = [makeShift({ group_type: 'theatre', sub_group_name: null })];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     const theatre = result.groups.find(g => g.type === 'theatre')!;
     const general = theatre.subGroups.find(sg => sg.name === 'General');
     expect(general).toBeDefined();
@@ -147,7 +148,7 @@ describe('projectGroup — stats', () => {
       makeShift({ group_type: 'convention_centre', is_cancelled: false }),
       makeShift({ group_type: 'convention_centre', is_cancelled: true }),
     ];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     // cancelled shifts are passed through but stats should only count non-cancelled
     expect(result.stats.totalShifts).toBe(1);
   });
@@ -157,7 +158,7 @@ describe('projectGroup — stats', () => {
       makeShift({ group_type: 'exhibition_centre', assigned_employee_id: 'emp-1' }),
       makeShift({ group_type: 'exhibition_centre', assigned_employee_id: null }),
     ];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     expect(result.stats.assignedShifts).toBe(1);
     expect(result.stats.openShifts).toBe(1);
   });
@@ -167,7 +168,7 @@ describe('projectGroup — stats', () => {
       makeShift({ group_type: 'theatre', sub_group_name: 'V8Stage', net_length_minutes: 480, remuneration_rate: 30 }),
       makeShift({ group_type: 'theatre', sub_group_name: 'V8Stage', net_length_minutes: 240, remuneration_rate: 30 }),
     ];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     const theatre = result.groups.find(g => g.type === 'theatre')!;
     expect(theatre.stats.totalShifts).toBe(2);
     expect(theatre.stats.totalHours).toBeCloseTo(12); // (480+240)/60
@@ -177,7 +178,7 @@ describe('projectGroup — stats', () => {
 describe('projectGroup — projected shift fields', () => {
   it('correctly maps isLocked from shift.is_locked', () => {
     const shifts = [makeShift({ group_type: 'convention_centre', is_locked: true })];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     const cc = result.groups.find(g => g.type === 'convention_centre')!;
     const sg = cc.subGroups[0];
     const ps = Object.values(sg.shiftsByDate).flat()[0];
@@ -190,7 +191,7 @@ describe('projectGroup — projected shift fields', () => {
     vi.spyOn(Date, 'now').mockReturnValue(shiftStart - 12 * 60 * 60 * 1000);
     try {
       const shifts = [makeShift({ group_type: 'convention_centre', bidding_status: 'on_bidding_urgent' })];
-      const result = projectGroup(shifts);
+      const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
       const cc = result.groups.find(g => g.type === 'convention_centre')!;
       const ps = Object.values(cc.subGroups[0].shiftsByDate).flat()[0];
       expect(ps.isUrgent).toBe(true);
@@ -202,7 +203,7 @@ describe('projectGroup — projected shift fields', () => {
 
   it('groupColors for theatre uses red accent', () => {
     const shifts = [makeShift({ group_type: 'theatre' })];
-    const result = projectGroup(shifts);
+    const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     const theatre = result.groups.find(g => g.type === 'theatre')!;
     const ps = Object.values(theatre.subGroups[0].shiftsByDate).flat()[0];
     expect(ps.groupColors.accent).toBe('red');

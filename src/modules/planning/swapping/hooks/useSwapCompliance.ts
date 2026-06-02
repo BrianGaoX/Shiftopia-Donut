@@ -49,7 +49,7 @@ export function useSwapCompliance({
     });
 
     // 3. Run Compliance Check
-    const result: ComplianceCheckResult | null = useMemo(() => {
+    const result: ComplianceCheckResult | null = useMemo<any>(() => {
         if (!candidateShift || !requesterId || isLoading) return null;
 
         // Map roster to engine format AND exclude the target shift

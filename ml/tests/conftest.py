@@ -1,3 +1,5 @@
+import json
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -9,6 +11,9 @@ from sklearn.preprocessing import LabelEncoder
 
 ML_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ML_DIR))
+
+# Tests run with auth bypassed. Production deployments must NOT set this env.
+os.environ.setdefault('ML_AUTH_DISABLED', 'true')
 
 
 ROLES = ['Usher', 'Security', 'Food Staff', 'Supervisor']
@@ -49,6 +54,13 @@ def fake_models_dir(tmp_path):
         stub = StubRegressor(10.0 + idx)
         with open(models_dir / f'{role}.pkl', 'wb') as f:
             pickle.dump(stub, f)
+
+    manifest = {
+        "models": {role: "v1.0" for role in ROLES},
+        "encoders": "v1.0",
+    }
+    with open(models_dir / 'MANIFEST.json', 'w') as f:
+        json.dump(manifest, f)
 
     return models_dir
 
@@ -99,6 +111,10 @@ def patched_predict(monkeypatch, fake_models_dir, mock_supabase_client):
 
     monkeypatch.setattr(predict, 'MODELS_DIR', str(fake_models_dir))
     monkeypatch.setattr(predict, 'create_client', lambda *a, **kw: mock_supabase_client)
+    # Reset module-level singletons so each test starts from a clean state.
+    monkeypatch.setattr(predict, '_MODEL_CACHE', {})
+    monkeypatch.setattr(predict, '_pipeline_singleton', None)
+    monkeypatch.setattr(predict, '_correction_singleton', None)
     return predict
 
 

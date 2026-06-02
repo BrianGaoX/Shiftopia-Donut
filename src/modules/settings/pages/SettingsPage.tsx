@@ -58,11 +58,12 @@ const AppearanceSettings: React.FC = () => {
 
   useEffect(() => {
     if (orgBranding && !updateBranding.isPending && !updateLanguage.isPending) {
-      setBrandColor(orgBranding.brand_color || DEFAULT_BRAND_COLOR);
-      setChartStyle(orgBranding.chart_style || 'default');
-      setLanguage(orgBranding.language || 'en-GB');
-      setCookieBanner(orgBranding.cookie_banner || 'default');
-      setEnableGroupColoring(orgBranding.enable_group_coloring || false);
+      const b = orgBranding as any;
+      setBrandColor(b.brand_color || DEFAULT_BRAND_COLOR);
+      setChartStyle(b.chart_style || 'default');
+      setLanguage(b.language || 'en-GB');
+      setCookieBanner(b.cookie_banner || 'default');
+      setEnableGroupColoring(b.enable_group_coloring || false);
     }
   }, [orgBranding, updateBranding.isPending]);
 

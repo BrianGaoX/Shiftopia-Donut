@@ -67,7 +67,7 @@ export const AddLicenseDialog: React.FC<AddLicenseDialogProps> = ({ employeeId, 
 
             // Filter out licenses that are already assigned
             const availableLicenses = (data || []).filter(l => !existingLicenseIds.includes(l.id));
-            setLicenses(availableLicenses);
+            setLicenses(availableLicenses as any);
         } catch (error) {
             console.error('Error loading licenses:', error);
             toast({ title: 'Error', description: 'Failed to load license options', variant: 'destructive' });

@@ -114,7 +114,7 @@ function checkSwap(
 export function buildShiftCatalog(
     all_shifts: V8OrchestratorShift[],
 ): Map<V8ShiftId, V8OrchestratorShift> {
-    return new Map(all_shifts.map(s => [s.shift_id, s]));
+    return new Map(all_shifts.map(s => [s.id, s]));
 }
 
 export function buildEmployeeCatalog(
@@ -132,7 +132,7 @@ export function buildOwnershipIndex(
 ): Map<V8EmpId, Set<V8ShiftId>> {
     const index = new Map<V8EmpId, Set<V8ShiftId>>();
     for (const { employee_id, shifts } of assignments) {
-        index.set(employee_id, new Set(shifts.map(s => s.shift_id)));
+        index.set(employee_id, new Set(shifts.map(s => s.id)));
     }
     return index;
 }

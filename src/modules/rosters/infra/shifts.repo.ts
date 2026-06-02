@@ -22,7 +22,7 @@ export const shiftsRepo = {
             // Best effort to get user ID for telemetry/tracking
             const userId = (await supabase.auth.getUser()).data.user?.id;
 
-            const { data, error } = await supabase.rpc('delete_shift_cascade', {
+            const { data, error } = await (supabase.rpc as any)('delete_shift_cascade', {
                 p_shift_id: shiftId,
                 p_deleted_by: userId
             });

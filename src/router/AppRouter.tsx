@@ -46,6 +46,7 @@ const BroadcastManagerPage = lazy(() => import('@/modules/broadcasts/ui/pages/Br
 const InsightsPage = lazy(() => import('@/modules/insights/pages/InsightsPage.tsx'));
 const AnalysisPage = lazy(() => import('@/modules/insights/pages/AnalysisPage.tsx'));
 const GridPage = lazy(() => import('@/modules/insights/pages/GridPage.tsx'));
+const ComplianceRejectionsPage = lazy(() => import('@/modules/compliance/ui/pages/RejectionsPage.tsx'));
 const UsersPage = lazy(() => import('@/modules/users/pages/UsersPage.tsx'));
 const PerformancePage = lazy(() => import('@/modules/users/pages/PerformancePage.tsx'));
 
@@ -193,6 +194,9 @@ const AppRouter: React.FC = () => {
                         <Route path="/insights/:metricId" element={<AnalysisPage />} />
                         <Route path="/grid" element={<GridPage />} />
                     </Route>
+
+                    {/* ── Compliance audit ── */}
+                    <Route path="/compliance/rejections" element={<ComplianceRejectionsPage />} />
 
 
                     <Route element={<FeatureGate feature="users" />}>

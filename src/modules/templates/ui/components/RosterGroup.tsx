@@ -45,7 +45,7 @@ const RosterGroup: React.FC<Props> = ({
   const [newSubName, setNewSubName] = useState('');
 
   const saveEdit = () => {
-    onUpdateGroup(group.id, { name, color });
+    onUpdateGroup(group.id as number, { name, color });
     setIsEditing(false);
   };
 
@@ -123,14 +123,14 @@ const RosterGroup: React.FC<Props> = ({
               <Button
                 size="icon"
                 variant="outline"
-                onClick={() => onCloneGroup(group.id)}
+                onClick={() => onCloneGroup(group.id as number)}
               >
                 <Copy size={16} />
               </Button>
               <Button
                 size="icon"
                 variant="outline"
-                onClick={() => onDeleteGroup(group.id)}
+                onClick={() => onDeleteGroup(group.id as number)}
               >
                 <Trash2 size={16} />
               </Button>
@@ -172,7 +172,7 @@ const RosterGroup: React.FC<Props> = ({
               size="icon"
               onClick={() => {
                 if (!newSubName.trim()) return;
-                onAddSubGroup(group.id, newSubName.trim());
+                onAddSubGroup(group.id as number, newSubName.trim());
                 setNewSubName('');
               }}
             >

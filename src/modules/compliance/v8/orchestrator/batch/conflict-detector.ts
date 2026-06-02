@@ -148,10 +148,10 @@ function detectComplianceViolations(
     blocked_ops:  Set<string>,
 ): void {
     for (const empResult of compliance.employee_results) {
-        if (empResult.result.status !== 'BLOCKING') continue;
+        if (empResult.result.overall_status !== 'BLOCKING') continue;
 
-        const blockingHits: V8Hit[] = empResult.result.rule_hits
-            .filter(h => h.severity === 'BLOCKING');
+        const blockingHits: V8Hit[] = empResult.result.hits
+            .filter(h => h.status === 'BLOCKING');
 
         if (blockingHits.length === 0) continue;
 

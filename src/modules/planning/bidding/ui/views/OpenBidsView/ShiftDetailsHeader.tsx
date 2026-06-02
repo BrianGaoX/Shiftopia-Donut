@@ -17,7 +17,7 @@ export const ShiftDetailsHeader: React.FC<ShiftDetailsHeaderProps> = ({
   shift,
   onWithdraw,
 }) => {
-  const colors = getGroupColors(shift.group);
+  const colors = getGroupColors(shift.group as any);
   const timeRemaining = calculateTimeRemaining(shift.biddingDeadline);
 
   return (

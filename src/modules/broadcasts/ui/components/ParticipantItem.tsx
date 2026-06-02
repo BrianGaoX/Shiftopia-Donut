@@ -24,6 +24,7 @@ const ROLE_CONFIG: Record<
         color: 'text-amber-400',
     },
     member: { label: 'Member', icon: null, color: 'text-muted-foreground' },
+    lead: { label: 'Lead', icon: <Crown className="h-3 w-3" />, color: 'text-blue-400' },
 };
 
 interface ParticipantItemProps {

@@ -92,7 +92,7 @@ export const RosterMonthView: React.FC<RosterMonthViewProps> = ({
 
         {isSelectedDay && roster && (
           <div className="mt-1 space-y-1 overflow-hidden max-h-16">
-            {roster.groups.slice(0, 2).map((group, index) => (
+            {((roster as any).groups as any[] || []).slice(0, 2).map((group: any, index: number) => (
               <div
                 key={index}
                 className="text-xxs p-1 truncate rounded"
@@ -102,9 +102,9 @@ export const RosterMonthView: React.FC<RosterMonthViewProps> = ({
               </div>
             ))}
 
-            {roster.groups.length > 2 && (
+            {((roster as any).groups as any[] || []).length > 2 && (
               <div className="text-xxs text-white/60 text-center">
-                +{roster.groups.length - 2} more
+                +{((roster as any).groups as any[]).length - 2} more
               </div>
             )}
           </div>
@@ -115,9 +115,9 @@ export const RosterMonthView: React.FC<RosterMonthViewProps> = ({
 
   const countShifts = (roster: Roster) => {
     let count = 0;
-    roster.groups.forEach(group => {
-      group.subGroups.forEach(subGroup => {
-        count += subGroup.shifts.length;
+    ((roster as any).groups as any[] || []).forEach((group: any) => {
+      (group.subGroups || group.subgroups || []).forEach((subGroup: any) => {
+        count += (subGroup.shifts || []).length;
       });
     });
     return count;

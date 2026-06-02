@@ -16,6 +16,7 @@ export type ParticipationStatus =
     | 'pending'           // active bid awaiting manager review
     | 'selected'          // bid accepted / selected
     | 'rejected'          // bid rejected
+    | 'auto_rejected'     // bid auto-rejected because shift start_time has passed without selection
     | 'expired';          // bidding window closed before user bid
 
 export interface Bid {

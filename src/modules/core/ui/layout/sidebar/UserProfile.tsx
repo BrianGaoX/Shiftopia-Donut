@@ -25,7 +25,9 @@ import { UserProfileProps } from './types';
 const UserProfile: React.FC<UserProfileProps> = ({ user, isCollapsed, handleLogout }) => {
   // Determine online status (this could be dynamic based on user data)
   const isOnline = true;
-  
+
+  if (!user) return null;
+
   return (
     <DropdownMenu>
       <TooltipProvider>
@@ -98,8 +100,8 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, isCollapsed, handleLogo
           </DropdownMenuItem>
         </Link>
         <DropdownMenuSeparator />
-        <DropdownMenuItem 
-          onClick={handleLogout}
+        <DropdownMenuItem
+          onClick={handleLogout ?? undefined}
           className="cursor-pointer transition-colors hover:bg-accent/50 hover:text-destructive"
         >
           <LogOut className="mr-2 h-4 w-4" />

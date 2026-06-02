@@ -109,7 +109,7 @@ export const ComposeSection: React.FC<ComposeSectionProps> = ({
                 priority,
                 requiresAcknowledgement: false,
                 isPinned,
-                attachments: attachmentFiles.map((file) => ({ file })),
+                attachments: attachmentFiles.map((file) => ({ file, name: file.name })),
             });
             setSubject('');
             setContent('');

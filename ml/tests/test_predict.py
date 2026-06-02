@@ -1,3 +1,5 @@
+import hashlib
+import logging
 import os
 import pickle
 
@@ -39,12 +41,15 @@ def test_feature_pipeline_raises_on_missing_key(patched_predict, sample_features
         pipeline.transform(incomplete)
 
 
-def test_feature_pipeline_raises_on_unknown_category(patched_predict, sample_features):
+def test_feature_pipeline_falls_back_on_unknown_category(patched_predict, sample_features, caplog):
+    """Unknown category must not raise; it falls back to classes_[0] and logs a warning."""
     pipeline = patched_predict.FeaturePipeline()
     bogus = dict(sample_features)
-    bogus['event_type'] = 'UnheardOfEvent'
-    with pytest.raises(ValueError):
-        pipeline.transform(bogus)
+    bogus['event_type'] = 'MadeUpType'
+    with caplog.at_level(logging.WARNING):
+        arr = pipeline.transform(bogus)
+    assert arr.shape == (1, 14)
+    assert any('MadeUpType' in m for m in caplog.messages)
 
 
 def test_correction_engine_applies_factor_when_present(patched_predict, mock_supabase_client):
@@ -52,23 +57,32 @@ def test_correction_engine_applies_factor_when_present(patched_predict, mock_sup
         {'event_type': 'Concert', 'role': 'Security', 'correction_factor': 1.5},
     ]
     engine = patched_predict.CorrectionEngine()
-    assert engine.apply('Concert', 'Security', 10.0) == pytest.approx(15.0)
+    engine.load_factors(client_factory=lambda *a, **kw: mock_supabase_client)
+    corrected, _ = engine.apply('Concert', 'Security', 10.0)
+    assert corrected == pytest.approx(15.0)
 
 
 def test_correction_engine_defaults_to_one_when_missing(patched_predict, mock_supabase_client):
     mock_supabase_client.table.return_value.select.return_value.execute.return_value.data = []
     engine = patched_predict.CorrectionEngine()
-    assert engine.apply('Concert', 'Usher', 7.0) == pytest.approx(7.0)
+    engine.load_factors(client_factory=lambda *a, **kw: mock_supabase_client)
+    corrected, _ = engine.apply('Concert', 'Usher', 7.0)
+    assert corrected == pytest.approx(7.0)
 
 
 def test_correction_engine_survives_supabase_unreachable(patched_predict, monkeypatch):
+    """load_factors() must raise when the DB is unreachable; __init__ stays cheap."""
     def boom(*_a, **_kw):
         raise RuntimeError('network down')
 
-    monkeypatch.setattr(patched_predict, 'create_client', boom)
     engine = patched_predict.CorrectionEngine()
+    # __init__ does no I/O — factors is empty without touching the network.
     assert engine.factors == {}
-    assert engine.apply('Concert', 'Usher', 9.0) == pytest.approx(9.0)
+    corrected, _ = engine.apply('Concert', 'Usher', 9.0)
+    assert corrected == pytest.approx(9.0)
+    # load_factors() propagates the connect failure.
+    with pytest.raises(RuntimeError, match='network down'):
+        engine.load_factors(client_factory=boom)
 
 
 def test_predict_demand_returns_all_roles(patched_predict, sample_features):
@@ -128,3 +142,84 @@ def test_predict_demand_applies_correction_factor(patched_predict, mock_supabase
     ]
     result = patched_predict.predict_demand(sample_features)
     assert result['Usher']['corrected'] >= result['Usher']['predicted']
+
+
+def test_predict_demand_unknown_event_type_no_exception(patched_predict, sample_features, caplog):
+    """predict_demand() with an unseen event_type must return all four roles,
+    not raise, and emit at least one WARNING naming the unknown value."""
+    bogus = dict(sample_features)
+    bogus['event_type'] = 'MadeUpType'
+    with caplog.at_level(logging.WARNING):
+        result = patched_predict.predict_demand(bogus)
+    assert set(result.keys()) == {'Usher', 'Security', 'Food Staff', 'Supervisor'}
+    for role, counts in result.items():
+        assert 'predicted' in counts and 'corrected' in counts
+    assert any('MadeUpType' in m for m in caplog.messages)
+
+
+def test_manifest_loadable_and_contains_all_roles(patched_predict, fake_models_dir):
+    """MANIFEST.json written by the fixture must carry version entries for every role."""
+    import json, os
+    manifest_path = os.path.join(str(fake_models_dir), 'MANIFEST.json')
+    with open(manifest_path) as f:
+        data = json.load(f)
+    assert 'models' in data
+    for role in ('Usher', 'Security', 'Food Staff', 'Supervisor'):
+        assert role in data['models'], f"MANIFEST missing role: {role}"
+
+
+# ---------------------------------------------------------------------------
+# Manifest-hash verification (opt-in via ML_VERIFY_MANIFEST_HASHES)
+# ---------------------------------------------------------------------------
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        h.update(f.read())
+    return h.hexdigest()
+
+
+def test_verify_manifest_hashes_no_op_when_disabled(patched_predict, monkeypatch):
+    monkeypatch.delenv('ML_VERIFY_MANIFEST_HASHES', raising=False)
+    # Should return without error and without touching Supabase.
+    patched_predict._verify_manifest_hashes()
+
+
+def test_verify_manifest_hashes_passes_with_matching_hash(patched_predict, fake_models_dir, mock_supabase_client, monkeypatch):
+    monkeypatch.setenv('ML_VERIFY_MANIFEST_HASHES', 'true')
+    monkeypatch.setenv('VITE_SUPABASE_URL', 'http://fake')
+    monkeypatch.setenv('VITE_SUPABASE_ANON_KEY', 'fake-key')
+
+    expected = {role: _sha256(os.path.join(str(fake_models_dir), f'{role}.pkl'))
+                for role in ('Usher', 'Security', 'Food Staff', 'Supervisor')}
+    mock_supabase_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {'manifest_id': 'test-v1', 'file_hashes': expected}
+    ]
+    monkeypatch.setattr(patched_predict, 'create_client', lambda *a, **kw: mock_supabase_client)
+
+    patched_predict._verify_manifest_hashes()  # must not raise
+
+
+def test_verify_manifest_hashes_fails_on_mismatch(patched_predict, fake_models_dir, mock_supabase_client, monkeypatch):
+    monkeypatch.setenv('ML_VERIFY_MANIFEST_HASHES', 'true')
+    monkeypatch.setenv('VITE_SUPABASE_URL', 'http://fake')
+    monkeypatch.setenv('VITE_SUPABASE_ANON_KEY', 'fake-key')
+
+    bogus = {role: 'deadbeef' * 8 for role in ('Usher',)}
+    mock_supabase_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {'manifest_id': 'test-v1', 'file_hashes': bogus}
+    ]
+    monkeypatch.setattr(patched_predict, 'create_client', lambda *a, **kw: mock_supabase_client)
+
+    with pytest.raises(RuntimeError, match='sha256 mismatch'):
+        patched_predict._verify_manifest_hashes()
+
+
+def test_verify_manifest_hashes_fails_when_no_active_row(patched_predict, mock_supabase_client, monkeypatch):
+    monkeypatch.setenv('ML_VERIFY_MANIFEST_HASHES', 'true')
+    monkeypatch.setenv('VITE_SUPABASE_URL', 'http://fake')
+    monkeypatch.setenv('VITE_SUPABASE_ANON_KEY', 'fake-key')
+    mock_supabase_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    monkeypatch.setattr(patched_predict, 'create_client', lambda *a, **kw: mock_supabase_client)
+
+    with pytest.raises(RuntimeError, match='no active row'):
+        patched_predict._verify_manifest_hashes()

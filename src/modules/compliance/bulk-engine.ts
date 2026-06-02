@@ -99,7 +99,7 @@ export async function checkBulkCompliance(
             name: 'Employee',
             contract_type: ctx.contract_type as any, // Cast to V8ContractType
             contracted_weekly_hours: ctx.contracted_weekly_hours,
-            skill_ids: ctx.qualifications.map(q => q.qualification_id)
+            skill_ids: (ctx.qualifications ?? []).map(q => q.qualification_id)
         }
     ]));
 

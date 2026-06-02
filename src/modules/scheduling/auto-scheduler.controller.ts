@@ -105,7 +105,18 @@ async function greedyFallback(
     employees: EmployeeMeta[],
     employeeDetails: Map<string, Partial<OptimizerEmployee>>,
     existingRoster: Map<string, ExistingShiftRef[]>,
+    strategy?: OptimizerStrategy,
 ): Promise<ValidatedProposal[]> {
+    // Resolve strategy once here with the same defaults used when building
+    // the Python optimizer request (see OptimizeRequest construction below).
+    // This ensures the greedy fallback honours UI slider values instead of
+    // always using baked-in constants.
+    const resolvedStrategy = strategy ?? {
+        fatigue_weight: 50,
+        fairness_weight: 50,
+        cost_weight: 50,
+        coverage_weight: 100,
+    };
     const proposals: ValidatedProposal[] = [];
     const assignedByEmployee = new Map<string, string[]>();
 
@@ -150,13 +161,21 @@ async function greedyFallback(
             const scheduledMins = totalShiftsForEmp.reduce((acc, s) => acc + (s as any).duration_minutes || 0, 0);
             const utl = calculateUtilization(scheduledMins / 60, contractedMins / 60);
 
+            // Strategy multipliers — mirrors optimizer-service/model_builder.py `_strategy_mult`:
+            //   symmetric exponential, 0% → 0.5×, 50% → 1.0×, 100% → 2.0×.
+            // cost_weight is honoured only by the Python OR-Tools optimizer; the greedy
+            // fallback does not compute per-shift cost and leaves that term at default.
+            const strategyMult = (w: number) => Math.pow(2, (w - 50) / 50);
+            const fatigueMult  = strategyMult(resolvedStrategy.fatigue_weight  ?? 50);
+            const fairnessMult = strategyMult(resolvedStrategy.fairness_weight ?? 50);
+
             // Penalty Calculation
-            // High fatigue (> 15) is penalized exponentially
-            const fatiguePenalty = health.projected > 15 ? Math.pow(health.projected - 15, 2) * 50 : 0;
-            // Over-utilization (> 100%) is penalized
+            // High fatigue (> 15) is penalized exponentially, scaled by fatigue_weight
+            const fatiguePenalty = health.projected > 15 ? Math.pow(health.projected - 15, 2) * 50 * fatigueMult : 0;
+            // Over-utilization (> 100%) is a hard over-cap, not a strategy lever
             const utilizationPenalty = utl > 100 ? (utl - 100) * 10 : 0;
-            // Under-utilization (< 80%) gets a "fairness bonus" (negative penalty)
-            const fairnessBonus = utl < 80 ? (80 - utl) * 5 : 0;
+            // Under-utilization (< 80%) gets a fairness bonus, scaled by fairness_weight
+            const fairnessBonus = utl < 80 ? (80 - utl) * 5 * fairnessMult : 0;
 
             const score = 1000 - fatiguePenalty - utilizationPenalty + fairnessBonus;
 
@@ -473,6 +492,7 @@ export class AutoSchedulerController {
         let uncoveredV8ShiftIds: string[] = [];
         let validatedProposals: ValidatedProposal[] = [];
         let usedFallback = false;
+        let optimizerObjectiveBreakdown: Record<string, number> | null = null;
 
         // ── Layer 2: Call optimizer (with fallback) ───────────────────────────
         // Auto-scale the solver budget with problem size. Preprocess time
@@ -510,6 +530,7 @@ export class AutoSchedulerController {
             throwIfAborted();
             optimizerStatus = optimizeResponse.status;
             solveTimeMs = optimizeResponse.solve_time_ms;
+            optimizerObjectiveBreakdown = optimizeResponse.objective_breakdown ?? null;
 
             if (optimizerStatus === 'INFEASIBLE' || optimizerStatus === 'UNKNOWN' || optimizerStatus === 'MODEL_INVALID') {
                 // Optimizer cannot find a solution → fall back to greedy
@@ -517,7 +538,7 @@ export class AutoSchedulerController {
                 usedFallback = true;
                 const validationStart = performance.now();
                 // Note: greedyFallback still processes all shifts, it will naturally handle the past ones
-                validatedProposals = await greedyFallback(input.shifts, input.employees, input.employeeDetails ?? new Map(), existingRoster);
+                validatedProposals = await greedyFallback(input.shifts, input.employees, input.employeeDetails ?? new Map(), existingRoster, input.strategy);
                 validationTimeMs = Math.round(performance.now() - validationStart);
                 uncoveredV8ShiftIds = validatedProposals.filter(p => !p.passing).map(p => p.shiftId);
             } else {
@@ -565,7 +586,7 @@ export class AutoSchedulerController {
                 usedFallback = true;
                 optimizerStatus = 'UNKNOWN';
                 const validationStart = performance.now();
-                validatedProposals = await greedyFallback(input.shifts, input.employees, input.employeeDetails ?? new Map(), existingRoster);
+                validatedProposals = await greedyFallback(input.shifts, input.employees, input.employeeDetails ?? new Map(), existingRoster, input.strategy);
                 validationTimeMs = Math.round(performance.now() - validationStart);
                 uncoveredV8ShiftIds = validatedProposals.filter(p => !p.passing).map(p => p.shiftId);
             } else {
@@ -656,6 +677,10 @@ export class AutoSchedulerController {
             canCommit: passing > 0,
             usedFallback,
             capacityCheck,
+            // Forward the per-category breakdown from the Python service.
+            // Null when the greedy fallback path was taken (usedFallback=true)
+            // because greedyFallback never calls the optimizer.
+            objective_breakdown: optimizerObjectiveBreakdown,
         };
 
 

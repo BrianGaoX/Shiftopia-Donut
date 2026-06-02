@@ -19,7 +19,7 @@ import type { DemandRuleRow, EventFeatureForRules } from '../../domain/ruleEngin
 function rule(
     rule_code: string,
     formula: string,
-    overrides: Partial<DemandRuleRow> = {},
+    overrides: Partial<DemandRuleRow> & { service_type?: any } = {},
 ): DemandRuleRow {
     return {
         id: rule_code,

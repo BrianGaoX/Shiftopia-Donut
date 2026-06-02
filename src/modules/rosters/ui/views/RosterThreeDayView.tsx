@@ -21,14 +21,14 @@ export const RosterThreeDayView: React.FC<RosterThreeDayViewProps> = ({
   
   const renderShiftCount = (roster: Roster | null) => {
     if (!roster) return 0;
-    
+
     let count = 0;
-    roster.groups.forEach(group => {
-      group.subGroups.forEach(subGroup => {
-        count += subGroup.shifts.length;
+    ((roster as any).groups as any[] || []).forEach((group: any) => {
+      (group.subGroups || group.subgroups || []).forEach((subGroup: any) => {
+        count += (subGroup.shifts || []).length;
       });
     });
-    
+
     return count;
   };
   
@@ -58,11 +58,11 @@ export const RosterThreeDayView: React.FC<RosterThreeDayViewProps> = ({
             </div>
             
             <div className="space-y-2">
-              {roster?.groups.map(group => (
+              {((roster as any)?.groups as any[] || []).map((group: any) => (
                 <div key={group.id} className="p-3 rounded-lg bg-black/20 border border-white/10">
                   <h4 className="font-medium">{group.name}</h4>
                   <div className="text-sm text-white/70 mt-1">
-                    {group.subGroups.reduce((total, subGroup) => total + subGroup.shifts.length, 0)} shifts
+                    {(group.subGroups || group.subgroups || []).reduce((total: number, subGroup: any) => total + (subGroup.shifts || []).length, 0)} shifts
                   </div>
                 </div>
               ))}

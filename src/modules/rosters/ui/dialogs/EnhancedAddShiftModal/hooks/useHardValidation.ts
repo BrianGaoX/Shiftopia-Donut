@@ -140,6 +140,7 @@ export function useHardValidation({
             existing_shifts: employeeExistingShifts,
             current_time: getNowInTimezone(timezone),
             is_template: isTemplateMode,
+            shift_id: existingV8ShiftId,
         });
 
         // Only update if result actually changed to prevent render loops

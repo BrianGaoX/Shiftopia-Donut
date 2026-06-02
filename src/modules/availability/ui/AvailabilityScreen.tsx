@@ -59,9 +59,9 @@ export interface AvailabilityScreenProps {
    * - 'mobile': Single pane with tab navigation
    */
   layout: 'desktop' | 'tablet' | 'mobile';
-  currentMonth: Date;
-  availabilityData: UseAvailabilityResult;
-  editingData: UseAvailabilityEditingResult;
+  currentMonth?: Date;
+  availabilityData?: UseAvailabilityResult;
+  editingData?: UseAvailabilityEditingResult;
 }
 
 type TabType = 'calendar' | 'logs' | 'configure';
@@ -85,6 +85,8 @@ export function AvailabilityScreen({
   const { isDark } = useTheme();
 
   const { toast } = useToast();
+
+  if (!currentMonth || !availabilityData || !editingData) return null;
 
   // ========================================
   // DATA DESTRUCTURING

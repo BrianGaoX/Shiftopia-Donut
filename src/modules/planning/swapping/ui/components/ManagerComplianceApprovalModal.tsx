@@ -24,9 +24,11 @@ import { cn } from '@/modules/core/lib/utils';
 import { supabase } from '@/platform/realtime/client';
 import { getScenarioWindow } from '@/modules/compliance';
 import { fetchV8EmployeeContext } from '@/modules/compliance/employee-context';
-import type { V8OrchestratorInput, V8OrchestratorShift } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorInput, V8OrchestratorShift } from '@/modules/compliance/v8/orchestrator/types';
+import { buildSwapInputs } from '@/modules/planning/unified/compliance/input-builder';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Drawer, DrawerContent } from '@/modules/core/ui/primitives/drawer';
+import { Drawer, DrawerContent, DrawerTitle, DrawerDescription } from '@/modules/core/ui/primitives/drawer';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import { useCompliancePanel } from '@/modules/compliance/ui/useCompliancePanel';
 import { CompliancePanel } from '@/modules/compliance/ui/CompliancePanel';
@@ -221,9 +223,10 @@ function normalizeTime(t: string): string {
 
 /** Map a RosterShiftInput to the V8OrchestratorShift structure the v2 engine expects */
 function buildV8OrchestratorShift(s: RosterShiftInput, fallbackId?: string): V8OrchestratorShift {
+    const id = (s as any).id || fallbackId || String(Math.random());
     return {
-        shift_id:             (s as any).id || fallbackId || String(Math.random()),
-        shift_date:           s.shift_date,
+        id,
+        date:                 s.shift_date,
         start_time:           normalizeTime(s.start_time),
         end_time:             normalizeTime(s.end_time),
         role_id:              s.role_id || '',
@@ -234,7 +237,7 @@ function buildV8OrchestratorShift(s: RosterShiftInput, fallbackId?: string): V8O
         is_ordinary_hours:    true,
         break_minutes:        s.unpaid_break_minutes || 0,
         unpaid_break_minutes: s.unpaid_break_minutes || 0,
-    };
+    } as V8OrchestratorShift;
 }
 
 // =============================================================================
@@ -276,9 +279,9 @@ export function ManagerComplianceApprovalModal({
 
         if (shiftErr) throw shiftErr;
 
-        const requesterShiftData = (shiftRows || []).find((s: ShiftRow) => s.id === requesterV8ShiftId);
+        const requesterShiftData = (shiftRows as any[] || []).find((s: ShiftRow) => s.id === requesterV8ShiftId) as ShiftRow | undefined;
         const offererShiftData   = offererV8ShiftId
-            ? (shiftRows || []).find((s: ShiftRow) => s.id === offererV8ShiftId)
+            ? (shiftRows as any[] || []).find((s: ShiftRow) => s.id === offererV8ShiftId) as ShiftRow | undefined
             : null;
 
         if (!requesterShiftData) throw new Error('Requester shift not found.');
@@ -296,7 +299,7 @@ export function ManagerComplianceApprovalModal({
                 .is('deleted_at', null)
                 .is('is_cancelled', false);
             if (error) return [];
-            return data || [];
+            return (data || []) as RosterShiftInput[];
         };
 
         const [requesterRoster, offererRoster] = await Promise.all([
@@ -312,25 +315,24 @@ export function ManagerComplianceApprovalModal({
                 : Promise.resolve(null),
         ]);
 
-        // 4. Build v2 inputs for each party
-        //    Requester: remove their shift, add the offerer's shift (they receive it)
-        const inputA: V8OrchestratorInput = {
-            employee_id:      requesterEmployeeId,
-            employee_context: requesterCtx,
-            existing_shifts:  requesterRoster.map(s => buildV8OrchestratorShift(s)),
-            candidate_changes: {
-                add_shifts:    offererShiftData ? [buildV8OrchestratorShift(offererShiftData)] : [],
-                remove_shifts: [requesterV8ShiftId],
-            },
-            mode:           'SIMULATED',
-            operation_type: 'SWAP',
-            stage:          'PUBLISH',
-        };
+        // 4. Build v2 inputs for each party via the canonical swap builder.
+        //    Party A = requester (loses their own shift, gains the offerer's).
+        //    Party B = offerer   (loses their own shift, gains the requester's).
+        const requesterShiftV8: V8OrchestratorShift = requesterShiftData
+            ? buildV8OrchestratorShift(requesterShiftData as any)
+            : ({ id: requesterV8ShiftId, date: '', start_time: '', end_time: '', is_ordinary_hours: true, required_qualifications: [], break_minutes: 0 } as V8OrchestratorShift);
 
-        //    Offerer: remove their shift, add the requester's shift (they receive it)
-        const inputB: V8OrchestratorInput = {
-            employee_id:      offererEmployeeId || '',
-            employee_context: offererCtx ?? {
+        const offererShiftV8: V8OrchestratorShift = offererShiftData
+            ? buildV8OrchestratorShift(offererShiftData as any)
+            : ({ id: offererV8ShiftId ?? '', date: '', start_time: '', end_time: '', is_ordinary_hours: true, required_qualifications: [], break_minutes: 0 } as V8OrchestratorShift);
+
+        const { inputA, inputB } = buildSwapInputs({
+            partyAEmployeeId:     requesterEmployeeId,
+            partyAContext:        requesterCtx,
+            partyAExistingShifts: requesterRoster.map(s => buildV8OrchestratorShift(s)),
+            partyAShift:          requesterShiftV8,
+            partyBEmployeeId:     offererEmployeeId || '',
+            partyBContext:        offererCtx ?? {
                 employee_id:             '',
                 contract_type:           'CASUAL',
                 contracted_weekly_hours: 0,
@@ -338,15 +340,10 @@ export function ManagerComplianceApprovalModal({
                 contracts:               [],
                 qualifications:          [],
             },
-            existing_shifts:  offererRoster.map(s => buildV8OrchestratorShift(s)),
-            candidate_changes: {
-                add_shifts:    requesterShiftData ? [buildV8OrchestratorShift(requesterShiftData)] : [],
-                remove_shifts: offererV8ShiftId ? [offererV8ShiftId] : [],
-            },
-            mode:           'SIMULATED',
-            operation_type: 'SWAP',
-            stage:          'PUBLISH',
-        };
+            partyBExistingShifts: offererRoster.map(s => buildV8OrchestratorShift(s)),
+            partyBShift:          offererShiftV8,
+            stage: 'PUBLISH',
+        });
 
         return [inputA, inputB];
     }, [
@@ -650,6 +647,10 @@ export function ManagerComplianceApprovalModal({
         return (
             <Drawer open={isOpen} onOpenChange={(open) => !open && onClose()}>
                 <DrawerContent className="h-[92dvh] bg-card border-border p-0 overflow-hidden flex flex-col rounded-t-[2.5rem]">
+                    <VisuallyHidden>
+                        <DrawerTitle>Swap Approval Review</DrawerTitle>
+                        <DrawerDescription>Review trade compliance and approve or reject shift swap</DrawerDescription>
+                    </VisuallyHidden>
                     {innerContent}
                 </DrawerContent>
             </Drawer>

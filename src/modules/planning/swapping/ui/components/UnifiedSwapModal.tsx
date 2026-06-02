@@ -21,6 +21,8 @@ import {
 import {
     Drawer,
     DrawerContent,
+    DrawerTitle,
+    DrawerDescription,
 } from '@/modules/core/ui/primitives/drawer';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import { Button } from '@/modules/core/ui/primitives/button';
@@ -326,7 +328,6 @@ export const UnifiedSwapModal: React.FC<UnifiedSwapModalProps> = ({
                                     const s = shift as any;
                                     const isOfferedHere = alreadyOfferedForThisSwapIds.has(shift.id);
                                     const isOfferedElsewhere = offeredElsewhereIds.has(shift.id);
-                                    const isPendingOffer = s.lifecycle_status === 'Published' && s.assignment_status === 'assigned' && !s.assignment_outcome;
 
                                     const urgency = computeShiftUrgency(s.shift_date, s.start_time, s.start_at);
                                     const isLocked = urgency === 'emergent';
@@ -335,17 +336,13 @@ export const UnifiedSwapModal: React.FC<UnifiedSwapModalProps> = ({
                                     const isIneligible = elig?.eligible === false;
                                     const hasWarnings = (elig?.warnings?.length || 0) > 0;
 
-                                    const isUnavailable = isOfferedHere || isOfferedElsewhere || isLocked || isPendingOffer || isIneligible;
+                                    const isUnavailable = isOfferedHere || isOfferedElsewhere || isLocked;
                                     const isSelected = selectedV8ShiftId === shift.id;
 
                                     const groupVariant = resolveGroupVariant(s.group_type || s.roles?.groupType, s.departments?.name);
 
                                     // Status override badge (urgency badges handled by SharedShiftCard)
-                                    const statusBadge = isPendingOffer ? (
-                                        <Badge className="text-[7px] h-3.5 px-1 font-black uppercase tracking-widest border-none bg-rose-500/10 text-rose-500">
-                                            <Inbox className="w-2 h-2 mr-0.5 inline" />In Offers
-                                        </Badge>
-                                    ) : isOfferedHere ? (
+                                    const statusBadge = isOfferedHere ? (
                                         <Badge className="text-[7px] h-3.5 px-1 font-black uppercase tracking-widest border-none bg-slate-500/10 text-slate-500">Offered</Badge>
                                     ) : isOfferedElsewhere ? (
                                         <Badge className="text-[7px] h-3.5 px-1 font-black uppercase tracking-widest border-none bg-slate-500/10 text-slate-500">Elsewhere</Badge>
@@ -385,6 +382,21 @@ export const UnifiedSwapModal: React.FC<UnifiedSwapModalProps> = ({
                                                         {statusBadge}
                                                     </div>
                                                 ) : undefined}
+                                                topContent={
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="radio"
+                                                            name="select-offer-shift"
+                                                            checked={isSelected}
+                                                            onChange={() => setSelectedV8ShiftId(shift.id)}
+                                                            disabled={isUnavailable}
+                                                            className="h-4 w-4 rounded-full border-white/10 text-indigo-600 focus:ring-indigo-500/30 accent-indigo-600 cursor-pointer"
+                                                        />
+                                                        <span className="text-[10px] text-muted-foreground/60 font-bold uppercase tracking-wider">
+                                                            {isSelected ? "Selected" : "Select"}
+                                                        </span>
+                                                    </div>
+                                                }
                                             />
                                             {/* Ineligibility tooltip */}
                                             {isIneligible && elig?.reasons && elig.reasons.length > 0 && (
@@ -610,6 +622,10 @@ export const UnifiedSwapModal: React.FC<UnifiedSwapModalProps> = ({
     return isMobile ? (
         <Drawer open={isOpen} onOpenChange={(open) => !open && handleClose()}>
             <DrawerContent className="h-[92dvh] bg-[#0A0C0E] border-white/10 p-0 overflow-hidden flex flex-col" aria-describedby={undefined}>
+                <VisuallyHidden>
+                    <DrawerTitle>Offer a Shift Swap</DrawerTitle>
+                    <DrawerDescription>Select one of your future shifts to offer in exchange for the requested shift</DrawerDescription>
+                </VisuallyHidden>
                 {modalContent}
             </DrawerContent>
         </Drawer>

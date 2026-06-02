@@ -30,8 +30,55 @@ import { useAuth } from '@/platform/auth/useAuth';
 
 const BottomNavbar: React.FC = () => {
   const [moreOpen, setMoreOpen] = useState(false);
+  const [isBottomDrawerActive, setIsBottomDrawerActive] = useState(false);
   const location = useLocation();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkDrawer = () => {
+      const activeElements = document.querySelectorAll('[data-state="open"], [data-vaul-drawer]');
+      let found = false;
+      
+      activeElements.forEach((el) => {
+        const className = el.className || '';
+        const hasBottomClass = typeof className === 'string' && (
+          className.includes('bottom-0') || 
+          className.includes('slide-in-from-bottom') ||
+          className.includes('inset-x-0')
+        );
+        const isVaulDrawer = el.hasAttribute('data-vaul-drawer') || el.closest('[data-vaul-drawer]') !== null;
+        
+        if (hasBottomClass || isVaulDrawer) {
+          found = true;
+        }
+      });
+      
+      setIsBottomDrawerActive(found);
+    };
+
+    checkDrawer();
+
+    const observer = new MutationObserver(() => {
+      checkDrawer();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-state', 'class', 'data-vaul-drawer'],
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isBottomDrawerActive) {
+      setMoreOpen(false);
+    }
+  }, [isBottomDrawerActive]);
 
   useEffect(() => {
     setMoreOpen(false);
@@ -205,8 +252,12 @@ const BottomNavbar: React.FC = () => {
 
       <motion.nav
         initial={{ y: 100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
+        animate={{ 
+          y: isBottomDrawerActive ? 120 : 0, 
+          opacity: isBottomDrawerActive ? 0 : 1 
+        }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+        style={{ pointerEvents: isBottomDrawerActive ? 'none' : 'auto' }}
         className="md:hidden fixed bottom-6 left-4 right-4 z-[60] h-[72px] bg-background/80 dark:bg-black/60 backdrop-blur-3xl border border-white/20 dark:border-white/10 shadow-[0_24px_40px_-10px_rgba(0,0,0,0.3)] rounded-[36px] flex items-center p-2 gap-2 overflow-hidden"
       >
         {/* HOME BUTTON (Pinned Left - Fixed Width) */}

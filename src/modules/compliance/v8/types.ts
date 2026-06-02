@@ -40,7 +40,26 @@ export interface V8Employee {
     contracted_weekly_hours: number;
     skill_ids?:              string[];
     license_ids?:            string[];
+    /** Rich qualification records with expiry dates. When present, the
+     *  qualification rule uses these instead of skill_ids / license_ids so
+     *  that expired credentials are never silently treated as valid. */
+    qualifications?:         QualificationV2[];
 }
+
+export interface QualificationV2 {
+    qualification_id: string;
+    issued_at:        string;
+    expires_at:       string | null;
+}
+
+export interface ContractRecordV2 {
+    organization_id:   string;
+    department_id:     string;
+    sub_department_id: string | null;
+    role_id:           string;
+}
+
+export type ContractType = V8ContractType;
 
 /** Global EBA/Policy configuration for the V8 engine */
 export interface V8Config {

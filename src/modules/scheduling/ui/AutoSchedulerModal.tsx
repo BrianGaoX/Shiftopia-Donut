@@ -29,6 +29,10 @@ import {
     ChevronUp,
     ChevronDown,
     Download,
+    HelpCircle,
+    Bookmark,
+    X as XIcon,
+    Plus,
 } from 'lucide-react';
 import { 
     PieChart, 
@@ -164,6 +168,120 @@ export function AutoSchedulerModal({
     const [costWeight, setCostWeight] = useState(50);
     const [coverageWeight, setCoverageWeight] = useState(100);
     const [relaxConstraints, setRelaxConstraints] = useState(false);
+    // Fix 5: min rest hours — converted to minutes when sent to the solver
+    const [minRestHours, setMinRestHours] = useState(10);
+
+    // Fix 6: Load persisted strategy from localStorage on mount
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem('autoScheduler.strategy');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed.fatigueWeight === 'number') setFatigueWeight(parsed.fatigueWeight);
+                if (typeof parsed.fairnessWeight === 'number') setFairnessWeight(parsed.fairnessWeight);
+                if (typeof parsed.costWeight === 'number') setCostWeight(parsed.costWeight);
+                if (typeof parsed.coverageWeight === 'number') setCoverageWeight(parsed.coverageWeight);
+                if (typeof parsed.minRestHours === 'number') setMinRestHours(parsed.minRestHours);
+                if (typeof parsed.relaxConstraints === 'boolean') setRelaxConstraints(parsed.relaxConstraints);
+            }
+        } catch {
+            // Corrupted localStorage — silently ignore and keep defaults
+        }
+    }, []);
+
+    // Fix 6: Persist strategy to localStorage whenever any slider changes
+    useEffect(() => {
+        try {
+            localStorage.setItem('autoScheduler.strategy', JSON.stringify({
+                fatigueWeight,
+                fairnessWeight,
+                costWeight,
+                coverageWeight,
+                minRestHours,
+                relaxConstraints,
+            }));
+        } catch {
+            // Storage write failures are non-fatal
+        }
+    }, [fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints]);
+
+    // Gap 9: Named strategy presets
+    type StrategyPreset = {
+        fatigueWeight: number;
+        fairnessWeight: number;
+        costWeight: number;
+        coverageWeight: number;
+        minRestHours: number;
+        relaxConstraints: boolean;
+    };
+    const BUILTIN_PRESETS: Record<string, StrategyPreset> = useMemo(() => ({
+        Balanced:           { fatigueWeight: 50,  fairnessWeight: 50, costWeight: 50,  coverageWeight: 100, minRestHours: 10, relaxConstraints: false },
+        'Cost-First':       { fatigueWeight: 30,  fairnessWeight: 30, costWeight: 100, coverageWeight: 80,  minRestHours: 10, relaxConstraints: false },
+        'Fatigue-Safe':     { fatigueWeight: 100, fairnessWeight: 80, costWeight: 30,  coverageWeight: 100, minRestHours: 11, relaxConstraints: false },
+        'Weekend Coverage': { fatigueWeight: 50,  fairnessWeight: 30, costWeight: 30,  coverageWeight: 150, minRestHours: 10, relaxConstraints: false },
+    }), []);
+    const [userPresets, setUserPresets] = useState<Record<string, StrategyPreset>>({});
+    const [presetSaveOpen, setPresetSaveOpen] = useState(false);
+    const [presetNameDraft, setPresetNameDraft] = useState('');
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem('autoScheduler.presets');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') setUserPresets(parsed);
+            }
+        } catch {
+            // Corrupted presets — ignore
+        }
+    }, []);
+    useEffect(() => {
+        try {
+            localStorage.setItem('autoScheduler.presets', JSON.stringify(userPresets));
+        } catch {
+            // non-fatal
+        }
+    }, [userPresets]);
+
+    const applyPreset = useCallback((p: StrategyPreset) => {
+        setFatigueWeight(p.fatigueWeight);
+        setFairnessWeight(p.fairnessWeight);
+        setCostWeight(p.costWeight);
+        setCoverageWeight(p.coverageWeight);
+        setMinRestHours(p.minRestHours);
+        setRelaxConstraints(p.relaxConstraints);
+    }, []);
+    const saveCurrentAsPreset = useCallback(() => {
+        const name = presetNameDraft.trim();
+        if (!name) return;
+        setUserPresets(prev => ({
+            ...prev,
+            [name]: { fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints },
+        }));
+        setPresetNameDraft('');
+        setPresetSaveOpen(false);
+    }, [presetNameDraft, fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints]);
+    const deletePreset = useCallback((name: string) => {
+        setUserPresets(prev => {
+            const next = { ...prev };
+            delete next[name];
+            return next;
+        });
+    }, []);
+    const activePresetName = useMemo(() => {
+        const current: StrategyPreset = { fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints };
+        const matches = (p: StrategyPreset) =>
+            p.fatigueWeight === current.fatigueWeight &&
+            p.fairnessWeight === current.fairnessWeight &&
+            p.costWeight === current.costWeight &&
+            p.coverageWeight === current.coverageWeight &&
+            p.minRestHours === current.minRestHours &&
+            p.relaxConstraints === current.relaxConstraints;
+        const builtin = Object.entries(BUILTIN_PRESETS).find(([, p]) => matches(p));
+        if (builtin) return builtin[0];
+        const user = Object.entries(userPresets).find(([, p]) => matches(p));
+        return user ? user[0] : null;
+    }, [fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints, userPresets, BUILTIN_PRESETS]);
 
     const filteredShifts = useMemo(() => {
         if (!startDate || !endDate) return shifts;
@@ -204,7 +322,8 @@ export function AutoSchedulerModal({
                 },
                 constraints: {
                     relax_constraints: relaxConstraints,
-                    min_rest_minutes: 600,
+                    // Fix 5: convert minRestHours (user-facing) to minutes for the solver
+                    min_rest_minutes: Math.round(minRestHours * 60),
                 }
             });
             if (ac.signal.aborted) return;
@@ -224,7 +343,7 @@ export function AutoSchedulerModal({
         } finally {
             if (runAbortRef.current === ac) runAbortRef.current = null;
         }
-    }, [filteredShifts, employees, toast]);
+    }, [filteredShifts, employees, toast, fatigueWeight, fairnessWeight, costWeight, coverageWeight, relaxConstraints, minRestHours]);
 
     const handleCancel = useCallback(() => {
         if (runAbortRef.current) {
@@ -358,7 +477,7 @@ export function AutoSchedulerModal({
     }, [result]);
 
     const { totals, employeeGroups } = useMemo(() => {
-        if (!result) return { totals: { cost: 0, fatigue: 0, fairness: 0 }, employeeGroups: [] };
+        if (!result) return { totals: { cost: 0, fatigue: 0, p95Fatigue: 0, fairness: 0 }, employeeGroups: [] };
         
         const map = new Map<string, { name: string; proposals: ValidatedProposal[] }>();
         let totalCost = 0;
@@ -393,28 +512,49 @@ export function AutoSchedulerModal({
                 .map(([name, value]) => ({ name, value }))
                 .sort((a, b) => a.name.localeCompare(b.name));
 
-            return { 
-                id, 
-                name, 
+            // Fix 2: use LAST proposal's utilization — the scorer accumulates it
+            // cumulatively as shifts are added, so proposals[0] reflects only the
+            // first shift. The final entry reflects all shifts assigned to this employee.
+            const utilization = proposals.at(-1)?.utilization ?? 0;
+
+            // Fix 3: use LAST proposal's fatigueScore per employee (final cumulative
+            // value), then the caller averages across employees — not across assignments.
+            const finalFatigue = proposals.at(-1)?.fatigueScore ?? 0;
+
+            return {
+                id,
+                name,
                 proposals,
                 roleDistribution: sortedDist,
                 totalCost: proposals.reduce((acc, p) => acc + (p.optimizerCost || 0), 0),
-                avgFatigue: proposals.length > 0 ? proposals.reduce((acc, p) => acc + (p.fatigueScore || 0), 0) / proposals.length : 0,
-                utilization: proposals[0]?.utilization || 0,
+                avgFatigue: finalFatigue,
+                utilization,
                 employmentType: emp?.contract_type || 'Casual',
                 contractedHours: emp?.contracted_weekly_hours || 0,
                 assignedRoles: Array.from(new Set(proposals.map(p => p.roleName).filter(Boolean))) as string[],
             };
         });
 
-        const aggregateFairness = groups.length > 0 
-            ? groups.reduce((acc, g) => acc + g.utilization, 0) / groups.length 
+        const aggregateFairness = groups.length > 0
+            ? groups.reduce((acc, g) => acc + g.utilization, 0) / groups.length
             : 0;
+
+        // Fix 3: average fatigue across employees (each employee's final cumulative
+        // fatigue score), not across individual assignments.
+        const avgFatiguePerEmployee = groups.length > 0
+            ? groups.reduce((acc, g) => acc + g.avgFatigue, 0) / groups.length
+            : 0;
+
+        // p95 fatigue across employees for additional signal
+        const sortedFatigue = [...groups].map(g => g.avgFatigue).sort((a, b) => a - b);
+        const p95FatigueIdx = Math.floor(sortedFatigue.length * 0.95);
+        const p95Fatigue = sortedFatigue.length > 0 ? (sortedFatigue[Math.min(p95FatigueIdx, sortedFatigue.length - 1)] ?? 0) : 0;
 
         return {
             totals: {
                 cost: totalCost,
-                fatigue: proposalCount > 0 ? totalFatigue / proposalCount : 0,
+                fatigue: avgFatiguePerEmployee,
+                p95Fatigue,
                 fairness: aggregateFairness
             },
             employeeGroups: groups
@@ -496,50 +636,268 @@ export function AutoSchedulerModal({
                         </div>
                     </div>
 
-                    {/* Tuning Sidebar */}
+                    {/* Tuning Sidebar — Fixes 4, 5, 7 + Gap 9 (presets) */}
                     <div className="space-y-6 mt-8">
+                        {/* Gap 9: Named strategy presets */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Bookmark className="h-3 w-3 text-muted-foreground/50" />
+                                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/50">Presets</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setPresetSaveOpen(v => !v)}
+                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 hover:text-primary transition-colors px-2 py-1 rounded-lg hover:bg-muted/40"
+                                    title="Save current settings as a preset"
+                                >
+                                    <Plus className="h-3 w-3" />
+                                    Save
+                                </button>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                                {Object.entries(BUILTIN_PRESETS).map(([name, p]) => {
+                                    const isActive = activePresetName === name;
+                                    return (
+                                        <button
+                                            key={name}
+                                            type="button"
+                                            onClick={() => applyPreset(p)}
+                                            className={cn(
+                                                "text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-lg border transition-all",
+                                                isActive
+                                                    ? "bg-primary/15 border-primary/40 text-primary"
+                                                    : "bg-muted/30 border-border/40 text-muted-foreground/80 hover:bg-muted/50 hover:text-foreground"
+                                            )}
+                                        >
+                                            {name}
+                                        </button>
+                                    );
+                                })}
+                                {Object.entries(userPresets).map(([name, p]) => {
+                                    const isActive = activePresetName === name;
+                                    return (
+                                        <div
+                                            key={name}
+                                            className={cn(
+                                                "group flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide pl-2.5 pr-1 py-1 rounded-lg border transition-all",
+                                                isActive
+                                                    ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                                                    : "bg-muted/30 border-border/40 text-muted-foreground/80 hover:bg-muted/50 hover:text-foreground"
+                                            )}
+                                        >
+                                            <button
+                                                type="button"
+                                                onClick={() => applyPreset(p)}
+                                                className="cursor-pointer"
+                                            >
+                                                {name}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => deletePreset(name)}
+                                                className="opacity-50 hover:opacity-100 hover:text-rose-500 transition-opacity p-0.5"
+                                                title={`Delete preset "${name}"`}
+                                            >
+                                                <XIcon className="h-2.5 w-2.5" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                                {Object.keys(userPresets).length === 0 && (
+                                    <span className="text-[10px] text-muted-foreground/40 italic px-1 py-1">
+                                        Save your own below
+                                    </span>
+                                )}
+                            </div>
+                            {presetSaveOpen && (
+                                <div className="flex gap-1.5 pt-1">
+                                    <Input
+                                        type="text"
+                                        value={presetNameDraft}
+                                        onChange={e => setPresetNameDraft(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveCurrentAsPreset(); } }}
+                                        placeholder="Preset name…"
+                                        autoFocus
+                                        className="h-7 text-[11px] flex-1"
+                                    />
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={saveCurrentAsPreset}
+                                        disabled={!presetNameDraft.trim() || presetNameDraft.trim() in BUILTIN_PRESETS}
+                                        className="h-7 text-[10px] font-black uppercase tracking-widest px-2.5"
+                                    >
+                                        Save
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => { setPresetSaveOpen(false); setPresetNameDraft(''); }}
+                                        className="h-7 text-[10px] font-black uppercase tracking-widest px-2.5"
+                                    >
+                                        Cancel
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+
                         <div className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/50">Optimization Strategy</div>
                         <div className="space-y-4">
+
+                            {/* Fix 7: Fatigue Bias with tooltip */}
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center px-1">
-                                    <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Fatigue Bias</Label>
+                                    <div className="flex items-center gap-1">
+                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Fatigue Bias</Label>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
+                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
+                                                    Penalty weight on amber-zone (&gt;20h/wk) and critical-zone (&gt;30h/wk) minutes in the optimizer objective. 0% = penalty halved (solver packs shifts more densely). 50% = default weighting. 100% = penalty doubled (solver spreads fatigue aggressively). Hard compliance limits (R03 daily max, R04 consecutive days) remain enforced at any setting.
+                                                </p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </div>
                                     <span className="text-[10px] font-bold text-primary">{fatigueWeight}%</span>
                                 </div>
-                                <input 
-                                    type="range" min="0" max="100" value={fatigueWeight} 
+                                <input
+                                    type="range" min="0" max="100" value={fatigueWeight}
                                     onChange={e => setFatigueWeight(parseInt(e.target.value))}
                                     className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
                                 />
                             </div>
+
+                            {/* Fix 7: Fairness Bias with tooltip */}
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center px-1">
-                                    <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Fairness Bias</Label>
+                                    <div className="flex items-center gap-1">
+                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Fairness Bias</Label>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
+                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
+                                                    Penalty weight on workload deviation from each employee's baseline. 0% = penalty halved (solver may concentrate shifts). 50% = default weighting. 100% = penalty doubled (solver spreads shifts evenly across the team).
+                                                </p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </div>
                                     <span className="text-[10px] font-bold text-primary">{fairnessWeight}%</span>
                                 </div>
-                                <input 
-                                    type="range" min="0" max="100" value={fairnessWeight} 
+                                <input
+                                    type="range" min="0" max="100" value={fairnessWeight}
                                     onChange={e => setFairnessWeight(parseInt(e.target.value))}
                                     className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
                                 />
                             </div>
+
+                            {/* Fix 7: Cost Sensitivity with tooltip */}
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center px-1">
-                                    <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Cost Sensitivity</Label>
+                                    <div className="flex items-center gap-1">
+                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Cost Sensitivity</Label>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
+                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
+                                                    Per-minute cost penalty in the objective. 0% = penalty halved (cost matters less, solver may pick expensive employees). 50% = default weighting. 100% = penalty doubled (solver prefers cheaper rosters). Total spend can still rise if coverage also rises — this controls preference, not budget.
+                                                </p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </div>
                                     <span className="text-[10px] font-bold text-primary">{costWeight}%</span>
                                 </div>
-                                <input 
-                                    type="range" min="0" max="100" value={costWeight} 
+                                <input
+                                    type="range" min="0" max="100" value={costWeight}
                                     onChange={e => setCostWeight(parseInt(e.target.value))}
                                     className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
                                 />
                             </div>
-                            
-                            <div className="pt-4 flex items-center justify-between px-1">
+
+                            {/* Fix 4: Coverage Priority slider (was hardcoded at 100, now user-controlled) */}
+                            {/* Fix 7: Coverage Priority with tooltip */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center px-1">
+                                    <div className="flex items-center gap-1">
+                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Coverage Priority</Label>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
+                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
+                                                    Penalty per uncovered shift. Default 100 = strong pressure to fill every shift. Lower values let the solver leave shifts uncovered in exchange for better cost/fatigue/fairness. Raise above 100 for safety-critical roles.
+                                                </p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </div>
+                                    <span className="text-[10px] font-bold text-primary">{coverageWeight}</span>
+                                </div>
+                                <input
+                                    type="range" min="50" max="200" step="10" value={coverageWeight}
+                                    onChange={e => setCoverageWeight(parseInt(e.target.value))}
+                                    className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                                />
+                            </div>
+
+                            {/* Fix 5: Min Rest Hours numeric input */}
+                            <div className="space-y-2 pt-2">
+                                <div className="flex items-center gap-1 px-1">
+                                    <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Min Rest Hours</Label>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
+                                            <p className="text-[11px] text-popover-foreground leading-relaxed">
+                                                Minimum hours of rest required between consecutive shifts for each employee. EBA standard is 10h. Reducing below 10h requires a formal exemption.
+                                            </p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </div>
+                                <Input
+                                    type="number"
+                                    min={3} max={15} step={0.5}
+                                    value={minRestHours}
+                                    onChange={e => setMinRestHours(parseFloat(e.target.value) || 10)}
+                                    className="h-8 bg-background border-border rounded-xl text-xs font-bold focus:ring-primary/20"
+                                />
+                                {minRestHours < 10 && (
+                                    <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                        <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
+                                        <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide leading-tight">
+                                            Below EBA minimum — use only with formal exemption
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Fix 7: Relax Blockers with tooltip */}
+                            <div className="pt-2 flex items-center justify-between px-1">
                                 <div className="flex flex-col gap-0.5">
-                                    <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Relax Blockers</Label>
+                                    <div className="flex items-center gap-1">
+                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Relax Blockers</Label>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
+                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
+                                                    When enabled, the solver may violate hard overlap/rest constraints at a $10M-per-violation penalty rather than rejecting infeasible regions. Use only after the optimizer returns INFEASIBLE.
+                                                </p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </div>
                                     <span className="text-[7px] text-muted-foreground/40 uppercase font-bold">Soften Overlaps</span>
                                 </div>
-                                <button 
+                                <button
                                     onClick={() => setRelaxConstraints(!relaxConstraints)}
                                     className={cn(
                                         "h-5 w-9 rounded-full transition-all relative flex items-center px-1",
@@ -552,6 +910,7 @@ export function AutoSchedulerModal({
                                     )} />
                                 </button>
                             </div>
+
                         </div>
                     </div>
 
@@ -719,25 +1078,91 @@ export function AutoSchedulerModal({
                                         animate={{ opacity: 1, y: 0 }}
                                     >
                                         
-                                        {/* Result Stats Grid (Visual Excellence) */}
-                                        <div className="grid grid-cols-4 gap-4">
-                                            <div className="p-6 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
+                                        {/* Result Stats Grid — Fix 1: replaced "Success Rate" (compliance pass-rate)
+                                            with "Coverage" (assigned / total shifts asked). Added "Compliance Pass-Rate"
+                                            as a 5th tile; used grid-cols-5 with tighter padding so all fit at xl width. */}
+                                        <div className="grid grid-cols-5 gap-3">
+                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
                                                 <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Total Cost</span>
-                                                <span className="text-3xl font-black text-blue-600 dark:text-blue-400 tracking-tighter">${totals.cost.toLocaleString('en-AU', { maximumFractionDigits: 0 })}</span>
+                                                <span className="text-2xl font-black text-blue-600 dark:text-blue-400 tracking-tighter">${totals.cost.toLocaleString('en-AU', { maximumFractionDigits: 0 })}</span>
                                             </div>
-                                            <div className="p-6 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
+                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
                                                 <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Avg Fatigue</span>
-                                                <span className="text-3xl font-black text-amber-600 dark:text-amber-400 tracking-tighter">{totals.fatigue.toFixed(1)}</span>
+                                                <span className="text-2xl font-black text-amber-600 dark:text-amber-400 tracking-tighter">{totals.fatigue.toFixed(1)}</span>
+                                                <span className="text-[8px] font-bold text-muted-foreground/30 uppercase tracking-widest">p95 {totals.p95Fatigue.toFixed(1)}</span>
                                             </div>
-                                            <div className="p-6 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
+                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
                                                 <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Uncovered</span>
-                                                <span className="text-3xl font-black text-muted-foreground/40 tracking-tighter">{result.uncoveredV8ShiftIds.length}</span>
+                                                <span className="text-2xl font-black text-muted-foreground/40 tracking-tighter">{result.uncoveredV8ShiftIds.length}</span>
                                             </div>
-                                            <div className="p-6 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
-                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Success Rate</span>
-                                                <span className="text-3xl font-black text-emerald-600 dark:text-emerald-400 tracking-tighter">{((result.passing / result.totalProposals) * 100 || 0).toFixed(0)}%</span>
+                                            {/* Fix 1: Coverage = (assigned / total) — primary signal for how many shifts got staffed */}
+                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
+                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Coverage</span>
+                                                {(() => {
+                                                    const totalShifts = result.proposals.length + result.uncoveredV8ShiftIds.length;
+                                                    const covered = result.proposals.length;
+                                                    const pct = totalShifts > 0 ? Math.round((covered / totalShifts) * 100) : 0;
+                                                    return <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 tracking-tighter">{pct}%</span>;
+                                                })()}
+                                            </div>
+                                            {/* Fix 1: Compliance pass-rate retained as separate tile — still useful but no longer the headline */}
+                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
+                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Compliance</span>
+                                                <span className="text-2xl font-black text-violet-600 dark:text-violet-400 tracking-tighter">{((result.passing / result.totalProposals) * 100 || 0).toFixed(0)}%</span>
+                                                <span className="text-[8px] font-bold text-muted-foreground/30 uppercase tracking-widest">Pass Rate</span>
                                             </div>
                                         </div>
+
+                                        {/* Objective breakdown — shows which strategy term drove the solver's score */}
+                                        {(() => {
+                                            const breakdown = result.objective_breakdown;
+                                            if (!breakdown) return null;
+                                            const entries = Object.entries(breakdown).filter(([, v]) => Number.isFinite(v));
+                                            const total = entries.reduce((s, [, v]) => s + Math.abs(v), 0);
+                                            if (total === 0) return null;
+                                            const colorOf = (cat: string): string => {
+                                                switch (cat) {
+                                                    case 'cost': return 'bg-blue-500';
+                                                    case 'fairness': return 'bg-purple-500';
+                                                    case 'fatigue': return 'bg-amber-500';
+                                                    case 'coverage': return 'bg-rose-500';
+                                                    case 'continuity': return 'bg-emerald-500';
+                                                    default: return 'bg-muted-foreground/40';
+                                                }
+                                            };
+                                            const labelOf = (cat: string): string => cat.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                                            const fmtValue = (cat: string, v: number): string =>
+                                                cat === 'cost' ? `$${Math.round(v / 100).toLocaleString()}` : Math.round(v).toLocaleString();
+                                            const sorted = [...entries].sort(([, a], [, b]) => Math.abs(b) - Math.abs(a));
+                                            return (
+                                                <div className="p-5 rounded-[2rem] bg-card/40 dark:bg-card/20 border border-border/40 shadow-xl flex flex-col gap-4">
+                                                    <div className="flex items-baseline justify-between">
+                                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Objective Breakdown</span>
+                                                        <span className="text-[10px] font-bold text-muted-foreground/40 tracking-wide">Total: {Math.round(total).toLocaleString()}</span>
+                                                    </div>
+                                                    <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted/30">
+                                                        {sorted.map(([cat, v]) => (
+                                                            <div
+                                                                key={cat}
+                                                                className={`${colorOf(cat)} h-full transition-all`}
+                                                                style={{ width: `${(Math.abs(v) / total) * 100}%` }}
+                                                                title={`${labelOf(cat)}: ${fmtValue(cat, v)}`}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
+                                                        {sorted.map(([cat, v]) => (
+                                                            <div key={cat} className="flex items-center gap-2 min-w-0">
+                                                                <span className={`${colorOf(cat)} h-2 w-2 rounded-sm shrink-0`} />
+                                                                <span className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-wide truncate">{labelOf(cat)}</span>
+                                                                <span className="text-[10px] font-black text-foreground/90 ml-auto tabular-nums">{((Math.abs(v) / total) * 100).toFixed(0)}%</span>
+                                                                <span className="text-[10px] font-bold text-muted-foreground/50 tabular-nums shrink-0">{fmtValue(cat, v)}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
 
                                         {/* Optimizer Fallback Notice — surfaces silently-degraded runs */}
                                         {(result.usedFallback || result.optimizerStatus === 'INFEASIBLE' || result.optimizerStatus === 'UNKNOWN' || result.optimizerStatus === 'MODEL_INVALID') && (

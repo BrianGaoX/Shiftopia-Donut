@@ -36,7 +36,7 @@ import type {
 import type {
     V8OrchestratorShift, V8ShiftId, V8EmpId, V8EmployeeContext,
 } from '../types';
-import { validateCombinedState } from '../validate-combined-state';
+import { validateV8State } from '../validate-combined-state';
 
 // =============================================================================
 // RESULT
@@ -80,7 +80,7 @@ function buildFinalSchedule(
     }
 
     const final_shifts = [
-        ...original_shifts.filter(s => !removed.has(s.shift_id)),
+        ...original_shifts.filter(s => !removed.has(s.id)),
         ...added,
     ];
 
@@ -132,7 +132,7 @@ export function finalValidateSwaps(
                 emp_id, original_shifts, emp_swaps, shift_catalog,
             );
 
-            const result = validateCombinedState({
+            const result = validateV8State({
                 employee_id:      emp_id,
                 employee_context,
                 original_shifts,
@@ -143,7 +143,7 @@ export function finalValidateSwaps(
                 config:           config.compliance_config,
             });
 
-            if (result.status !== 'BLOCKING') continue;    // clean — no action needed
+            if (result.overall_status !== 'BLOCKING') continue;    // clean — no action needed
 
             // BLOCKING: demote the lowest-priority swap for this employee.
             // Sort order (ascending = demoted first):
@@ -168,8 +168,8 @@ export function finalValidateSwaps(
                 reason:
                     `Final validation: employee ${emp_id} has BLOCKING compliance violations when `
                     + `all approved swaps are combined. Swap demoted. Violations: `
-                    + result.rule_hits.filter(h => h.severity === 'BLOCKING').map(h => h.rule_id).join(', '),
-                rule_hits_a: result.rule_hits,
+                    + result.hits.filter(h => h.status === 'BLOCKING').map(h => h.rule_id).join(', '),
+                rule_hits_a: result.hits,
                 rule_hits_b: [],
             });
 

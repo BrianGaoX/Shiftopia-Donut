@@ -22,6 +22,7 @@
 
 import { supabase }                      from '@/platform/realtime/client';
 import { runV8Orchestrator }            from '@/modules/compliance/v8/index';
+import { buildAssignInput }              from '@/modules/planning/unified/compliance/input-builder';
 import {
     fetchV8EmployeeContext,
     fetchEmployeeShiftsV2,
@@ -29,11 +30,8 @@ import {
 import { getAvailabilitySlots }          from '@/modules/availability/api/availability.api';
 import { getAssignedShiftsForAvailability }
                                          from '@/modules/availability/api/availability-view.api';
-import type {
-    V8AvailabilityData,
-    V8OrchestratorShift,
-    V8OrchestratorResult,
-} from '@/modules/compliance/v8/types';
+import type { V8AvailabilityData } from '@/modules/compliance/v8/orchestrator/types';
+import type { V8OrchestratorShift, V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 
 export type AssignmentContext = 'MANUAL' | 'AUTO' | 'BID' | 'TRADE';
 
@@ -98,8 +96,8 @@ async function runFullCompliancePreCheck(
 
     // Build candidate V8OrchestratorShift for the V2 engine
     const candidateShift: V8OrchestratorShift = {
-        shift_id:                shift.id,
-        shift_date:              shift.shift_date,
+        id:                      shift.id,
+        date:                    shift.shift_date,
         start_time:              shift.start_time,
         end_time:                shift.end_time,
         role_id:                 shift.role_id ?? '',
@@ -124,58 +122,42 @@ async function runFullCompliancePreCheck(
         assigned_shifts: assignedShifts
             .filter(s => s.id !== shift.id)
             .map(s => ({
-                shift_id:   s.id,
-                shift_date: s.shift_date,
-                start_time: s.start_time,
-                end_time:   s.end_time,
+                id:                s.id,
+                date:              s.shift_date,
+                start_time:        s.start_time,
+                end_time:          s.end_time,
+                is_ordinary_hours: true,
             })),
     };
 
     // Run V2 engine — all 12 rules evaluated at PUBLISH stage
     const result = runV8Orchestrator(
-        {
-            employee_id:       employeeId,
-            employee_context:  employeeCtx,
-            existing_shifts:   existingShifts,
-            candidate_changes: {
-                add_shifts:    [candidateShift],
-                remove_shifts: [],
-            },
-            mode:              'SIMULATED',
-            operation_type:    context === 'BID' ? 'BID' : context === 'TRADE' ? 'SWAP' : 'ASSIGN',
-            stage:             'PUBLISH',
-            availability_data: availabilityData,
-        },
+        buildAssignInput({
+            employeeId,
+            employeeContext: employeeCtx,
+            existingShifts,
+            candidateShift,
+            stage: 'PUBLISH',
+            operationType: context === 'BID' ? 'BID' : context === 'TRADE' ? 'SWAP' : 'ASSIGN',
+            availabilityData,
+        }),
     ) as V8OrchestratorResult;
 
     // BLOCKING hits — reject regardless of context
-    const blockingHits = result.rule_hits.filter(h => h.severity === 'BLOCKING');
+    const blockingHits = result.hits.filter(h => h.status === 'BLOCKING');
     if (blockingHits.length > 0) {
-        return { error: blockingHits[0].message, advisories: [] };
+        return { error: blockingHits[0].summary, advisories: [] };
     }
 
-    // Availability-specific enforcement — context-aware
-    const enforce = context === 'MANUAL' || context === 'AUTO';
-    const avMatch = result.availability_match;
+    // Availability-specific enforcement is handled by the V8 engine via AVAIL_*
+    // rules. BLOCKING availability hits are already caught above; WARNING hits
+    // are collected below as advisories. No separate avMatch block is needed.
     const advisories: string[] = [];
 
-    if (avMatch && avMatch.status !== 'PASS') {
-        const label =
-            avMatch.status === 'FAIL'
-                ? 'Employee already has an assigned shift during this time.'
-                : 'Employee has not declared availability for this shift time.';
-
-        // LOCKED (FAIL) blocks all contexts; WARN (Bucket B) is now always advisory
-        if (avMatch.status === 'FAIL') {
-            return { error: label, advisories: [] };
-        }
-        advisories.push(label);
-    }
-
     // Collect non-blocking warnings as advisories for the caller
-    for (const hit of result.rule_hits) {
-        if (hit.severity === 'WARNING') {
-            advisories.push(hit.message);
+    for (const hit of result.hits) {
+        if (hit.status === 'WARNING') {
+            advisories.push(hit.summary);
         }
     }
 
@@ -202,8 +184,8 @@ function runSkeletonComplianceCheck(
     },
 ): { error: string | null; advisories: string[] } {
     const candidateShift: V8OrchestratorShift = {
-        shift_id:                shift.id,
-        shift_date:              shift.shift_date,
+        id:                      shift.id,
+        date:                    shift.shift_date,
         start_time:              shift.start_time,
         end_time:                shift.end_time,
         role_id:                 shift.role_id ?? '',
@@ -238,14 +220,14 @@ function runSkeletonComplianceCheck(
         },
     ) as V8OrchestratorResult;
 
-    const blockingHits = result.rule_hits.filter(h => h.severity === 'BLOCKING');
+    const blockingHits = result.hits.filter(h => h.status === 'BLOCKING');
     if (blockingHits.length > 0) {
-        return { error: blockingHits[0].message, advisories: [] };
+        return { error: blockingHits[0].summary, advisories: [] };
     }
 
-    const advisories = result.rule_hits
-        .filter(h => h.severity === 'WARNING')
-        .map(h => h.message);
+    const advisories = result.hits
+        .filter(h => h.status === 'WARNING')
+        .map(h => h.summary);
 
     return { error: null, advisories };
 }

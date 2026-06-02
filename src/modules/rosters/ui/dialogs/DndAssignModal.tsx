@@ -23,17 +23,15 @@ import { Button } from '@/modules/core/ui/primitives/button';
 import { cn } from '@/modules/core/lib/utils';
 import { useCompliancePanel } from '@/modules/compliance/ui/useCompliancePanel';
 import { CompliancePanel } from '@/modules/compliance/ui/CompliancePanel';
+import { buildAssignInput } from '@/modules/planning/unified/compliance/input-builder';
 import {
   fetchV8EmployeeContext,
   fetchEmployeeShiftsV2,
 } from '@/modules/compliance/employee-context';
 import { getAvailabilitySlots } from '@/modules/availability/api/availability.api';
 import { getAssignedShiftsForAvailability } from '@/modules/availability/api/availability-view.api';
-import type {
-  V8AvailabilityData,
-  V8OrchestratorShift,
-  V8OrchestratorInput,
-} from '@/modules/compliance/v8/types';
+import type { V8AvailabilityData } from '@/modules/compliance/v8/orchestrator/types';
+import type { V8OrchestratorShift, V8OrchestratorInput } from '@/modules/compliance/v8/orchestrator/types';
 import { supabase } from '@/platform/realtime/client';
 
 // =============================================================================
@@ -104,14 +102,14 @@ export const DndAssignModal: React.FC<DndAssignModalProps> = ({
 
     // 3. Build candidate V8OrchestratorShift
     const candidateShift: V8OrchestratorShift = {
-      shift_id:                shift?.id ?? shiftId,
-      shift_date:              shift?.shift_date ?? shiftDate,
+      id:                      shift?.id ?? shiftId,
+      date:                    shift?.shift_date ?? shiftDate,
       start_time:              shift?.start_time ?? shiftStartTime,
       end_time:                shift?.end_time ?? shiftEndTime,
       role_id:                 shift?.role_id ?? '',
       required_qualifications: [
-        ...(shift?.required_skills ?? []),
-        ...(shift?.required_licenses ?? []),
+        ...(((shift?.required_skills as any) ?? []) as string[]),
+        ...(((shift?.required_licenses as any) ?? []) as string[]),
       ],
       is_ordinary_hours:    true,
       break_minutes:        shift?.unpaid_break_minutes ?? 0,
@@ -128,27 +126,23 @@ export const DndAssignModal: React.FC<DndAssignModalProps> = ({
       assigned_shifts: assignedShifts
         .filter(s => s.id !== shiftId)
         .map(s => ({
-          shift_id:   s.id,
-          shift_date: s.shift_date,
+          id:         s.id,
+          date:       s.shift_date,
           start_time: s.start_time,
           end_time:   s.end_time,
+          is_ordinary_hours: true,
         })),
     };
 
-    // 5. Assemble V8OrchestratorInput
-    const input: V8OrchestratorInput = {
-      employee_id:       employeeId,
-      employee_context:  employeeCtx,
-      existing_shifts:   existingShifts,
-      candidate_changes: {
-        add_shifts:    [candidateShift],
-        remove_shifts: [],
-      },
-      mode:              'SIMULATED',
-      operation_type:    'ASSIGN',
-      stage:             'PUBLISH',
-      availability_data: availabilityData,
-    };
+    // 5. Assemble V8OrchestratorInput via the canonical builder
+    const input = buildAssignInput({
+      employeeId,
+      employeeContext: employeeCtx,
+      existingShifts,
+      candidateShift,
+      stage: 'PUBLISH',
+      availabilityData,
+    });
 
     return [input];
   }, [shiftId, employeeId, shiftDate, shiftStartTime, shiftEndTime]);

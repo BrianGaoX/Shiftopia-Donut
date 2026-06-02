@@ -32,7 +32,8 @@ import {
   isBidSnapshot,
   isStudentVisaEnforced,
 } from '@/modules/planning/unified/types';
-import type { V8OrchestratorResult, V8Hit, V8Status } from '@/modules/compliance/v8/types';
+import type { V8Hit, V8Status } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 
 // =============================================================================
 // TYPES
@@ -130,7 +131,7 @@ function RuleHitRow({ hit, isBlocking, compact }: RuleHitRowProps) {
             <span
               className={cn(
                 'inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-wider',
-                severityBadgeCls(hit.severity),
+                severityBadgeCls(hit.status as 'WARNING' | 'BLOCKING'),
               )}
             >
               {hit.rule_id}
@@ -143,7 +144,7 @@ function RuleHitRow({ hit, isBlocking, compact }: RuleHitRowProps) {
                   : 'text-amber-700 dark:text-amber-300',
               )}
             >
-              {hit.message}
+              {hit.summary}
             </span>
           </div>
         </div>
@@ -159,13 +160,13 @@ function RuleHitRow({ hit, isBlocking, compact }: RuleHitRowProps) {
       </button>
 
       {/* Resolution hint */}
-      {expanded && hit.resolution_hint && (
+      {expanded && hit.details && (
         <div className="border-t border-border/30 px-3 pb-3 pt-2">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             <span className="font-black uppercase tracking-wider text-muted-foreground/60">
               Resolution:{' '}
             </span>
-            {hit.resolution_hint}
+            {hit.details}
           </p>
         </div>
       )}
@@ -184,21 +185,21 @@ interface PartyColumnProps {
 }
 
 function PartyColumn({ label, result, compact }: PartyColumnProps) {
-  const blockingHits = result.rule_hits.filter((h) => h.severity === 'BLOCKING');
-  const warningHits = result.rule_hits.filter((h) => h.severity === 'WARNING');
-  const hasHits = result.rule_hits.length > 0;
+  const blockingHits = result.hits.filter((h) => h.status === 'BLOCKING');
+  const warningHits = result.hits.filter((h) => h.status === 'WARNING');
+  const hasHits = result.hits.length > 0;
 
   const overallCls =
-    result.status === 'PASS'
+    result.overall_status === 'PASS'
       ? 'border-emerald-500/20 bg-emerald-500/5'
-      : result.status === 'BLOCKING'
+      : result.overall_status === 'BLOCKING'
       ? 'border-rose-500/20 bg-rose-500/5'
       : 'border-amber-500/20 bg-amber-500/5';
 
   const statusIconCls =
-    result.status === 'PASS'
+    result.overall_status === 'PASS'
       ? 'text-emerald-500'
-      : result.status === 'BLOCKING'
+      : result.overall_status === 'BLOCKING'
       ? 'text-rose-500'
       : 'text-amber-500';
 
@@ -215,9 +216,9 @@ function PartyColumn({ label, result, compact }: PartyColumnProps) {
           {label}
         </span>
         <div className="flex items-center gap-1.5">
-          {result.status === 'PASS' ? (
+          {result.overall_status === 'PASS' ? (
             <CheckCircle2 className={cn('h-4 w-4', statusIconCls)} />
-          ) : result.status === 'BLOCKING' ? (
+          ) : result.overall_status === 'BLOCKING' ? (
             <XCircle className={cn('h-4 w-4', statusIconCls)} />
           ) : (
             <AlertTriangle className={cn('h-4 w-4', statusIconCls)} />
@@ -228,7 +229,7 @@ function PartyColumn({ label, result, compact }: PartyColumnProps) {
               statusIconCls,
             )}
           >
-            {result.status}
+            {result.overall_status}
           </span>
         </div>
       </div>
@@ -269,7 +270,7 @@ export function ComplianceGate({
   // Resolve overall status and per-party data
   const overallStatus: V8Status = isSwapSnapshot(snapshot)
     ? snapshot.combined_status
-    : snapshot.status;
+    : snapshot.overall_status;
 
   const statusDisplay = formatV8Status(overallStatus);
   const StatusIcon = statusDisplay.icon;
@@ -282,20 +283,20 @@ export function ComplianceGate({
   // Count blocking hits across all parties
   const allBlockingHits: V8Hit[] = isSwapSnapshot(snapshot)
     ? [
-        ...snapshot.party_a.rule_hits.filter((h) => h.severity === 'BLOCKING'),
-        ...snapshot.party_b.rule_hits.filter((h) => h.severity === 'BLOCKING'),
+        ...snapshot.party_a.hits.filter((h) => h.status === 'BLOCKING'),
+        ...snapshot.party_b.hits.filter((h) => h.status === 'BLOCKING'),
       ]
-    : (snapshot as V8OrchestratorResult).rule_hits.filter(
-        (h) => h.severity === 'BLOCKING',
+    : (snapshot as V8OrchestratorResult).hits.filter(
+        (h) => h.status === 'BLOCKING',
       );
 
   const allWarningHits: V8Hit[] = isSwapSnapshot(snapshot)
     ? [
-        ...snapshot.party_a.rule_hits.filter((h) => h.severity === 'WARNING'),
-        ...snapshot.party_b.rule_hits.filter((h) => h.severity === 'WARNING'),
+        ...snapshot.party_a.hits.filter((h) => h.status === 'WARNING'),
+        ...snapshot.party_b.hits.filter((h) => h.status === 'WARNING'),
       ]
-    : (snapshot as V8OrchestratorResult).rule_hits.filter(
-        (h) => h.severity === 'WARNING',
+    : (snapshot as V8OrchestratorResult).hits.filter(
+        (h) => h.status === 'WARNING',
       );
 
   return (
@@ -379,7 +380,7 @@ export function ComplianceGate({
           {/* BID: single-column */}
           {requestType === 'BID' && isBidSnapshot(snapshot) && (
             <div className="space-y-1.5">
-              {snapshot.rule_hits.length === 0 ? (
+              {snapshot.hits.length === 0 ? (
                 <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                   <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
@@ -387,11 +388,11 @@ export function ComplianceGate({
                   </span>
                 </div>
               ) : (
-                snapshot.rule_hits.map((hit, i) => (
+                snapshot.hits.map((hit, i) => (
                   <RuleHitRow
                     key={`${hit.rule_id}-${i}`}
                     hit={hit}
-                    isBlocking={hit.severity === 'BLOCKING'}
+                    isBlocking={hit.status === 'BLOCKING'}
                     compact={compact}
                   />
                 ))

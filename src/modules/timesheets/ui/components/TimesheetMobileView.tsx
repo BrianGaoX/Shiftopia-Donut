@@ -39,6 +39,7 @@ interface TimesheetMobileViewProps {
     onSaveEntry?: (id: string, updates: Partial<TimesheetRow>) => void;
     onBulkAction?: (ids: string[], action: 'approve' | 'reject') => void;
     onMarkNoShow?: (id: string) => void;
+    onOverrideNoShow?: (id: string) => void;
     onDateChange?: (date: Date) => void;
     onRefresh?: () => void;
     isRefreshing?: boolean;
@@ -67,6 +68,7 @@ export const TimesheetMobileView: React.FC<TimesheetMobileViewProps> = ({
     onSaveEntry,
     onBulkAction,
     onMarkNoShow,
+    onOverrideNoShow,
     onDateChange,
     onRefresh,
     isRefreshing,
@@ -324,6 +326,7 @@ export const TimesheetMobileView: React.FC<TimesheetMobileViewProps> = ({
                                 onToggleSelect={() => handleToggleSelect(String(entry.id))}
                                 onSave={onSaveEntry}
                                 onMarkNoShow={onMarkNoShow}
+                                onOverrideNoShow={onOverrideNoShow}
                                 readOnly={readOnly}
                             />
                         ))}

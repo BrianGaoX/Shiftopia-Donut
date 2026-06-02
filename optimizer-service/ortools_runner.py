@@ -195,6 +195,7 @@ class OptimizeRes(BaseModel):
     best_objective_bound: float
     proven_optimal: bool
     debug: DebugMetricsRes
+    objective_breakdown: Optional[dict[str, int]] = None
 
 
 # ---- /audit (server-side eligibility audit) -------------------------------
@@ -420,6 +421,7 @@ async def optimize(
             solve_ms=m.solve_ms,
             coverage_rate=round(coverage_rate, 3),
         ),
+        objective_breakdown=output.objective_breakdown,
     )
 
 

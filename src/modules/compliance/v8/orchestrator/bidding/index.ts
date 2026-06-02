@@ -60,7 +60,7 @@ function buildCatalogs(input: BiddingInput): {
     existing_shifts_map: Map<V8EmpId, V8OrchestratorShift[]>;
 } {
     const shift_catalog = new Map<V8ShiftId, V8OrchestratorShift>(
-        input.shifts.map(s => [s.shift_id, s]),
+        input.shifts.map(s => [s.id, s]),
     );
     const employee_catalog = new Map<V8EmpId, V8EmployeeContext>(
         input.employee_contexts.map(e => [e.employee_id, e]),
@@ -127,7 +127,10 @@ function buildBatchInput(
         shifts:                  input.shifts,
         current_assignments:     [],    // bidding applies to unassigned shifts
         employees:               input.employee_contexts,
-        employee_existing_shifts: input.employee_existing_shifts,
+        employee_existing_shifts: input.employee_existing_shifts.map(h => ({
+            employee_id:     h.employee_id,
+            existing_shifts: h.shifts,
+        })),
     };
 
     return {
@@ -172,7 +175,7 @@ export function runBidSelection(input: BiddingInput): BiddingResult {
 
     // ── 4. Conflict graph (informational — not used for gating selection) ─────
     // Access compliance config for rest_gap_hours; default to 10h
-    const rest_gap_hours = config.compliance_config?.rest_gap_hours ?? 10;
+    const rest_gap_hours = (config.compliance_config as any)?.rest_gap_hours ?? 10;
     buildBidConflictGraph(evaluated, rest_gap_hours);
     // (result available for callers via extension; not surfaced in BiddingResult
     //  for now to keep the output focused — add as opt-in via config if needed)
@@ -200,7 +203,7 @@ export function runBidSelection(input: BiddingInput): BiddingResult {
 
     // Shifts demoted in final validation become unfilled if no fallback
     const demoted_shift_ids = new Set(
-        demoted_bids.map(d => eval_by_id.get(d.bid_id)?.shift.shift_id).filter(Boolean) as V8ShiftId[],
+        demoted_bids.map(d => eval_by_id.get(d.bid_id)?.shift.id).filter(Boolean) as V8ShiftId[],
     );
     const additional_unfilled = [...demoted_shift_ids].filter(
         sid => !validated_selected.some(s => s.shift_id === sid),

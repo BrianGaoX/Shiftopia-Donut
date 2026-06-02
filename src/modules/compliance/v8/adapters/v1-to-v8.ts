@@ -25,7 +25,7 @@ export async function runV8Compliance(
             name: 'Employee',
             contract_type: ctx.contract_type,
             contracted_weekly_hours: ctx.contracted_weekly_hours,
-            skill_ids: ctx.qualifications.map(q => q.qualification_id)
+            skill_ids: (ctx.qualifications ?? []).map(q => q.qualification_id)
         };
     }
 

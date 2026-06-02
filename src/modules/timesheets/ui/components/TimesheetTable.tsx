@@ -32,6 +32,7 @@ interface TimesheetTableProps {
     onSaveEntry?: (id: string, updates: Partial<TimesheetRow>) => void;
     onBulkAction?: (ids: string[], action: "approve" | "reject") => void;
     onMarkNoShow?: (id: string) => void;
+    onOverrideNoShow?: (id: string) => void;
     onDateChange?: (date: Date) => void;
     onRefresh?: () => void;
     isRefreshing?: boolean;
@@ -52,6 +53,7 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
     onSaveEntry,
     onBulkAction,
     onMarkNoShow,
+    onOverrideNoShow,
     onDateChange,
     onRefresh,
     isRefreshing,
@@ -203,6 +205,7 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                     onSaveEntry={onSaveEntry}
                     onBulkAction={onBulkAction}
                     onMarkNoShow={onMarkNoShow}
+                    onOverrideNoShow={onOverrideNoShow}
                     onDateChange={onDateChange}
                     onRefresh={onRefresh}
                     isRefreshing={isRefreshing}
@@ -253,6 +256,7 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                         totalSelectable={selectableIds.length}
                         onSaveEntry={onSaveEntry}
                         onMarkNoShow={onMarkNoShow}
+                        onOverrideNoShow={onOverrideNoShow}
                         readOnly={readOnly}
                         onClearFilters={() => setAppliedFilters(EMPTY_FILTERS)}
                     />
@@ -361,6 +365,7 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                                                 onToggleSelect={() => handleToggleSelect(String(entry.id))}
                                                 onSave={onSaveEntry}
                                                 onMarkNoShow={onMarkNoShow}
+                                                onOverrideNoShow={onOverrideNoShow}
                                                 showDate={showDate}
                                             />
                                         ))

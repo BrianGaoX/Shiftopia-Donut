@@ -4,6 +4,7 @@
  */
 
 import '@testing-library/jest-dom';
+import { beforeAll, afterAll } from 'vitest';
 
 // Silence console.error in tests unless explicitly needed
 const originalError = console.error;

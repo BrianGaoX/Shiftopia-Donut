@@ -26,7 +26,15 @@ export * from '@/modules/templates/model/templates.types';
 // ===================================
 // 5. BROADCASTS
 // ===================================
-export * from '@/modules/broadcasts/model/broadcast.types';
+// Re-export everything except Employee (which conflicts with users module)
+export type {
+  Broadcast,
+  BroadcastGroup,
+  BroadcastChannel,
+  BroadcastPriority,
+  BroadcastStatus,
+  BroadcastParticipantRole,
+} from '@/modules/broadcasts/model/broadcast.types';
 
 // ===================================
 // 6. AVAILABILITY

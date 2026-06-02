@@ -49,7 +49,7 @@ function applyOp(
 ): void {
     for (const change of op_schedule_changes) {
         const current = tentative.get(change.employee_id) ?? [];
-        const after_removes = current.filter(s => !change.remove_shift_ids.includes(s.shift_id));
+        const after_removes = current.filter(s => !change.remove_shift_ids.includes(s.id));
         const added_shifts   = change.add_shift_ids
             .map(id => shift_catalog.get(id))
             .filter((s): s is V8OrchestratorShift => s !== undefined);
@@ -102,8 +102,8 @@ function checkOpCompliance(
         };
 
         const result = runV8Orchestrator(input, { stage: config.compliance_stage });
-        if (rank(result.status) > rank(worst_status)) worst_status = result.status;
-        all_hits.push(...result.rule_hits);
+        if (rank(result.overall_status) > rank(worst_status)) worst_status = result.overall_status;
+        all_hits.push(...result.hits);
     }
 
     return { status: worst_status, rule_hits: all_hits };
@@ -186,7 +186,7 @@ export function greedyResolve(
             (status === 'WARNING' && !config.accept_warnings);
 
         if (is_blocked) {
-            const blocking_ids = rule_hits.filter(h => h.severity === 'BLOCKING').map(h => h.rule_id);
+            const blocking_ids = rule_hits.filter(h => h.status === 'BLOCKING').map(h => h.rule_id);
             rejected.set(op_id, {
                 operation_id:              op_id,
                 reason:                    `Compliance check against current selection failed: ${blocking_ids.join(', ') || status}.`,

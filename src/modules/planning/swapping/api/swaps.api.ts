@@ -80,14 +80,14 @@ const validateSwapCompliance = async (
         partyA: {
             employee_id: requesterId,
             name: 'Requester',
-            current_shifts: requesterRoster.map(s => ({ ...toTimeRange(s), id: s.id })),
-            shift_to_give: { ...toTimeRange(requesterShift), id: requesterShift.id },
+            current_shifts: requesterRoster.map(s => ({ ...toTimeRange(s), id: s.id })) as any,
+            shift_to_give: { ...toTimeRange(requesterShift), id: requesterShift.id } as any,
         },
         partyB: {
             employee_id: offererId,
             name: 'Offerer',
-            current_shifts: offererRoster.map(s => ({ ...toTimeRange(s), id: s.id })),
-            shift_to_give: { ...toTimeRange(offeredShift), id: offeredShift?.id },
+            current_shifts: offererRoster.map(s => ({ ...toTimeRange(s), id: s.id })) as any,
+            shift_to_give: { ...toTimeRange(offeredShift), id: offeredShift?.id } as any,
         },
     });
 
@@ -265,8 +265,9 @@ export const swapsApi = {
                     swap_with:profiles!target_id(*)
                 ),
                 offered_shift:shifts!offered_shift_id(
-                    id, shift_date, start_time, end_time, unpaid_break_minutes, lifecycle_status,
+                    id, shift_date, start_time, end_time, paid_break_minutes, unpaid_break_minutes, net_length_minutes, lifecycle_status, group_type,
                     roles(name),
+                    remuneration_levels(hourly_rate_min),
                     departments(name),
                     sub_departments(name),
                     organizations(name)
@@ -519,8 +520,9 @@ export const swapsApi = {
                 *,
                 offerer:profiles!offerer_id(*),
                 offered_shift:shifts!offered_shift_id(
-                    id, shift_date, start_time, end_time, unpaid_break_minutes, lifecycle_status,
+                    id, shift_date, start_time, end_time, paid_break_minutes, unpaid_break_minutes, net_length_minutes, lifecycle_status, group_type,
                     roles(name),
+                    remuneration_levels(hourly_rate_min),
                     departments(name),
                     sub_departments(name),
                     organizations(name)
@@ -588,7 +590,7 @@ export const swapsApi = {
                     offered_shift_id,
                     offerer_id,
                     offered_shift:shifts!offered_shift_id(
-                        id, shift_date, start_time, end_time, unpaid_break_minutes, lifecycle_status,
+                        id, shift_date, start_time, end_time, unpaid_break_minutes, lifecycle_status, group_type,
                         roles(name),
                         departments(name),
                         sub_departments(name),

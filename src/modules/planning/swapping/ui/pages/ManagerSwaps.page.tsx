@@ -19,6 +19,7 @@ import { computeShiftUrgency } from '@/modules/rosters/domain/bidding-urgency';
 import { useOrgSelection } from '@/modules/core/contexts/OrgSelectionContext';
 import { useScopeFilter } from '@/platform/auth/useScopeFilter';
 import { SharedShiftCard } from '../../../../planning/ui/components/SharedShiftCard';
+import { estimateDetailedCostFromShift } from '@/modules/rosters/domain/projections/utils/cost';
 import { GoldStandardHeader } from '@/modules/core/ui/components/GoldStandardHeader';
 import { useTheme } from '@/modules/core/contexts/ThemeContext';
 
@@ -40,32 +41,12 @@ const formatTime = (time: string): string => {
 
 
 
-// Redesigned: Metropolis Glass dynamic classes with deep venue mapping
-function getDeptGlassClass(data?: {
-    deptName?: string;
-    orgName?: string;
-    groupType?: string;
-    organizationId?: string;
-    subDepartmentId?: string;
-}): string {
-    const d = (data?.deptName || '').toLowerCase();
-    const o = (data?.orgName || '').toLowerCase();
+// Authoritative: shift.group_type is the only signal. No name/uuid fallbacks.
+function getDeptGlassClass(data?: { groupType?: string }): string {
     const g = (data?.groupType || '').toLowerCase();
-    const sid = data?.subDepartmentId || '';
-
-    // Blue: Convention Centre (Sub-departments: Event Setups, operations, etc. under ED or explicit)
-    // Common pattern for Convention: "Event Sales", "Convention Sales", "Floor Management"
-    if (d.includes('convention') || o.includes('convention') || o.includes('icc') ||
-        g.includes('convention') || sid.startsWith('00000000-0000-0003-01')) return 'dept-card-glass-convention';
-
-    // Green: Exhibition Centre
-    if (d.includes('exhibition') || o.includes('exhibition') || g.includes('exhibition') ||
-        sid.startsWith('00000000-0000-0003-0502')) return 'dept-card-glass-exhibition';
-
-    // Red: Theatre
-    if (d.includes('theatre') || o.includes('theatre') || g.includes('theatre') ||
-        sid.startsWith('00000000-0000-0003-0503')) return 'dept-card-glass-theatre';
-
+    if (g.includes('convention')) return 'dept-card-glass-convention';
+    if (g.includes('exhibition')) return 'dept-card-glass-exhibition';
+    if (g.includes('theatre'))    return 'dept-card-glass-theatre';
     return 'dept-card-glass-default';
 }
 
@@ -128,14 +109,10 @@ const ShiftPane: React.FC<{
         );
     }
 
-    const deptClass = getDeptGlassClass({
-        deptName: data.deptName,
-        orgName: data.orgName,
-        groupType: data.groupType,
-        organizationId: data.organizationId,
-        subDepartmentId: data.subDepartmentId
-    });
+    const deptClass = getDeptGlassClass({ groupType: data.groupType });
 
+    const startTimeRaw = data.time?.split(' - ')[0] || '00:00';
+    const endTimeRaw = data.time?.split(' - ')[1] || '00:00';
     return (
         <div className="flex-1 min-w-0">
             <SharedShiftCard
@@ -146,11 +123,13 @@ const ShiftPane: React.FC<{
                 subGroup={data.subGroupName}
                 role={data.roleName || 'Shift'}
                 shiftDate={data.formattedDate || 'N/A'}
-                startTime={data.time?.split(' - ')[0] || '00:00'}
-                endTime={data.time?.split(' - ')[1] || '00:00'}
-                netLength={data.durationNum * 60}
-                paidBreak={0}
-                unpaidBreak={0}
+                startTime={startTimeRaw.slice(0, 5)}
+                endTime={endTimeRaw.slice(0, 5)}
+                netLength={data.netLengthMinutes}
+                paidBreak={data.paidBreakMinutes}
+                unpaidBreak={data.unpaidBreakMinutes}
+                lifecycleStatus={data.lifecycleStatus}
+                estimatedPay={data.estimatedPay > 0 ? `$${data.estimatedPay.toFixed(2)}` : undefined}
                 groupVariant={
                     deptClass.includes('convention') ? 'convention' :
                     deptClass.includes('exhibition') ? 'exhibition' :
@@ -261,8 +240,13 @@ interface SwapRequestManagement {
         duration: string;
         durationNum: number;
         hourlyRate: number;
+        netLengthMinutes: number;
+        paidBreakMinutes: number;
+        unpaidBreakMinutes: number;
+        estimatedPay: number;
         avatar?: string;
         deptName?: string;
+        subGroupName?: string;
         orgName?: string;
         groupType?: string;
         organizationId?: string;
@@ -283,8 +267,13 @@ interface SwapRequestManagement {
         duration: string;
         durationNum: number;
         hourlyRate: number;
+        netLengthMinutes: number;
+        paidBreakMinutes: number;
+        unpaidBreakMinutes: number;
+        estimatedPay: number;
         avatar?: string;
         deptName?: string;
+        subGroupName?: string;
         orgName?: string;
         groupType?: string;
         organizationId?: string;
@@ -329,10 +318,12 @@ const computeShiftHours = (s: { startTime: string; endTime: string; unpaidBreakM
 
 const mapToUIModel = (apiData: SwapRequestWithDetails): SwapRequestManagement => {
     const getShiftValue = (shift?: any) => {
-        const rate = shift?.remuneration_levels?.hourly_rate_min || 0;
-        const netLength = shift?.netLength || 0;
+        if (!shift) return { rate: 0, durationHours: 0, value: 0 };
+        const netLength = shift?.net_length_minutes ?? shift?.netLength ?? 0;
         const durationHours = netLength / 60;
-        return { rate, durationHours, value: rate * durationHours };
+        const totalCost = estimateDetailedCostFromShift(shift).totalCost || 0;
+        const rate = durationHours > 0 ? totalCost / durationHours : 0;
+        return { rate, durationHours, value: totalCost };
     };
 
     const reqVal = getShiftValue(apiData.originalShift);
@@ -356,13 +347,18 @@ const mapToUIModel = (apiData: SwapRequestWithDetails): SwapRequestManagement =>
     }
 
     // Duration / pay delta — use offered_shift when requestedShift absent
-    const offerDurationHours = activeOffer?.offered_shift ? computeShiftHours(activeOffer.offered_shift) : 0;
+    const offerVal = activeOffer?.offered_shift ? getShiftValue(activeOffer.offered_shift) : { rate: 0, durationHours: 0, value: 0 };
+    const offerDurationHours = offerVal.durationHours;
     const hoursDiff = apiData.requestedShift
         ? (recVal.durationHours - reqVal.durationHours)
         : activeOffer?.offered_shift
             ? (offerDurationHours - reqVal.durationHours)
             : -reqVal.durationHours;
-    const payDiff = apiData.requestedShift ? (recVal.value - reqVal.value) : -reqVal.value;
+    const payDiff = apiData.requestedShift
+        ? (recVal.value - reqVal.value)
+        : activeOffer?.offered_shift
+            ? (offerVal.value - reqVal.value)
+            : -reqVal.value;
 
     // Auto-compute priority from shift date/time (shared TTS utility)
     const priority: SwapPriority = computeShiftUrgency(
@@ -373,17 +369,23 @@ const mapToUIModel = (apiData: SwapRequestWithDetails): SwapRequestManagement =>
     // Build recipient — fall back to activeOffer.offered_shift for open-market swaps
     let recipient: SwapRequestManagement['recipient'] = null;
     if (apiData.requestedShift || apiData.targetEmployee) {
+        const recNet = apiData.requestedShift?.netLength ?? Math.round(recVal.durationHours * 60);
         recipient = {
             employeeName: apiData.targetEmployee?.fullName || (apiData.requestedShift ? 'Open Swap' : 'Unknown'),
             roleName: apiData.requestedShift?.roles?.name || 'Any Role',
             date: apiData.requestedShift?.shiftDate || '',
-            formattedDate: apiData.requestedShift?.shiftDate ? format(parse(apiData.requestedShift.shiftDate, 'yyyy-MM-dd', new Date()), 'EEE, MMM d') : '',
+            formattedDate: apiData.requestedShift?.shiftDate ? format(parse(apiData.requestedShift.shiftDate, 'yyyy-MM-dd', new Date()), 'EEE, MMM d, yyyy') : '',
             time: apiData.requestedShift ? `${apiData.requestedShift.startTime} - ${apiData.requestedShift.endTime}` : 'No Shift',
             duration: recVal.durationHours > 0 ? `${recVal.durationHours.toFixed(1)}h` : '0h',
             durationNum: recVal.durationHours,
             hourlyRate: recVal.rate,
+            netLengthMinutes: recNet,
+            paidBreakMinutes: apiData.requestedShift?.paidBreakDuration ?? 0,
+            unpaidBreakMinutes: apiData.requestedShift?.unpaidBreakDuration ?? 0,
+            estimatedPay: recVal.value,
             avatar: apiData.targetEmployee?.avatarUrl,
             deptName: apiData.requestedShift?.departments?.name || 'General',
+            subGroupName: apiData.requestedShift?.sub_departments?.name,
             orgName: apiData.requestedShift?.organizations?.name || '',
             groupType: apiData.requestedShift?.group_type || '',
             organizationId: apiData.requestedShift?.organizationId,
@@ -397,18 +399,31 @@ const mapToUIModel = (apiData: SwapRequestWithDetails): SwapRequestManagement =>
         const offererName = activeOffer.offerer
             ? `${activeOffer.offerer.first_name} ${activeOffer.offerer.last_name}`.trim()
             : 'Offerer';
+        const osNet = Math.round(offerDurationHours * 60);
+        const osDateRaw = os.shiftDate;
+        const osStart = os.startTime ?? '00:00:00';
+        const osEnd = os.endTime ?? '00:00:00';
         recipient = {
             employeeName: offererName,
             roleName: os.roles?.name || 'Unknown Role',
-            date: os.shiftDate,
-            formattedDate: os.shiftDate ? format(parse(os.shiftDate, 'yyyy-MM-dd', new Date()), 'EEE, MMM d') : '',
-            time: `${os.startTime} - ${os.endTime}`,
+            date: osDateRaw,
+            formattedDate: osDateRaw ? format(parse(osDateRaw, 'yyyy-MM-dd', new Date()), 'EEE, MMM d, yyyy') : '',
+            time: `${osStart} - ${osEnd}`,
             duration: `${offerDurationHours.toFixed(1)}h`,
             durationNum: offerDurationHours,
-            hourlyRate: 0,
+            hourlyRate: offerVal.rate,
+            netLengthMinutes: osNet,
+            paidBreakMinutes: 0,
+            unpaidBreakMinutes: os.unpaidBreakMinutes ?? 0,
+            estimatedPay: offerVal.value,
             avatar: activeOffer.offerer?.avatar_url,
             deptName: os.departments?.name || 'General',
-            lifecycleStatus: os.lifecycleStatus || 'Published',
+            subGroupName: undefined,
+            orgName: undefined,
+            groupType: '',
+            organizationId: undefined,
+            subDepartmentId: undefined,
+            lifecycleStatus: os.lifecycleStatus ?? 'Published',
             stateId: os.stateId || 'S?',
         };
     }
@@ -419,13 +434,18 @@ const mapToUIModel = (apiData: SwapRequestWithDetails): SwapRequestManagement =>
             employeeName: apiData.requestorEmployee?.fullName || 'Unknown',
             roleName: apiData.originalShift?.roles?.name || 'Unknown Role',
             date: apiData.originalShift?.shiftDate || '',
-            formattedDate: apiData.originalShift?.shiftDate ? format(parse(apiData.originalShift.shiftDate, 'yyyy-MM-dd', new Date()), 'EEE, MMM d') : '',
+            formattedDate: apiData.originalShift?.shiftDate ? format(parse(apiData.originalShift.shiftDate, 'yyyy-MM-dd', new Date()), 'EEE, MMM d, yyyy') : '',
             time: `${apiData.originalShift?.startTime} - ${apiData.originalShift?.endTime}`,
             duration: `${reqVal.durationHours.toFixed(1)}h`,
             durationNum: reqVal.durationHours,
             hourlyRate: reqVal.rate,
+            netLengthMinutes: apiData.originalShift?.netLength ?? Math.round(reqVal.durationHours * 60),
+            paidBreakMinutes: apiData.originalShift?.paidBreakDuration ?? 0,
+            unpaidBreakMinutes: apiData.originalShift?.unpaidBreakDuration ?? 0,
+            estimatedPay: reqVal.value,
             avatar: apiData.requestorEmployee?.avatarUrl,
             deptName: apiData.originalShift?.departments?.name || 'General',
+            subGroupName: apiData.originalShift?.sub_departments?.name,
             orgName: apiData.originalShift?.organizations?.name || '',
             groupType: apiData.originalShift?.group_type || '',
             organizationId: apiData.originalShift?.organizationId,

@@ -34,7 +34,9 @@ import {
   ShiftTimeRange,
 } from '@/modules/compliance';
 import { runV8Orchestrator } from '@/modules/compliance/v8';
-import type { V8OrchestratorInput, V8Hit } from '@/modules/compliance/v8/types';
+import { buildBidInput } from '@/modules/planning/unified/compliance/input-builder';
+import type { V8Hit, V8Result } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorInput } from '@/modules/compliance/v8/orchestrator/types';
 import { fetchV8EmployeeContext } from '@/modules/compliance/employee-context';
 import { validateCompliance } from '@/modules/rosters/services/compliance.service';
 import { SharedShiftCard } from '@/modules/planning/ui/components/SharedShiftCard';
@@ -181,8 +183,8 @@ function useBidsCompliancePanel(
       const existingShifts = (existingRaw || [])
         .filter((s: any) => s.id !== expandedShift.id)
         .map((s: any, idx: number) => ({
-          shift_id:                s.id || `s-${idx}`,
-          shift_date:              s.shift_date,
+          id:                      s.id || `s-${idx}`,
+          date:                    s.shift_date,
           start_time:              (s.start_time || '').replace(/:\d{2}$/, ''),
           end_time:                (s.end_time   || '').replace(/:\d{2}$/, ''),
           role_id:                 '',
@@ -196,31 +198,27 @@ function useBidsCompliancePanel(
       const employeeCtx = await fetchV8EmployeeContext(selectedBid.employeeId);
 
       // Build v2 input
-      const v2Input: V8OrchestratorInput = {
-        employee_id: selectedBid.employeeId,
-        employee_context: employeeCtx,
-        existing_shifts: existingShifts,
-        candidate_changes: {
-          add_shifts: [{
-            shift_id:                expandedShift.id,
-            shift_date:              expandedShift.date,
-            start_time:              expandedShift.startTime,
-            end_time:                expandedShift.endTime,
-            role_id:                 expandedShift.roleId || '',
-            organization_id:         expandedShift.organizationId,
-            department_id:           expandedShift.departmentId,
-            sub_department_id:       expandedShift.subDepartmentId,
-            required_qualifications: [],
-            is_ordinary_hours:       true,
-            break_minutes:           0,
-            unpaid_break_minutes:    expandedShift.unpaidBreak || 0,
-          }],
-          remove_shifts: [],
+      const v2Input = buildBidInput({
+        employeeId: selectedBid.employeeId,
+        employeeContext: employeeCtx,
+        existingShifts,
+        candidateShift: {
+          id:                      expandedShift.id,
+          date:                    expandedShift.date,
+          shift_date:              expandedShift.date,
+          start_time:              expandedShift.startTime,
+          end_time:                expandedShift.endTime,
+          role_id:                 expandedShift.roleId || '',
+          organization_id:         expandedShift.organizationId,
+          department_id:           expandedShift.departmentId,
+          sub_department_id:       expandedShift.subDepartmentId,
+          required_qualifications: [],
+          is_ordinary_hours:       true,
+          break_minutes:           0,
+          unpaid_break_minutes:    expandedShift.unpaidBreak || 0,
         },
-        mode:           'SIMULATED',
-        operation_type: 'BID',
-        stage:          'DRAFT',
-      };
+        stage: 'DRAFT',
+      });
 
       // Run v2 engine
       const v2Result = runV8Orchestrator(v2Input);
@@ -246,12 +244,14 @@ function useBidsCompliancePanel(
 
         (bucketAResult.qualificationViolations ?? []).forEach((v: any) => {
           allHits.push({
-            rule_id:          'V8_QUALIFICATIONS',
-            severity:         'BLOCKING',
-            message:          v.message || 'Missing required qualification.',
-            resolution_hint:  'Employee must hold all required qualifications.',
-            affected_shifts:  [expandedShift.id],
-          } as V8Hit);
+            rule_id:         'V8_QUALIFICATIONS',
+            rule_name:       'Qualifications',
+            status:          'BLOCKING',
+            summary:         v.message || 'Missing required qualification.',
+            details:         'Employee must hold all required qualifications.',
+            affected_shifts: [expandedShift.id],
+            blocking:        true,
+          });
         });
 
         (bucketAResult.violations || []).filter((v: string) =>
@@ -454,13 +454,10 @@ const RoleCard: React.FC<RoleCardProps> = ({
   shift, isSelected, onSelect,
 }) => {
   const groupVariant = getGroupVariant(shift.groupType, shift.department);
+  const theme = GROUP_THEME[groupVariant];
   const isResolved = shift.toggle === 'resolved';
 
   useTimeTicker(1000);
-  const timeRemaining = calculateTimeRemaining(shift.biddingDeadline || shift.date);
-  const timerLabel = formatTimeRemaining(timeRemaining);
-
-  const urgency: ShiftUrgency = shift.toggle === 'urgent' ? 'urgent' : 'normal';
 
   const netLength = (() => {
     const toMin = (t: string) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + (m || 0); };
@@ -469,64 +466,82 @@ const RoleCard: React.FC<RoleCardProps> = ({
     return Math.max(1, gross - shift.unpaidBreak);
   })();
 
+  const h = Math.floor(netLength / 60);
+  const m = Math.round(netLength % 60);
+  const netStr = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+
   return (
     <motion.button
       onClick={onSelect}
       className={cn(
-        "w-full flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border transition-all text-left group",
+        "w-full flex items-center justify-between gap-3 px-4 py-1.5 rounded-full border transition-all text-left group relative overflow-hidden",
         isSelected
-          ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20 shadow-sm"
+          ? "bg-primary/10 border-primary/40 ring-1 ring-primary/20 shadow-md"
           : "bg-white dark:bg-slate-900 border-border/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-border",
         isResolved && "opacity-60"
       )}
       whileHover={{ y: -1 }}
       whileTap={{ scale: 0.98 }}
     >
-      <div className="flex items-center gap-4 min-w-0">
-        {/* Date & Time */}
-        <div className="flex flex-col shrink-0">
-          <span className="text-[11px] font-black uppercase tracking-wider text-muted-foreground/70">
-            {shift.dayLabel}
+      {/* Selected highlight bar (pill style) */}
+      {isSelected && (
+        <motion.div
+          layoutId="role-pill-bar"
+          className={cn('absolute left-0 top-0 bottom-0 w-1', theme.bar)}
+          transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+        />
+      )}
+
+      <div className="flex items-center gap-3 min-w-0">
+        {/* Date */}
+        <div className="flex flex-col shrink-0 min-w-[32px]">
+          <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground/60 leading-none">
+            {shift.dayLabel.slice(0, 3)}
           </span>
-          <span className="text-[13px] font-mono font-bold text-foreground">
-            {shift.startTime}–{shift.endTime}
+          <span className="text-[11px] font-mono font-bold text-foreground leading-none mt-1">
+            {format(new Date(shift.date), 'dd')}
           </span>
         </div>
 
-        {/* Separator */}
-        <div className="w-px h-6 bg-border/50 shrink-0" />
+        <div className="w-px h-4 bg-border/40 shrink-0" />
+
+        {/* Time & Net */}
+        <div className="flex flex-col shrink-0">
+          <span className="text-[11px] font-mono font-bold text-foreground leading-none">
+            {shift.startTime}–{shift.endTime}
+          </span>
+          <span className="text-[9px] font-medium text-muted-foreground/50 mt-1 leading-none">
+            Net: {netStr}
+          </span>
+        </div>
+
+        <div className="w-px h-4 bg-border/40 shrink-0" />
 
         {/* Role & Dept */}
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-bold text-primary truncate">
+          <span className="text-[12px] font-bold text-primary truncate leading-none">
             {shift.role}
           </span>
-          <span className="text-[10px] text-muted-foreground truncate max-w-[150px]">
-            {shift.department} {shift.subDepartment ? `· ${shift.subDepartment}` : ''}
+          <span className="text-[9px] text-muted-foreground/60 truncate leading-none mt-1">
+            {shift.department}
           </span>
         </div>
       </div>
 
       {/* Right side: Bids & Status */}
-      <div className="flex items-center gap-3 shrink-0">
-        {!isResolved && !timeRemaining.isExpired && (
-          <div className="hidden sm:flex flex-col items-end">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground/50">Closes in</span>
-            <span className={cn("text-[11px] font-mono font-bold", timeRemaining.hours < 2 ? "text-rose-500" : "text-amber-500")}>
-              {timerLabel}
-            </span>
-          </div>
-        )}
-        
-        <Badge variant={isSelected ? 'default' : 'secondary'} className={cn(
-          "font-mono tabular-nums text-[11px] h-6 px-2 rounded-md",
-          !isSelected && "bg-muted text-muted-foreground"
+      <div className="flex items-center gap-2 shrink-0">
+        <div className={cn(
+          "flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-black tabular-nums transition-all",
+          isSelected 
+            ? "bg-primary text-primary-foreground border-primary" 
+            : "bg-muted/50 text-muted-foreground/60 border-transparent group-hover:border-border/50"
         )}>
-          {shift.bidCount} {shift.bidCount === 1 ? 'bid' : 'bids'}
-        </Badge>
+          <Users className="h-2.5 w-2.5" />
+          <span>{shift.bidCount}</span>
+        </div>
         
         {isResolved && (
-          <CheckCircle className="h-4 w-4 text-emerald-500" />
+          <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
         )}
       </div>
     </motion.button>
@@ -862,11 +877,12 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
           let hasBlocker = !hv.passed;
           if (!hasBlocker) {
             const autoEmployeeCtx = await fetchV8EmployeeContext(input.employee_id);
-            const v2AutoInput: V8OrchestratorInput = {
-              employee_id: input.employee_id,
-              employee_context: autoEmployeeCtx,
-              existing_shifts: existingShifts.map((s, idx) => ({
-                shift_id:                (s as any).shift_id || `s-${idx}`,
+            const v2AutoInput = buildBidInput({
+              employeeId: input.employee_id,
+              employeeContext: autoEmployeeCtx,
+              existingShifts: existingShifts.map((s, idx) => ({
+                id:                      (s as any).shift_id || `s-${idx}`,
+                date:                    s.shift_date,
                 shift_date:              s.shift_date,
                 start_time:              (s.start_time || '').replace(/:\d{2}$/, ''),
                 end_time:                (s.end_time   || '').replace(/:\d{2}$/, ''),
@@ -876,29 +892,25 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                 break_minutes:           s.unpaid_break_minutes || 0,
                 unpaid_break_minutes:    s.unpaid_break_minutes || 0,
               })),
-              candidate_changes: {
-                add_shifts: [{
-                  shift_id:                shift.id,
-                  shift_date:              shift.date,
-                  start_time:              shift.startTime,
-                  end_time:                shift.endTime,
-                  role_id:                 shift.roleId || '',
-                  organization_id:         shift.organizationId,
-                  department_id:           shift.departmentId,
-                  sub_department_id:       shift.subDepartmentId,
-                  required_qualifications: [],
-                  is_ordinary_hours:       true,
-                  break_minutes:           0,
-                  unpaid_break_minutes:    shift.unpaidBreak || 0,
-                }],
-                remove_shifts: [],
+              candidateShift: {
+                id:                      shift.id,
+                date:                    shift.date,
+                shift_date:              shift.date,
+                start_time:              shift.startTime,
+                end_time:                shift.endTime,
+                role_id:                 shift.roleId || '',
+                organization_id:         shift.organizationId,
+                department_id:           shift.departmentId,
+                sub_department_id:       shift.subDepartmentId,
+                required_qualifications: [],
+                is_ordinary_hours:       true,
+                break_minutes:           0,
+                unpaid_break_minutes:    shift.unpaidBreak || 0,
               },
-              mode:           'SIMULATED',
-              operation_type: 'BID',
-              stage:          'DRAFT',
-            };
+              stage: 'DRAFT',
+            });
             const v2AutoResult = runV8Orchestrator(v2AutoInput);
-            hasBlocker = v2AutoResult.rule_hits.some(h => h.severity === 'BLOCKING');
+            hasBlocker = v2AutoResult.hits.some(h => h.blocking);
           }
 
           if (!hasBlocker) {
@@ -1166,8 +1178,8 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                                   <span className="text-[10px] font-semibold text-rose-400">{hit.rule_id.replace(/_/g, ' ')}</span>
                                 </div>
                                 <div className="px-3.5 py-2.5">
-                                  <p className="text-[9px] text-muted-foreground/50 leading-relaxed">{hit.message}</p>
-                                  {hit.resolution_hint && <p className="text-[9px] text-foreground/50 leading-relaxed mt-1.5 border-t border-white/[0.04] pt-1.5">{hit.resolution_hint}</p>}
+                                  <p className="text-[9px] text-muted-foreground/50 leading-relaxed">{hit.summary}</p>
+                                  {hit.details && <p className="text-[9px] text-foreground/50 leading-relaxed mt-1.5 border-t border-white/[0.04] pt-1.5">{hit.details}</p>}
                                 </div>
                               </div>
                             ))}
@@ -1178,8 +1190,8 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                                   <span className="text-[10px] font-semibold text-amber-400">{hit.rule_id.replace(/_/g, ' ')}</span>
                                 </div>
                                 <div className="px-3.5 py-2.5">
-                                  <p className="text-[9px] text-muted-foreground/50 leading-relaxed">{hit.message}</p>
-                                  {hit.resolution_hint && <p className="text-[9px] text-foreground/50 leading-relaxed mt-1.5 border-t border-white/[0.04] pt-1.5">{hit.resolution_hint}</p>}
+                                  <p className="text-[9px] text-muted-foreground/50 leading-relaxed">{hit.summary}</p>
+                                  {hit.details && <p className="text-[9px] text-foreground/50 leading-relaxed mt-1.5 border-t border-white/[0.04] pt-1.5">{hit.details}</p>}
                                 </div>
                               </div>
                             ))}

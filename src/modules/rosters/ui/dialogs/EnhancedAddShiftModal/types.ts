@@ -197,6 +197,28 @@ export interface ShiftFormDrawerContentProps {
     isScheduleDefined: boolean;
 }
 
+export interface ScheduleStepProps extends StepProps {
+    shiftLength: number;
+    netLength: number;
+    hardValidation: any;
+    rosters: any[];
+    rosterStructure: any[];
+    selectedRosterId: string;
+    onRosterChange: (id: string) => void;
+    isGroupLocked?: boolean;
+    isSubGroupLocked?: boolean;
+    isRosterLocked?: boolean;
+    context?: ShiftContext | null;
+    activeSubGroups?: Record<string, any>;
+    roles: Role[];
+    remunerationLevels: RemunerationLevel[];
+    skills: Skill[];
+    licenses: License[];
+    events: Event[];
+    selectedRemLevel?: RemunerationLevel;
+    isRoleLocked?: boolean;
+}
+
 export interface RoleStepProps extends StepProps {
     roles: Role[];
     remunerationLevels: RemunerationLevel[];

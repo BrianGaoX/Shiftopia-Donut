@@ -26,7 +26,7 @@ interface UseBroadcastAnalyticsReturn {
 async function fetchBroadcastAnalytics(): Promise<AnalyticsData> {
     const { data, error } = await supabase.rpc('get_broadcast_analytics');
     if (error) throw error;
-    return data as AnalyticsData;
+    return data as unknown as AnalyticsData;
 }
 
 export function useBroadcastAnalytics(): UseBroadcastAnalyticsReturn {

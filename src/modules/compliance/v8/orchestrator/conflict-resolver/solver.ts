@@ -114,16 +114,16 @@ function checkCandidateCompliance(
             };
 
             const result = runV8Orchestrator(input, { stage: config.compliance_stage });
-            all_hits.push(...result.rule_hits);
+            all_hits.push(...result.hits);
 
             const blocked =
-                rank(result.status) === 2 ||
-                (rank(result.status) === 1 && !config.accept_warnings);
+                rank(result.overall_status) === 2 ||
+                (rank(result.overall_status) === 1 && !config.accept_warnings);
 
             if (blocked) return { ok: false, rule_hits: all_hits };
 
             // Update tentative for subsequent ops in this loop
-            const after_removes = existing.filter(sh => !change.remove_shift_ids.includes(sh.shift_id));
+            const after_removes = existing.filter(sh => !change.remove_shift_ids.includes(sh.id));
             tentative.set(change.employee_id, [...after_removes, ...add_shifts]);
         }
     }
@@ -147,7 +147,7 @@ function buildTentativeFromSelection(
     for (const s of selected) {
         for (const change of s.op.schedule_changes) {
             const current = tentative.get(change.employee_id) ?? [];
-            const after_removes = current.filter(sh => !change.remove_shift_ids.includes(sh.shift_id));
+            const after_removes = current.filter(sh => !change.remove_shift_ids.includes(sh.id));
             const added = change.add_shift_ids
                 .map(id => shift_catalog.get(id))
                 .filter((sh): sh is V8OrchestratorShift => sh !== undefined);
@@ -262,7 +262,7 @@ export function solverResolve(
                     // Update tentative by applying candidate
                     for (const change of candidate.op.schedule_changes) {
                         const current = tentative.get(change.employee_id) ?? [];
-                        const after_removes = current.filter(s => !change.remove_shift_ids.includes(s.shift_id));
+                        const after_removes = current.filter(s => !change.remove_shift_ids.includes(s.id));
                         const added = change.add_shift_ids.map(id => shift_catalog.get(id)).filter(Boolean) as V8OrchestratorShift[];
                         tentative.set(change.employee_id, [...after_removes, ...added]);
                     }

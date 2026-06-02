@@ -227,7 +227,7 @@ export const BroadcastItem: React.FC<BroadcastItemProps> = ({
                                 {FILE_ICONS[att.fileType] || FILE_ICONS.other}
                                 <span className="truncate max-w-[120px]">{att.fileName}</span>
                                 <span className="text-muted-foreground text-xs">
-                                    {formatFileSizeLocal(att.fileSize)}
+                                    {formatFileSizeLocal(att.fileSize ?? 0)}
                                 </span>
                                 <Download className="h-3.5 w-3.5 text-muted-foreground" />
                             </div>

@@ -38,12 +38,13 @@ export async function canPublishRoster(
     }
 
     // Get roster details
-    const { data: roster, error: rosterError } = await supabase
+    const { data: rosterRaw, error: rosterError } = await supabase
         .from('rosters')
-        .select('department_id, sub_department_id, date')
+        .select('department_id, sub_department_id, start_date')
         .eq('id', rosterId)
         .single();
 
+    const roster = rosterRaw as any;
     if (rosterError || !roster) {
         return {
             canPublish: false,
@@ -57,7 +58,7 @@ export async function canPublishRoster(
         .select('id, start_time, end_time, role_id, is_draft')
         .eq('department_id', roster.department_id)
         .eq('sub_department_id', roster.sub_department_id)
-        .eq('shift_date', roster.date)
+        .eq('shift_date', roster.start_date)
         .eq('is_draft', true);
 
     if (shiftsError) {

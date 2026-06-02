@@ -271,8 +271,8 @@ export function ComplianceModal({
         ));
 
         // Run the rule (slight delay for UI feedback)
-        setTimeout(() => {
-            const ruleResult = runRule(ruleId, input);
+        setTimeout(async () => {
+            const ruleResult = await runRule(ruleId, input);
 
             setRuleStates(prev => prev.map(r => {
                 if (r.ruleId !== ruleId) return r;
@@ -281,7 +281,7 @@ export function ComplianceModal({
                     ...r,
                     isRunning: false,
                     status: ruleResult?.status || 'not-run',
-                    result: ruleResult
+                    result: ruleResult as any,
                 };
             }));
         }, 100);

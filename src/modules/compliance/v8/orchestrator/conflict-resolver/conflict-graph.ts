@@ -40,8 +40,8 @@ const REST_GAP_MINUTES = 10 * 60;    // 10h default; structural pre-filter only
 // =============================================================================
 
 function absInterval(shift: V8OrchestratorShift): [number, number] {
-    const s = toAbsoluteMinutes(shift.shift_date, shift.start_time);
-    const e = toAbsoluteMinutes(shift.shift_date, shift.end_time);
+    const s = toAbsoluteMinutes(shift.date, shift.start_time);
+    const e = toAbsoluteMinutes(shift.date, shift.end_time);
     return [s, e <= s ? e + MINUTES_PER_DAY : e];
 }
 
@@ -151,8 +151,8 @@ export function buildConflictGraph(
                         kind:    'TIME_OVERLAP',
                         reason:
                             `Both operations schedule overlapping shifts for employee ${emp_id}: `
-                            + `${a.shift.shift_id} (${a.shift.shift_date} ${a.shift.start_time}–${a.shift.end_time}) `
-                            + `↔ ${b.shift.shift_id} (${b.shift.shift_date} ${b.shift.start_time}–${b.shift.end_time}).`,
+                            + `${a.shift.id} (${a.shift.date} ${a.shift.start_time}–${a.shift.end_time}) `
+                            + `↔ ${b.shift.id} (${b.shift.date} ${b.shift.start_time}–${b.shift.end_time}).`,
                     });
                 } else if (rest_gap_violation) {
                     addConflict(a.op_id, b.op_id, {
@@ -161,7 +161,7 @@ export function buildConflictGraph(
                         kind:    'TIME_OVERLAP',
                         reason:
                             `Operations schedule back-to-back shifts for employee ${emp_id} `
-                            + `with < 10h rest gap: ${a.shift.shift_id} and ${b.shift.shift_id}.`,
+                            + `with < 10h rest gap: ${a.shift.id} and ${b.shift.id}.`,
                     });
                 }
             }

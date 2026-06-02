@@ -11,7 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/modules/core/ui/primitives/tooltip';
-import { BroadcastNotifications } from '../broadcast/BroadcastNotifications';
+import { BroadcastNotifications } from '../../components/broadcast/BroadcastNotifications';
 import ThemeToggle from './ThemeToggle';
 import UserProfile from './UserProfile';
 import { useTheme } from '@/modules/core/contexts/ThemeContext';
@@ -32,7 +32,7 @@ const UserSection: React.FC<UserSectionProps> = ({
   const { theme, setTheme } = useTheme();
 
   const handleThemeChange = useCallback((newTheme: 'dark' | 'light' | 'glass' | 'lovable') => {
-    setTheme(newTheme);
+    setTheme(newTheme as any);
   }, [setTheme]);
 
   // Handle keyboard shortcut for search
@@ -104,11 +104,7 @@ const UserSection: React.FC<UserSectionProps> = ({
           </TooltipProvider>
         ) : null}
 
-        <ThemeToggle
-          isCollapsed={isCollapsed}
-          theme={theme}
-          handleThemeChange={handleThemeChange}
-        />
+        <ThemeToggle />
 
         <TooltipProvider>
           <Tooltip>

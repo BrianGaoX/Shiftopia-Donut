@@ -154,7 +154,7 @@ export class ScenarioLoader {
             employment_end_date: profile?.termination_date ?? null,
             // contracts → source of truth for R10 role/hierarchy match
             contracts:           ctx.contracts,
-            qualifications:      ctx.qualifications.map(q => ({
+            qualifications:      (ctx.qualifications ?? []).map(q => ({
                 qualification_id: q.qualification_id,
                 expires_at:       q.expires_at,
             })),

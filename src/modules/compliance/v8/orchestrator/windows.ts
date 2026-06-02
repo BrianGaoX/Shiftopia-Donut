@@ -11,7 +11,23 @@
  *   - computeMaxConsecutiveStreak: O(n) consecutive-day detection
  */
 
-import { V8OrchestratorShift, DaySegmentV2, ImpactWindow, V8ShiftId } from './types';
+import { V8OrchestratorShift, V8ShiftId } from './types';
+
+// =============================================================================
+// LOCAL TYPE DEFINITIONS
+// (DaySegmentV2 and ImpactWindow were removed from ./types — defined here)
+// =============================================================================
+
+export interface DaySegmentV2 {
+    date:            string;       // YYYY-MM-DD
+    hours:           number;
+    source_shift_id: V8ShiftId;
+}
+
+export interface ImpactWindow {
+    from_date: string;    // YYYY-MM-DD
+    to_date:   string;    // YYYY-MM-DD
+}
 
 // =============================================================================
 // CONSTANTS
@@ -110,7 +126,7 @@ export function segmentShiftByDay(shift: V8OrchestratorShift): DaySegmentV2[] {
 
     if (!isCross) {
         const netHours = Math.max(0, (endMin - startMin - breakMins)) / 60;
-        return [{ date: shift.shift_date, hours: netHours, source_shift_id: shift.shift_id }];
+        return [{ date: shift.date, hours: netHours, source_shift_id: shift.id }];
     }
 
     // Cross-midnight: split at 00:00
@@ -120,8 +136,8 @@ export function segmentShiftByDay(shift: V8OrchestratorShift): DaySegmentV2[] {
     const secondaryNet    = secondaryGross / 60;
 
     return [
-        { date: shift.shift_date,             hours: primaryNet,   source_shift_id: shift.shift_id },
-        { date: addDays(shift.shift_date, 1), hours: secondaryNet, source_shift_id: shift.shift_id },
+        { date: shift.date,             hours: primaryNet,   source_shift_id: shift.id },
+        { date: addDays(shift.date, 1), hours: secondaryNet, source_shift_id: shift.id },
     ];
 }
 
@@ -151,7 +167,7 @@ export function groupByCalendarDay(shifts: V8OrchestratorShift[]): Map<string, D
  */
 export function sortShiftsByStart(shifts: V8OrchestratorShift[]): V8OrchestratorShift[] {
     return [...shifts].sort((a, b) => {
-        const dc = compareDates(a.shift_date, b.shift_date);
+        const dc = compareDates(a.date, b.date);
         if (dc !== 0) return dc;
         return parseTimeToMinutes(a.start_time) - parseTimeToMinutes(b.start_time);
     });
@@ -171,7 +187,7 @@ export function shiftsInRollingWindow(
     days:           number,
 ): V8OrchestratorShift[] {
     const from_date = addDays(reference_date, -days);
-    return shifts.filter(s => s.shift_date >= from_date && s.shift_date <= reference_date);
+    return shifts.filter(s => s.date >= from_date && s.date <= reference_date);
 }
 
 /**
@@ -185,8 +201,8 @@ export function shiftsInWindow(
 ): V8OrchestratorShift[] {
     return shifts.filter(shift => {
         const isCross = parseTimeToMinutes(shift.end_time) <= parseTimeToMinutes(shift.start_time);
-        const end_date = isCross ? addDays(shift.shift_date, 1) : shift.shift_date;
-        return (shift.shift_date >= from_date && shift.shift_date <= to_date)
+        const end_date = isCross ? addDays(shift.date, 1) : shift.date;
+        return (shift.date >= from_date && shift.date <= to_date)
             || (end_date >= from_date && end_date <= to_date);
     });
 }
@@ -256,12 +272,12 @@ export function deriveImpactWindow(
         return { from_date: today, to_date: today };
     }
 
-    const dates     = candidate_shifts.map(s => s.shift_date).sort();
+    const dates     = candidate_shifts.map(s => s.date).sort();
     const first     = dates[0];
     const last      = dates[dates.length - 1];
 
     // If the last candidate shift is cross-midnight, it extends into the next day
-    const lastShift = candidate_shifts.find(s => s.shift_date === last)!;
+    const lastShift = candidate_shifts.find(s => s.date === last)!;
     const isCross   = parseTimeToMinutes(lastShift.end_time) <= parseTimeToMinutes(lastShift.start_time);
     const effectiveLast = isCross ? addDays(last, 1) : last;
 

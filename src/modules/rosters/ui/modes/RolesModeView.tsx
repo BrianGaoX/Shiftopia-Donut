@@ -608,7 +608,7 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
                                 onEdit={sh => onEditShift?.(sh)} 
                                 isSelected={selectedV8ShiftIds.includes(s.id)}
                                 onToggleSelection={onToggleShiftSelection || (() => {})}
-                                isBulkMode={isBulkMode}
+                                isBulkMode={isBulkMode ?? false}
                                 onAssignEmployee={onAssignShift || (() => {})}
                                 headerAction={buildShiftMenu(s)}
                                 detailedCost={(s as any).detailedCost}

@@ -1,3 +1,4 @@
+import json
 import os
 import pickle
 import pandas as pd
@@ -13,15 +14,21 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 SUPABASE_URL = os.getenv('VITE_SUPABASE_URL')
 SUPABASE_KEY = os.getenv('VITE_SUPABASE_ANON_KEY')
 
-FEATURE_COLS = [
-    'event_type', 'expected_attendance', 'day_of_week', 'month',
-    'function_type', 'room_count', 'total_sqm', 'room_capacity',
-    'simultaneous_event_count', 'total_venue_attendance_same_time',
-    'entry_peak_flag', 'exit_peak_flag', 'meal_window_flag',
-    'time_slice_index'
-]
+# ---------------------------------------------------------------------------
+# Feature schema — single source of truth shared with predict.py.
+# Fail loudly at import time if the contract file is absent.
+# ---------------------------------------------------------------------------
+_SCHEMA_PATH = os.path.join(os.path.dirname(__file__), 'feature_schema.json')
+if not os.path.exists(_SCHEMA_PATH):
+    raise RuntimeError(
+        f"feature_schema.json not found at {_SCHEMA_PATH}. "
+        "Cannot train: feature contract is missing."
+    )
+with open(_SCHEMA_PATH) as _f:
+    _SCHEMA = json.load(_f)
 
-CATEGORICAL_COLS = ['event_type', 'function_type']
+FEATURE_COLS: list[str] = _SCHEMA['feature_order']
+CATEGORICAL_COLS: list[str] = _SCHEMA['categorical']
 ROLES = ['Usher', 'Security', 'Food Staff', 'Supervisor']
 
 

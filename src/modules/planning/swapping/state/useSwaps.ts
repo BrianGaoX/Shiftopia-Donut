@@ -31,6 +31,7 @@ export const useSwaps = (scopeOverrides?: {
         queryKey: ['mySwapRequests', userId, hierarchy.organizationId],
         queryFn: () => userId ? swapsApi.getMySwaps(userId, { organizationId: hierarchy.organizationId }) : Promise.resolve([]),
         enabled: !!userId,
+        staleTime: 60_000, // 1 minute staleTime
     });
 
     // Query: Get available swaps from other employees (Locked to Org/Dept)
@@ -43,6 +44,7 @@ export const useSwaps = (scopeOverrides?: {
             subDepartmentId: hierarchy.subDepartmentId || undefined
         }) : Promise.resolve([]),
         enabled: !!userId && !!hierarchy.organizationId,
+        staleTime: 60_000, // 1 minute staleTime
     });
 
     // Query: Get pending manager approvals (locked to org hierarchy)
@@ -57,6 +59,7 @@ export const useSwaps = (scopeOverrides?: {
             })
             : Promise.resolve([]),
         enabled: !!hierarchy.organizationId,
+        staleTime: 60_000, // 1 minute staleTime
     });
 
     // Query: Get full offer details for the current user's active offers (locked shifts)
@@ -64,6 +67,7 @@ export const useSwaps = (scopeOverrides?: {
         queryKey: ['myActiveOfferDetails', userId],
         queryFn: () => userId ? swapsApi.getMyActiveOfferDetails(userId) : Promise.resolve([]),
         enabled: !!userId,
+        staleTime: 2 * 60_000, // 2 minutes staleTime (surgically invalidated on mutation)
     });
 
     // Query: Get swap IDs where I have an active offer (for "Already Offered" badge)
@@ -71,6 +75,7 @@ export const useSwaps = (scopeOverrides?: {
         queryKey: ['myActiveOffers', userId],
         queryFn: () => userId ? swapsApi.getMyActiveOffers(userId) : Promise.resolve(new Set<string>()),
         enabled: !!userId,
+        staleTime: 2 * 60_000, // 2 minutes staleTime (surgically invalidated on mutation)
     });
 
     // Mutation: Create a swap request

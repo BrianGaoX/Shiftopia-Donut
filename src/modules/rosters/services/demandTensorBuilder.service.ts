@@ -4,7 +4,7 @@
  *
  * Pipeline (ML path, default):
  *   1. Fetch venueops_events overlapping the date.
- *   2. For each (event × role) call mlClient.buildDemandAnalysis → raw tensor.
+ *   2. For each event call mlClient.buildDemandAnalysisForRoles (all ML roles in one slice fan-out) → raw tensors.
  *   3. Merge raw tensors with the same roleId + subDepartmentId by summing per slot.
  *   4. Subtract existing-shift coverage per slot → residualHeadcount.
  *
@@ -29,7 +29,7 @@ import {
 } from '../domain/shiftSynthesizer.policy';
 import type { TemplateGroupType } from '../domain/shift.entity';
 import {
-  buildDemandAnalysis,
+  buildDemandAnalysisForRoles,
   resolveMLRoleById,
   resolveMLRoleByNameFallback,
   ML_KNOWN_ROLES,
@@ -550,58 +550,87 @@ export async function buildScopeDemand(
       );
       const eventStartMs = new Date(event.start_date_time).getTime();
       const eventEndMs = new Date(event.end_date_time).getTime();
+
+      // mlCache is scoped to this event: keyed by ML role name → DemandTensor.
+      // Populated first from demand_forecasts (DB cache), then from the live ML
+      // service via a single buildDemandAnalysisForRoles call that fans out slices
+      // ONCE for all DB-cache-missing roles.
       const mlCache = new Map<string, DemandTensor>();
 
-      for (const role of knownRoles) {
-        try {
-          let raw = mlCache.get(role.mlRole);
-          if (!raw) {
-            // First, try to fetch from demand_forecasts table.
-            // NOTE: time_slot column stores a slot INDEX (0-based), not minutes.
-            // slotStart/slotEnd below are index-valued placeholders; mergeTensorInto
-            // re-aligns by array index, so the merge is still correct.
-            const { data: cachedDemand, error } = await (supabase as any)
-              .from('demand_forecasts')
-              .select('*')
-              .eq('event_id', event.event_id)
-              .eq('role', role.mlRole)
-              .order('time_slot', { ascending: true });
+      // ── Step A: attempt DB-cache lookup for each distinct ML role ──────────
+      const mlRolesNeeded = [...new Set(knownRoles.map((r) => r.mlRole))];
+      const mlRolesForLiveCall: MLKnownRole[] = [];
 
-            if (!error && cachedDemand && cachedDemand.length > 0) {
-              const packingSlots: DemandSlot[] = cachedDemand.map((row: any) => ({
-                // slotStart/slotEnd are index-based placeholders; mergeTensorInto uses array index.
-                slotStart: row.time_slot,
-                slotEnd: row.time_slot + 1,
-                requiredHeadcount: row.corrected_count,
-                residualHeadcount: row.corrected_count,
-                residualHeadcountInt: Math.round(row.corrected_count),
-              }));
-              raw = {
-                roleId: role.mlRole,
-                subDepartmentId: event.event_id,
-                buildingType: params.buildingType,
-                slots: packingSlots,
-              };
-            } else {
-              // Fallback to calling the ML service live with per-slice flag derivation.
-              raw = await buildDemandAnalysis(
-                eventInput,
-                role.mlRole,
-                (sliceIndex) => derivePerSliceFlags(sliceIndex, eventStartMs, eventEndMs),
-              );
-            }
-            mlCache.set(role.mlRole, raw);
-            mlCallCount++;
+      for (const mlRole of mlRolesNeeded) {
+        try {
+          // First, try to fetch from demand_forecasts table.
+          // NOTE: time_slot column stores a slot INDEX (0-based), not minutes.
+          // slotStart/slotEnd below are index-valued placeholders; mergeTensorInto
+          // re-aligns by array index, so the merge is still correct.
+          const { data: cachedDemand, error } = await (supabase as any)
+            .from('demand_forecasts')
+            .select('*')
+            .eq('event_id', event.event_id)
+            .eq('role', mlRole)
+            .order('time_slot', { ascending: true });
+
+          if (!error && cachedDemand && cachedDemand.length > 0) {
+            const packingSlots: DemandSlot[] = cachedDemand.map((row: any) => ({
+              slotStart: row.time_slot,
+              slotEnd: row.time_slot + 1,
+              requiredHeadcount: row.corrected_count,
+              residualHeadcount: row.corrected_count,
+              residualHeadcountInt: Math.round(row.corrected_count),
+            }));
+            mlCache.set(mlRole, {
+              roleId: mlRole,
+              subDepartmentId: event.event_id,
+              buildingType: params.buildingType,
+              slots: packingSlots,
+            });
+          } else {
+            // DB miss — queue for the live ML call.
+            mlRolesForLiveCall.push(mlRole);
           }
-          const acc = accumulators.get(role.id);
-          const divisor = peerCountByClass.get(role.mlRole) ?? 1;
-          if (acc) mergeTensorInto(acc.slots, raw, event.name, divisor);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          log.warn('ML call failed', { operation: 'buildDemandAnalysis', eventId: event.event_id, dbRole: role.name }, err as Error);
-          hasMlError = true;
-          mlErrors.push({ eventId: event.event_id, role: role.mlRole, message });
+          // DB lookup error — queue for the live ML call so we don't lose the role.
+          mlRolesForLiveCall.push(mlRole);
         }
+      }
+
+      // ── Step B: single live ML call for all DB-cache-missing roles ─────────
+      // buildDemandAnalysisForRoles fans out timeSliceCount POSTs ONCE and
+      // returns one DemandTensor per requested role from the shared responses.
+      // Before: N_missing × S POSTs. After: S POSTs (for any N_missing ≥ 1).
+      if (mlRolesForLiveCall.length > 0) {
+        try {
+          const tensors = await buildDemandAnalysisForRoles(
+            eventInput,
+            mlRolesForLiveCall,
+            (sliceIndex) => derivePerSliceFlags(sliceIndex, eventStartMs, eventEndMs),
+          );
+          mlCallCount++;
+          for (let i = 0; i < mlRolesForLiveCall.length; i++) {
+            mlCache.set(mlRolesForLiveCall[i], tensors[i]);
+          }
+        } catch (err) {
+          // If the batch call fails, record an error for each role that needed it.
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn('ML call failed', { operation: 'buildDemandAnalysisForRoles', eventId: event.event_id, roles: mlRolesForLiveCall }, err as Error);
+          hasMlError = true;
+          for (const mlRole of mlRolesForLiveCall) {
+            mlErrors.push({ eventId: event.event_id, role: mlRole, message });
+          }
+        }
+      }
+
+      // ── Step C: merge cached tensors into per-DB-role accumulators ─────────
+      for (const role of knownRoles) {
+        const raw = mlCache.get(role.mlRole);
+        if (!raw) continue; // was in mlRolesForLiveCall and the live call failed
+        const acc = accumulators.get(role.id);
+        const divisor = peerCountByClass.get(role.mlRole) ?? 1;
+        if (acc) mergeTensorInto(acc.slots, raw, event.name, divisor);
       }
     }
   }

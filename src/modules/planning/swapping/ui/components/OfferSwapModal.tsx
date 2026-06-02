@@ -9,6 +9,8 @@ import {
 import {
     Drawer,
     DrawerContent,
+    DrawerTitle,
+    DrawerDescription,
 } from '@/modules/core/ui/primitives/drawer';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import {
@@ -536,6 +538,10 @@ export const OfferSwapModal: React.FC<OfferSwapModalProps> = ({
             {isMobile ? (
                 <Drawer open={isOpen} onOpenChange={(open) => !open && handleClose()}>
                     <DrawerContent className="h-[92dvh] bg-[#0A0C0E] border-white/10 p-0 overflow-hidden flex flex-col">
+                        <VisuallyHidden>
+                            <DrawerTitle>Make an Offer</DrawerTitle>
+                            <DrawerDescription>Select a shift to trade for this swap request</DrawerDescription>
+                        </VisuallyHidden>
                         {modalContent}
                     </DrawerContent>
                 </Drawer>

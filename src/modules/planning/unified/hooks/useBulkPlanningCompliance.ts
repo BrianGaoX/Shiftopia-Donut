@@ -34,7 +34,8 @@ import {
 } from '@/modules/compliance/employee-context';
 import { buildBidInput, buildSwapInputs, deriveV8Stage } from '../compliance/input-builder';
 import { combinedStatus } from '../compliance/snapshot-builder';
-import type { V8OrchestratorResult, V8Status } from '@/modules/compliance/v8/types';
+import type { V8Status } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 
 // =============================================================================
 // TYPES
@@ -87,8 +88,8 @@ const SHIFT_WINDOW_DAYS = 35;
 /** Map a raw Supabase shift row to V8OrchestratorShift — mirrors the service's mapShiftToV2 */
 function mapShiftRowToV2(row: Record<string, unknown>) {
   return {
-    shift_id:                row.id as string,
-    shift_date:              row.shift_date as string,
+    id:                      row.id as string,
+    date:                    row.shift_date as string,
     start_time:              row.start_time as string,
     end_time:                row.end_time as string,
     role_id:                 (row.role_id as string | null) ?? '',
@@ -101,7 +102,7 @@ function mapShiftRowToV2(row: Record<string, unknown>) {
 
 function hasVisaHit(result: V8OrchestratorResult | null): boolean {
   if (!result) return false;
-  return result.rule_hits.some(h => h.rule_id === 'R05');
+  return result.hits.some(h => h.rule_id === 'R05');
 }
 
 // =============================================================================
@@ -145,7 +146,7 @@ async function runEvaluation(
       fetchV8EmployeeContext(requesterId),
       fetchEmployeeShiftsV2(
         requesterId,
-        candidateV8OrchestratorShift.shift_date,
+        candidateV8OrchestratorShift.date,
         SHIFT_WINDOW_DAYS,
         null,
       ),
@@ -162,7 +163,7 @@ async function runEvaluation(
     const resultA = runV8Orchestrator(bidInput) as V8OrchestratorResult;
 
     return {
-      combinedStatus: resultA.status as 'PASS' | 'WARNING' | 'BLOCKING',
+      combinedStatus: resultA.overall_status as 'PASS' | 'WARNING' | 'BLOCKING',
       partyA:         resultA,
       partyB:         null,
       isStudentVisaHit: hasVisaHit(resultA),
@@ -200,13 +201,13 @@ async function runEvaluation(
     fetchV8EmployeeContext(targetEmployeeId),
     fetchEmployeeShiftsV2(
       requesterId,
-      candidateV8OrchestratorShift.shift_date,
+      candidateV8OrchestratorShift.date,
       SHIFT_WINDOW_DAYS,
       myV8ShiftId,           // exclude the shift being given away
     ),
     fetchEmployeeShiftsV2(
       targetEmployeeId,
-      myV8OrchestratorShift.shift_date,
+      myV8OrchestratorShift.date,
       SHIFT_WINDOW_DAYS,
       targetV8ShiftId,       // exclude the shift being given away
     ),
@@ -230,7 +231,7 @@ async function runEvaluation(
   const resultA = runV8Orchestrator(inputA) as V8OrchestratorResult;
   const resultB = runV8Orchestrator(inputB) as V8OrchestratorResult;
 
-  const combined = combinedStatus(resultA.status, resultB.status) as V8Status;
+  const combined = combinedStatus(resultA.overall_status, resultB.overall_status) as V8Status;
 
   return {
     combinedStatus: combined as 'PASS' | 'WARNING' | 'BLOCKING',

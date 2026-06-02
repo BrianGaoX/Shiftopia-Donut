@@ -6,6 +6,8 @@
 
 import { V8ShiftId, V8EmpId, V8RoleId, V8ContractType, V8Status, V8Hit, V8Config, V8Shift, V8Employee } from '../types';
 
+export type { V8ShiftId, V8EmpId, V8RoleId, V8ContractType, V8Status, V8Hit, V8Config, V8Shift, V8Employee };
+
 export type V8OperationType = 'ASSIGN' | 'BID' | 'SWAP';
 export type V8EvalMode      = 'CURRENT' | 'SIMULATED';
 export type V8Stage         = 'DRAFT' | 'PUBLISH' | 'LIVE';
@@ -34,10 +36,15 @@ export interface V8OrchestratorShift extends V8Shift {
     break_minutes:           number;
 }
 
-export interface V8EmployeeContext extends V8Employee {
+export interface V8EmployeeContext {
+    employee_id:              V8EmpId;
+    contract_type:            V8ContractType;
     contracted_weekly_hours:  number;
-    skill_ids:                string[];
-    license_ids:              string[];
+    skill_ids?:               string[];
+    license_ids?:             string[];
+    assigned_role_ids?:       string[];
+    contracts?:               import('../types').ContractRecordV2[];
+    qualifications?:          import('../types').QualificationV2[];
 }
 
 export interface V8OrchestratorInput {

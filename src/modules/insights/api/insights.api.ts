@@ -19,12 +19,12 @@ export const insightsApi = {
         const { data, error } = await supabase.rpc('get_insights_summary', {
             p_start_date:  filters.startDate,
             p_end_date:    filters.endDate,
-            p_org_ids:     filters.orgIds?.length     ? filters.orgIds     : null,
-            p_dept_ids:    filters.deptIds?.length    ? filters.deptIds    : null,
-            p_subdept_ids: filters.subdeptIds?.length ? filters.subdeptIds : null,
+            p_org_ids:     filters.orgIds?.length     ? filters.orgIds     : undefined,
+            p_dept_ids:    filters.deptIds?.length    ? filters.deptIds    : undefined,
+            p_subdept_ids: filters.subdeptIds?.length ? filters.subdeptIds : undefined,
         });
         if (error) throw error;
-        return data as InsightsSummary;
+        return data as unknown as InsightsSummary;
     },
 
     /**
@@ -35,8 +35,8 @@ export const insightsApi = {
         const { data, error } = await supabase.rpc('get_insights_trend', {
             p_start_date: filters.startDate,
             p_end_date:   filters.endDate,
-            p_org_ids:    filters.orgIds?.length  ? filters.orgIds  : null,
-            p_dept_ids:   filters.deptIds?.length ? filters.deptIds : null,
+            p_org_ids:    filters.orgIds?.length  ? filters.orgIds  : undefined,
+            p_dept_ids:   filters.deptIds?.length ? filters.deptIds : undefined,
         });
         if (error) throw error;
         return (data ?? []) as TrendRow[];
@@ -50,8 +50,8 @@ export const insightsApi = {
         const { data, error } = await supabase.rpc('get_dept_insights_breakdown', {
             p_start_date: filters.startDate,
             p_end_date:   filters.endDate,
-            p_org_ids:    filters.orgIds?.length  ? filters.orgIds  : null,
-            p_dept_ids:   filters.deptIds?.length ? filters.deptIds : null,
+            p_org_ids:    filters.orgIds?.length  ? filters.orgIds  : undefined,
+            p_dept_ids:   filters.deptIds?.length ? filters.deptIds : undefined,
         });
         if (error) throw error;
         return (data ?? []) as DeptBreakdownRow[];
@@ -66,8 +66,8 @@ export const insightsApi = {
             p_metric_id:  metricId,
             p_start_date: filters.startDate,
             p_end_date:    filters.endDate,
-            p_org_ids:     filters.orgIds?.length     ? filters.orgIds     : null,
-            p_dept_ids:    filters.deptIds?.length    ? filters.deptIds    : null,
+            p_org_ids:     filters.orgIds?.length     ? filters.orgIds     : undefined,
+            p_dept_ids:    filters.deptIds?.length    ? filters.deptIds    : undefined,
         });
         if (error) throw error;
         return data;

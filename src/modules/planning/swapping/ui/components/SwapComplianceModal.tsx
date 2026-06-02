@@ -201,20 +201,20 @@ export function SwapComplianceModal({
             partyA: {
                 employee_id: requesterId,
                 name: requesterName,
-                current_shifts: requesterRoster,
-                shift_to_give: requesterShift,
+                current_shifts: requesterRoster as any,
+                shift_to_give: requesterShift as any,
             },
             partyB: {
                 employee_id: offererId,
                 name: offererName,
-                current_shifts: offererRoster,
-                shift_to_give: offeredShift,
+                current_shifts: offererRoster as any,
+                shift_to_give: offeredShift as any,
             },
         });
 
         // Adapt solver output → ComplianceResult map expected by ComplianceTabContent
         const newResults: Record<string, ComplianceResult | null> =
-            solverResultToComplianceResults(solverResult);
+            solverResultToComplianceResults(solverResult, requesterId);
 
         // ── Layer 4: Server-side checks (qualifications, authoritative overlap) ─
 
@@ -399,7 +399,7 @@ export function SwapComplianceModal({
                     <ComplianceTabContent
                         hardValidation={hardValidation}
                         ruleResults={ruleResults}
-                        setRuleResults={setRuleResults}
+                        onRuleResult={(ruleId, result) => setRuleResults(prev => ({ ...prev, [ruleId]: result }))}
                         buildComplianceInput={() => ({
                             employee_id: requesterId!,
                             action_type: 'swap',

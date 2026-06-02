@@ -18,7 +18,8 @@ import type {
   V8OperationType,
   V8Stage,
   V8EmployeeContext,
-} from '@/modules/compliance/v8/types';
+  V8AvailabilityData,
+} from '@/modules/compliance/v8/orchestrator/types';
 
 import type { PlanningRequest, PlanningOffer } from '../types';
 
@@ -90,7 +91,7 @@ export function buildBidInput(params: {
     mode: 'SIMULATED',
     operation_type: 'BID',
     stage,
-    evaluation_reference_date: candidateShift.shift_date,
+    evaluation_reference_date: candidateShift.date,
   };
 }
 
@@ -139,12 +140,12 @@ export function buildSwapInputs(params: {
     existing_shifts: partyAExistingShifts,
     candidate_changes: {
       add_shifts: [partyBShift],
-      remove_shifts: [partyAShift.shift_id],
+      remove_shifts: [partyAShift.id],
     },
     mode: 'SIMULATED',
     operation_type: 'SWAP',
     stage,
-    evaluation_reference_date: partyBShift.shift_date,
+    evaluation_reference_date: partyBShift.date,
   };
 
   // Party B: removes their own shift, gains party A's shift
@@ -154,12 +155,12 @@ export function buildSwapInputs(params: {
     existing_shifts: partyBExistingShifts,
     candidate_changes: {
       add_shifts: [partyAShift],
-      remove_shifts: [partyBShift.shift_id],
+      remove_shifts: [partyBShift.id],
     },
     mode: 'SIMULATED',
     operation_type: 'SWAP',
     stage,
-    evaluation_reference_date: partyAShift.shift_date,
+    evaluation_reference_date: partyAShift.date,
   };
 
   return { inputA, inputB };
@@ -200,4 +201,106 @@ export function resolveCandidateV8ShiftId(
   }
 
   return offer.offered_shift_id;
+}
+
+// =============================================================================
+// ASSIGN / DRAFT / SKELETON INPUT BUILDERS
+// =============================================================================
+
+/**
+ * Build the V8OrchestratorInput for direct shift assignment.
+ *
+ * Used by the assignShift command, the drag-and-drop assign modal, and the
+ * EnhancedAddShiftModal when an employee is being assigned at publish time.
+ *
+ * operation_type:    callers pass 'ASSIGN' for manual, 'BID' for bid acceptance,
+ *                    or 'SWAP' for trade acceptance — preserve their context.
+ * mode:              'SIMULATED'
+ */
+export function buildAssignInput(params: {
+  employeeId: string;
+  employeeContext: V8EmployeeContext;
+  existingShifts: V8OrchestratorShift[];
+  candidateShift: V8OrchestratorShift;
+  stage: V8Stage;
+  operationType?: V8OperationType;
+  availabilityData?: V8AvailabilityData;
+  /** IDs to remove from existingShifts in the simulated state.
+   *  Used by edit-mode forms when the candidate shift replaces an existing one. */
+  removeShiftIds?: string[];
+}): V8OrchestratorInput {
+  const {
+    employeeId, employeeContext, existingShifts, candidateShift, stage,
+    operationType = 'ASSIGN', availabilityData, removeShiftIds = [],
+  } = params;
+
+  const input: V8OrchestratorInput = {
+    employee_id: employeeId,
+    employee_context: employeeContext,
+    existing_shifts: existingShifts,
+    candidate_changes: {
+      add_shifts: [candidateShift],
+      remove_shifts: removeShiftIds,
+    },
+    mode: 'SIMULATED',
+    operation_type: operationType,
+    stage,
+    evaluation_reference_date: candidateShift.date,
+  };
+
+  if (availabilityData) input.availability_data = availabilityData;
+  return input;
+}
+
+/**
+ * Build the V8OrchestratorInput for the DRAFT-stage form preview in the
+ * EnhancedAddShiftModal (no commit yet, softer severity thresholds).
+ *
+ * operation_type: 'ASSIGN'
+ * mode:           'SIMULATED'
+ * stage:          'DRAFT' (always)
+ */
+export function buildDraftInput(params: {
+  employeeId: string;
+  employeeContext: V8EmployeeContext;
+  existingShifts: V8OrchestratorShift[];
+  candidateShift: V8OrchestratorShift;
+  availabilityData?: V8AvailabilityData;
+}): V8OrchestratorInput {
+  return buildAssignInput({ ...params, stage: 'DRAFT' });
+}
+
+/**
+ * Build a structural-only V8OrchestratorInput for an unassigned shift
+ * (employee_id 'skeleton'). Used by the shift synthesiser to validate
+ * shape (overlap / duration / meal break) without a real employee.
+ *
+ * The employee_context fields are minimum-valid placeholders — only
+ * shift-level rules will produce hits.
+ */
+export function buildSkeletonInput(params: {
+  candidateShift: V8OrchestratorShift;
+  stage?: V8Stage;
+}): V8OrchestratorInput {
+  const { candidateShift, stage = 'DRAFT' } = params;
+  return {
+    employee_id: 'skeleton',
+    employee_context: {
+      employee_id: 'skeleton',
+      contract_type: 'CASUAL',
+      contracted_weekly_hours: 0,
+      assigned_role_ids: [],
+      contracts: [],
+      qualifications: [],
+    },
+    existing_shifts: [],
+    candidate_changes: {
+      add_shifts: [candidateShift],
+      remove_shifts: [],
+    },
+    mode: 'SIMULATED',
+    operation_type: 'ASSIGN',
+    stage,
+    evaluation_reference_date: candidateShift.date,
+  };
 }

@@ -195,7 +195,7 @@ export function eventsToDTO(events: EventRecord[]): WorkerEventDTO[] {
 export function rosterStructureToDTO(structure: RosterStructure): WorkerRosterStructureDTO {
   return {
     groups: structure.groups.map(g => ({
-      externalId: g.externalId,
+      externalId: g.externalId ?? '',
       name: g.name,
       subGroups: g.subGroups.map(sg => ({
         id: sg.id,

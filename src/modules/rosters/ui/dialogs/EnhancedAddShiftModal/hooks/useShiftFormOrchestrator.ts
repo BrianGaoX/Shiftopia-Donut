@@ -31,7 +31,8 @@ import { useShiftFormData } from './useShiftFormData';
 import { useHardValidation } from './useHardValidation';
 import { useComplianceRunner } from './useComplianceRunner';
 import { runV8Orchestrator } from '@/modules/compliance/v8';
-import type { V8OrchestratorInput, V8OrchestratorResult } from '@/modules/compliance/v8/types';
+import { buildAssignInput, buildSkeletonInput } from '@/modules/planning/unified/compliance/input-builder';
+import type { V8OrchestratorInput, V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 import { useCompliancePanel } from '@/modules/compliance/ui/useCompliancePanel';
 import type { UseCompliancePanelReturn } from '@/modules/compliance/ui/useCompliancePanel';
 import { fetchV8EmployeeContext } from '@/modules/compliance/employee-context';
@@ -200,9 +201,9 @@ export function useShiftFormOrchestrator({
             ...safeContext,
             organizationId: orgId,
             organizationName: orgInfo?.name || safeContext.organizationName,
-            departmentId: effectiveDeptId,
+            departmentId: effectiveDeptId ?? undefined,
             departmentName: effectiveDeptInfo?.name || (effectiveDeptId === null ? 'All Departments' : safeContext.departmentName),
-            subDepartmentId: effectiveSubDeptId,
+            subDepartmentId: effectiveSubDeptId ?? undefined,
             subDepartmentName: effectiveSubDeptInfo?.name || (effectiveSubDeptId === null ? 'All Sub-Departments' : safeContext.subDepartmentName),
             groupId: groupId || (isValidUuid(safeContext.groupId) ? safeContext.groupId : undefined),
             subGroupId: subGroupId || (isValidUuid(safeContext.subGroupId) ? safeContext.subGroupId : undefined),
@@ -460,7 +461,7 @@ export function useShiftFormOrchestrator({
             : format(new Date(), 'yyyy-MM-dd');
 
         return {
-            employee_id: watchEmployeeId,
+            employee_id: watchEmployeeId ?? '',
             // employee_context is a placeholder — buildInputs replaces it with
             // the real context fetched from fetchV8EmployeeContext()
             employee_context: {
@@ -478,7 +479,8 @@ export function useShiftFormOrchestrator({
                     return s.shift_id !== existingShift.id && s.id !== existingShift.id;
                 })
                 .map((s: any) => ({
-                    shift_id: s.shift_id || s.id || String(Math.random()),
+                    id: s.shift_id || s.id || String(Math.random()),
+                    date: s.shift_date,
                     shift_date: s.shift_date,
                     start_time: (s.start_time || '').slice(0, 5),
                     end_time: (s.end_time || '').slice(0, 5),
@@ -491,7 +493,8 @@ export function useShiftFormOrchestrator({
                 })),
             candidate_changes: {
                 add_shifts: [{
-                    shift_id:          existingShift?.id ?? `candidate-${Date.now()}`,
+                    id:                existingShift?.id ?? `candidate-${Date.now()}`,
+                    date:              shiftDateStr,
                     shift_date:        shiftDateStr,
                     start_time:        (watchStart || '').slice(0, 5),
                     end_time:          (watchEnd || '').slice(0, 5),
@@ -511,8 +514,8 @@ export function useShiftFormOrchestrator({
             mode: 'SIMULATED',
             operation_type: 'ASSIGN',
             stage: 'DRAFT',
-            // Pass training-aware minimum so the engine uses the correct threshold
-            config: { min_shift_hours: minShiftHours },
+            // config: min_shift_hours is not a V8Config field; omit to avoid type error
+            config: {},
         };
     }, [watchEmployeeId, watchStart, watchEnd, watchShiftDate, watchV8RoleId, watchUnpaidBreak, employeeExistingShifts, existingShift, resolvedContext, minShiftHours]);
 
@@ -538,7 +541,8 @@ export function useShiftFormOrchestrator({
                     existing_shifts: [],
                     candidate_changes: {
                         add_shifts: [{
-                            shift_id: 'skeleton',
+                            id: 'skeleton',
+                            date: mockDateStr,
                             shift_date: mockDateStr,
                             start_time: watchStart || '09:00',
                             end_time: watchEnd || '17:00',
@@ -547,6 +551,7 @@ export function useShiftFormOrchestrator({
                             is_training: watchIsTraining || false,
                             break_minutes: 0,
                             unpaid_break_minutes: Number(watchUnpaidBreak) || 0,
+                            required_qualifications: [],
                         }],
                         remove_shifts: [],
                     },
@@ -574,10 +579,12 @@ export function useShiftFormOrchestrator({
                             // Exclude the shift being edited so we don't flag its own slot
                             .filter(s => s.id !== existingShift?.id)
                             .map(s => ({
-                                shift_id:   s.id,
+                                id:         s.id,
+                                date:       s.shift_date,
                                 shift_date: s.shift_date,
                                 start_time: s.start_time,
                                 end_time:   s.end_time,
+                                is_ordinary_hours: true,
                             })),
                     };
                 } catch {
@@ -623,7 +630,7 @@ export function useShiftFormOrchestrator({
         if (!v2Input) return;
 
         const v2Result = runV8Orchestrator(v2Input, { stage: 'DRAFT' }) as V8OrchestratorResult;
-        const hits = v2Result.rule_hits;
+        const hits = v2Result.hits;
         const hitMap = new Map(hits.map(h => [h.rule_id.toUpperCase(), h]));
 
         // Map v2 rule IDs → v1 rule IDs used by ComplianceTabContent cards
@@ -662,7 +669,7 @@ export function useShiftFormOrchestrator({
                 };
             } else {
                 // Rule fired — map severity to v1 status
-                const isBlocking = hit.severity === 'BLOCKING';
+                const isBlocking = hit.status === 'BLOCKING';
 
                 // Build calculation object enriched for specific rule visualizations
                 const calculation: Record<string, unknown> = {
@@ -686,8 +693,8 @@ export function useShiftFormOrchestrator({
                     rule_id: v1Id,
                     rule_name: v1Id.replace(/_/g, ' '),
                     status: isBlocking ? 'fail' : 'warning',
-                    summary: hit.message,
-                    details: hit.resolution_hint || hit.message,
+                    summary: hit.summary,
+                    details: hit.details || hit.summary,
                     calculation,
                     blocking: isBlocking,
                 };

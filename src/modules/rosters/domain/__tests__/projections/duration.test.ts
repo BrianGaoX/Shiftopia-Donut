@@ -10,7 +10,7 @@ import type { Shift } from '../../shift.entity';
 
 // Minimal shift factory — only the fields duration utils care about
 function makeShift(overrides: Partial<Shift> = {}): Shift {
-  return {
+  return ({
     id: 'test-shift',
     organization_id: null,
     department_id: 'dept-1',
@@ -94,7 +94,7 @@ function makeShift(overrides: Partial<Shift> = {}): Shift {
     recurrence_rule: null,
     confirmed_at: null,
     ...overrides,
-  };
+  } as unknown as Shift);
 }
 
 // ── parseTimeToMinutes ────────────────────────────────────────────────────────

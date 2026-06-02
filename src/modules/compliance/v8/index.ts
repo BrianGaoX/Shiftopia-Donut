@@ -17,6 +17,13 @@ export { runV8ComplexBridge } from './adapters/v2-to-v8';
 
 // Orchestration & Solving
 export { runV8Orchestrator } from './orchestrator/index';
+export type {
+    V8OrchestratorInput,
+    V8OrchestratorShift,
+    V8OrchestratorResult,
+    V8EmployeeContext,
+    V8AvailabilityData,
+} from './orchestrator/types';
 export { V8SwapEngine }      from './swap-engine/constraint-engine';
 export { applyV8Simulation } from './orchestrator/simulation';
 

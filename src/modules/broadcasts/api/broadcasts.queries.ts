@@ -67,7 +67,7 @@ export const broadcastGroupQueries = {
         scope?: { organizationId?: string; departmentId?: string; subDepartmentId?: string }
     ): Promise<EmployeeBroadcastGroup[]> {
         // 1. Resolve group membership (including hierarchy-based)
-        const { data: participantGroups, error: pgError } = await supabase
+        const { data: participantGroups, error: pgError } = await (supabase as any)
             .from('v_group_all_participants')
             .select('group_id')
             .eq('employee_id', employeeId);

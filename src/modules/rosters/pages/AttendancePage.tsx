@@ -218,7 +218,7 @@ const AttendanceCard: React.FC<AttendanceCardProps> = ({ shift, now, useGroupCol
     </Popover>
   ) : null;
 
-  let topContent = null;
+  let topContent: React.ReactNode = null;
   if (isAutoClockOut) {
     topContent = (
       <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3">
@@ -301,13 +301,11 @@ const AttendanceCard: React.FC<AttendanceCardProps> = ({ shift, now, useGroupCol
       clockOut: shift.actual_end || '',
       adjustedStart: (() => {
           if (shift.timesheet_start_time) return shift.timesheet_start_time;
-          const snapped = snapToQuarterHour(shift.actual_start);
-          return snapped;
+          return snapToQuarterHour(shift.actual_start) ?? '';
       })(),
       adjustedEnd: (() => {
           if (shift.timesheet_end_time) return shift.timesheet_end_time;
-          const snapped = snapToQuarterHour(shift.actual_end);
-          return snapped;
+          return snapToQuarterHour(shift.actual_end) ?? '';
       })(),
       isAdjustedManual: !!shift.timesheet_start_time,
       length: String(shift.scheduled_length_minutes || 0),
@@ -509,7 +507,7 @@ const AttendancePage: React.FC = () => {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const { isDark } = useTheme();
   const { orgBranding } = useSettings();
-  const useGroupColoring = orgBranding?.enable_group_coloring || false;
+  const useGroupColoring = (orgBranding as any)?.enable_group_coloring || false;
 
   const rangeStart = format(startDate, 'yyyy-MM-dd');
   const rangeEnd   = format(endDate,   'yyyy-MM-dd');
@@ -588,7 +586,7 @@ const AttendancePage: React.FC = () => {
     // 1. Apply Scope Filters (Organization, Department, Sub-Department)
     if (scope && sorted.length > 0) {
       if (scope.org_ids?.length > 0) {
-        sorted = sorted.filter(s => scope.org_ids.includes(s.organization_id));
+        sorted = sorted.filter(s => s.organization_id && scope.org_ids.includes(s.organization_id));
       }
       if (scope.dept_ids?.length > 0) {
         sorted = sorted.filter(s => scope.dept_ids.includes(s.department_id));
@@ -635,8 +633,8 @@ const AttendancePage: React.FC = () => {
       scheduledEnd: shift.end_time,
       clockIn: shift.actual_start || '',
       clockOut: shift.actual_end || '',
-      adjustedStart: shift.timesheet_start_time || snapToQuarterHour(shift.actual_start),
-      adjustedEnd: shift.timesheet_end_time || snapToQuarterHour(shift.actual_end),
+      adjustedStart: shift.timesheet_start_time || snapToQuarterHour(shift.actual_start) || '',
+      adjustedEnd: shift.timesheet_end_time || snapToQuarterHour(shift.actual_end) || '',
       isAdjustedManual: !!shift.timesheet_start_time,
       length: String(shift.scheduled_length_minutes || 0),
       paidBreak: String(shift.paid_break_minutes || 0),
@@ -695,12 +693,26 @@ const AttendancePage: React.FC = () => {
             className="mt-1"
             filters={
               <>
+                {/* Mobile: icon-only, 44×44 ARIA-compliant touch target */}
+                <button
+                  onClick={() => setFilterDrawerOpen(true)}
+                  aria-label="Filter by status"
+                  className={cn(
+                    'md:hidden h-11 w-full flex items-center justify-center rounded-xl transition-all active:scale-95',
+                    statusFilter !== 'all'
+                      ? isDark ? 'bg-primary/15 text-primary ring-1 ring-primary/30' : 'bg-primary/10 text-primary ring-1 ring-primary/20'
+                      : isDark ? 'bg-white/5 text-white/70 active:bg-white/10' : 'bg-slate-100 text-slate-600 active:bg-slate-200',
+                  )}
+                >
+                  <Filter className="h-5 w-5" />
+                </button>
+                {/* Desktop: full text button */}
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setFilterDrawerOpen(true)}
                   className={cn(
-                    'h-10 lg:h-11 px-4 rounded-xl font-black uppercase text-[10px] tracking-wider transition-all shadow-sm',
+                    'hidden md:flex h-10 lg:h-11 px-4 rounded-xl font-black uppercase text-[10px] tracking-wider transition-all shadow-sm',
                     isDark ? "bg-[#111827]/60 border-white/5" : "bg-slate-100 border-slate-200/50",
                     statusFilter !== 'all' && (isDark ? 'bg-primary/10 border-primary/20 text-primary' : 'bg-primary/5 border-primary/10 text-primary'),
                   )}

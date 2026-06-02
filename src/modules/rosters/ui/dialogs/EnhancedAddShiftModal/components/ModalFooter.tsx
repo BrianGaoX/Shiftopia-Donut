@@ -99,10 +99,12 @@ function GateStatusBar({
         const complianceRun    = compliancePanelStatus === 'results';
         const compliancePassed = complianceRun && compliancePanelProceed;
 
-        const scheduleHint = !step1
+        const scheduleHint: string | undefined = !step1
             ? 'Fill in shift date, times, group, and sub-group in Step 1'
             : !hvPassed
-                ? hardValidation.errors[0] ?? 'Fix time validation errors'
+                ? (typeof hardValidation.errors[0] === 'string'
+                    ? hardValidation.errors[0]
+                    : (hardValidation.errors[0] as any)?.message ?? 'Fix time validation errors')
                 : undefined;
 
         return [

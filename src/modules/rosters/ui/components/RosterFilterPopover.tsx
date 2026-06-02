@@ -79,7 +79,7 @@ export const RosterFilterPopover: React.FC = () => {
                             <Label htmlFor="stateId">State ID</Label>
                             <Select
                                 value={advancedFilters.stateId || 'all'}
-                                onValueChange={(v) => startTransition(() => handleFilterChange('stateId', v === 'all' ? null : v))}
+                                onValueChange={(v) => startTransition(() => handleFilterChange('stateId', (v === 'all' ? null : v) as any))}
                             >
                                 <SelectTrigger id="stateId">
                                     <SelectValue placeholder="All States" />

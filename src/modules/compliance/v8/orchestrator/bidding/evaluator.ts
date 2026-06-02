@@ -66,8 +66,8 @@ export function evaluateAllBids(
             bid,
             shift,
             employee_context,
-            compliance_status: result.status,
-            rule_hits:         result.rule_hits,
+            compliance_status: result.overall_status,
+            rule_hits:         result.hits,
             composite_score:   0,    // filled by scorer
         });
     }

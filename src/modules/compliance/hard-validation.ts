@@ -155,7 +155,7 @@ function validateNoOverlaps(input: HardValidationInput): HardValidationError[] {
 
     for (const existing of existing_shifts) {
         // Skip self in edit mode
-        if (shift_id && (existing as any).id === shift_id) continue;
+        if (shift_id && ((existing as any).id === shift_id || existing.shift_id === shift_id)) continue;
 
         // Check for overlap
         if (doShiftsOverlap(candidateShift, existing)) {

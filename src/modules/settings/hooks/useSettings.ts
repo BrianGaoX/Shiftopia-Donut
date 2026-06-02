@@ -103,7 +103,7 @@ export const useSettings = (props?: UseSettingsProps) => {
             if (!organizationId) throw new Error('No active organization');
 
             // Merge with existing branding to prevent data loss
-            const currentBranding = orgBranding || {};
+            const currentBranding = (orgBranding as Record<string, any>) || {};
             const merged = { ...currentBranding, ...newBranding };
 
             const { data, error } = await supabase
@@ -140,7 +140,7 @@ export const useSettings = (props?: UseSettingsProps) => {
             if (!SUPPORTED_LOCALES.some(l => l.code === language)) throw new Error('Unsupported locale');
             if (!organizationId) throw new Error('No active organization');
 
-            const currentBranding = orgBranding || {};
+            const currentBranding = (orgBranding as Record<string, any>) || {};
             const merged = {
                 ...currentBranding,
                 language,

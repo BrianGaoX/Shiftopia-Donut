@@ -152,10 +152,10 @@ export function ComplianceTabContent({
         Object.keys(ruleResults).length > 0 &&
         !Object.values(ruleResults).some(r => r?.status === 'fail' && r?.blocking);
 
-    const handleRunRule = useCallback((ruleId: string) => {
+    const handleRunRule = useCallback(async (ruleId: string) => {
         const input = buildInput();
-        const result = runRule(ruleId, input);
-        onRuleResult(ruleId, result);
+        const result = await runRule(ruleId, input);
+        onRuleResult(ruleId, result as any);
         setStaleRules(prev => { const next = new Set(prev); next.delete(ruleId); return next; });
     }, [buildInput, onRuleResult]);
 
@@ -171,9 +171,9 @@ export function ComplianceTabContent({
             const newResults: Record<string, ComplianceResult | null> = {};
 
             // Client-side rules (fast, local data)
-            rules.forEach(rule => {
-                newResults[rule.id] = runRule(rule.id, input);
-            });
+            for (const rule of rules) {
+                newResults[rule.id] = (await runRule(rule.id, input)) as any;
+            }
 
             // Server-side checks (Rules 1–3 + authoritative overlap)
             if (input.employee_id && input.employee_id !== 'preview') {
@@ -416,7 +416,7 @@ export function ComplianceTabContent({
                             ))}
 
                             {/* Client-side Rules */}
-                            {bucketRules.map((rule: ComplianceRule) => (
+                            {(bucketRules as any[]).map((rule: ComplianceRule) => (
                                 <ComplianceRuleCard
                                     key={rule.id}
                                     rule={rule}

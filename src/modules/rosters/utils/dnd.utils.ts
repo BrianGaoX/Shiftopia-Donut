@@ -25,7 +25,7 @@ export const canDragShift = (
   const startTime = 'start_time' in shift ? shift.start_time : (shift as ShiftDisplay).startTime;
 
   // Granular check: has the shift already started?
-  if (shiftDate && startTime && isSydneyStarted(shiftDate, startTime)) return false;
+  if (shiftDate && startTime && isSydneyStarted(shiftDate as string, startTime as string)) return false;
 
   return status === 'Draft' && !isCancelled;
 };

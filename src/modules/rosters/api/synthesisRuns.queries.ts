@@ -32,7 +32,7 @@ export const synthesisRunsQueries = {
     /** Insert a row; returns the new run id + full row. Caller is stamped as created_by. */
     async createRun(input: CreateRunInput): Promise<SynthesisRunRow> {
         const user = await requireUser();
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
             .from('synthesis_runs')
             .insert({ ...input, created_by: user.id })
             .select('*')

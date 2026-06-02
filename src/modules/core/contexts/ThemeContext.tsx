@@ -103,11 +103,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           const { data, error } = await supabase
             .from('organizations')
             .select('branding')
-            .eq('id', accessScope.organizationId)
+            .eq('id', accessScope.organizationId as string)
             .single();
 
           if (error) throw error;
-          applyColor(data.branding?.brand_color);
+          applyColor((data?.branding as any)?.brand_color);
         } catch (err) {
           console.error('[ThemeContext] Failed to apply branding:', err);
         }

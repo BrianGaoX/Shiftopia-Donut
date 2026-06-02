@@ -427,7 +427,7 @@ export const BulkActionsToolbar: React.FC<BulkActionsToolbarProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={handleRetry}
-                disabled={actionState.type === 'processing'}
+                disabled={(actionState as any).type === 'processing'}
                 className="gap-1.5 h-7 text-xs rounded-full"
               >
                 <RefreshCw className="h-3 w-3" />

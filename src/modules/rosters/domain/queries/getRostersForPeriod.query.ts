@@ -35,29 +35,32 @@ export async function getRostersForPeriod(
         return [];
     }
 
-    const { data, error } = await supabase
+    // TODO: 'shift_date' does not exist on the rosters table in the current schema.
+    // The generated types use start_date/end_date/published_at. Cast as any to bridge
+    // the gap until the query is aligned with the actual DB columns.
+    const { data, error } = await (supabase
         .from('rosters')
-        .select('id, shift_date, department_id, sub_department_id, status, created_at, created_by, finalized_at')
+        .select('id, start_date, department_id, sub_department_id, status, created_at, created_by, published_at')
         .eq('department_id', departmentId)
         .eq('sub_department_id', subDepartmentId)
-        .gte('shift_date', startDate)
-        .lte('shift_date', endDate)
-        .order('shift_date', { ascending: false });
+        .gte('start_date', startDate)
+        .lte('start_date', endDate)
+        .order('start_date', { ascending: false }) as unknown as Promise<{ data: any[] | null; error: any }>);
 
     if (error) {
         console.error('[getRostersForPeriod] Error:', error);
         return [];
     }
 
-    return (data || []).map((r) => ({
+    return ((data as any[]) || []).map((r: any) => ({
         id: r.id,
-        shiftDate: r.shift_date,
+        shiftDate: r.start_date,
         departmentId: r.department_id,
         subDepartmentId: r.sub_department_id,
         status: (r.status || 'draft') as 'draft' | 'published',
         createdAt: r.created_at || '',
         createdBy: r.created_by || undefined,
-        finalizedAt: r.finalized_at || undefined,
+        finalizedAt: r.published_at || undefined,
     }));
 }
 
@@ -69,25 +72,27 @@ export async function getRosterById(
 ): Promise<RosterSummary | null> {
     if (!rosterId) return null;
 
-    const { data, error } = await supabase
+    // TODO: same schema drift as getRostersForPeriod — cast as any until columns are aligned.
+    const { data, error } = await (supabase
         .from('rosters')
-        .select('id, shift_date, department_id, sub_department_id, status, created_at, created_by, finalized_at')
+        .select('id, start_date, department_id, sub_department_id, status, created_at, created_by, published_at')
         .eq('id', rosterId)
-        .single();
+        .single() as unknown as Promise<{ data: any | null; error: any }>);
 
     if (error || !data) {
         console.error('[getRosterById] Error:', error);
         return null;
     }
 
+    const r = data as any;
     return {
-        id: data.id,
-        shiftDate: data.shift_date,
-        departmentId: data.department_id,
-        subDepartmentId: data.sub_department_id,
-        status: (data.status || 'draft') as 'draft' | 'published',
-        createdAt: data.created_at || '',
-        createdBy: data.created_by || undefined,
-        finalizedAt: data.finalized_at || undefined,
+        id: r.id,
+        shiftDate: r.start_date,
+        departmentId: r.department_id,
+        subDepartmentId: r.sub_department_id,
+        status: (r.status || 'draft') as 'draft' | 'published',
+        createdAt: r.created_at || '',
+        createdBy: r.created_by || undefined,
+        finalizedAt: r.published_at || undefined,
     };
 }

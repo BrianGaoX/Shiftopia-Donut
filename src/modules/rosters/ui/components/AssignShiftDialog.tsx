@@ -183,7 +183,7 @@ export const AssignShiftDialog: React.FC<AssignShiftDialogProps> = ({
           shiftId: assignment.shiftId
         });
 
-        const checkResult = runV8LegacyBridgeNow(input);
+        const checkResult = await runV8LegacyBridgeNow(input);
 
 
         if (!checkResult.passed) {

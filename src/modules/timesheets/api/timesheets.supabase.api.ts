@@ -685,3 +685,51 @@ export async function markShiftAsNoShow(
         return false;
     }
 }
+
+/**
+ * Override a No-Show
+ */
+export async function overrideNoShow(
+    shiftId: string,
+    userId: string
+): Promise<boolean> {
+    try {
+        // Update shift status: revert attendance_status to unknown
+        const { error: shiftError } = await supabase
+            .from('shifts')
+            .update({
+                attendance_status: 'unknown',
+                attendance_note: 'No-Show overridden by manager',
+                updated_at: new Date().toISOString(),
+                last_modified_by: userId
+            })
+            .eq('id', shiftId);
+
+        if (shiftError) {
+            console.error('[overrideNoShow] Shift error:', shiftError);
+            return false;
+        }
+
+        // We can't use updateTimesheetEntry directly since it blocks updates on 'no_show'.
+        // So we do a direct supabase update here to transition it to 'submitted'.
+        const { error: tsError } = await supabase
+            .from('timesheets')
+            .update({
+                status: 'submitted',
+                notes: 'No-Show overridden by manager',
+                updated_at: new Date().toISOString()
+            })
+            .eq('shift_id', shiftId);
+
+        if (tsError) {
+            console.error('[overrideNoShow] Timesheet error:', tsError);
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[overrideNoShow] Error:', error);
+        return false;
+    }
+}
+

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/platform/realtime/client';
-import type { Organization, Department, SubDepartment } from './types';
+import type { Organization, Department, SubDepartment } from '@/modules/rosters/domain/queries/getOrgHierarchy.query';
 
 interface UseHierarchyDataReturn {
   organizations: Organization[];
@@ -27,9 +27,9 @@ export function useHierarchyData(): UseHierarchyDataReturn {
           supabase.from('sub_departments').select('id, name, department_id'),
         ]);
 
-        if (orgsResult.data) setOrganizations(orgsResult.data);
-        if (deptsResult.data) setDepartments(deptsResult.data);
-        if (subDeptsResult.data) setSubDepartments(subDeptsResult.data);
+        if (orgsResult.data) setOrganizations(orgsResult.data as any);
+        if (deptsResult.data) setDepartments(deptsResult.data as any);
+        if (subDeptsResult.data) setSubDepartments(subDeptsResult.data as any);
       } catch (error) {
         console.error('Failed to load hierarchy data:', error);
       } finally {

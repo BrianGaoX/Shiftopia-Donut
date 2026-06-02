@@ -90,16 +90,16 @@ export class BroadcastDbClient {
 
       if (error) throw error;
 
-      return data.map(member => ({
-        id: member.id,
-        group_id: member.group_id,
-        user_id: member.employee_id,
-        is_admin: member.is_admin,
+      return data.map((m: any) => ({
+        id: m.id,
+        group_id: m.group_id,
+        user_id: m.employee_id,
+        is_admin: m.is_admin,
         user: {
-          id: member.employees.id,
-          name: `${member.employees.first_name} ${member.employees.last_name}`,
-          email: member.employees.email,
-          role: member.employees.status || 'member',
+          id: m.employees?.id,
+          name: `${m.employees?.first_name} ${m.employees?.last_name}`,
+          email: m.employees?.email,
+          role: m.employees?.status || 'member',
           department: 'General'
         }
       })) as GroupMember[];
@@ -177,7 +177,7 @@ export class BroadcastDbClient {
 
       if (error) throw error;
 
-      return data.map(membership => ({
+      return data.map((membership: any) => ({
         ...membership.broadcast_groups,
         is_admin: membership.is_admin
       }));

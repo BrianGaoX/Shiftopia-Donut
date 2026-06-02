@@ -56,9 +56,23 @@ export const biddingApi = {
      */
     async getOpenBidShifts(filters?: {
         organizationId?: string;
-        departmentId?: string;
-        subDepartmentId?: string;
+        departmentId?: string | string[];
+        subDepartmentId?: string | string[];
     }): Promise<Shift[]> {
+        const toIdList = (v: string | string[] | undefined): string[] => {
+            if (!v) return [];
+            return Array.isArray(v) ? v.filter(Boolean) : [v];
+        };
+        const subDeptIds = toIdList(filters?.subDepartmentId);
+        const deptIds = toIdList(filters?.departmentId);
+
+        // Refuse unscoped queries: callers must supply at least one dept or sub-dept
+        // bound. An empty-array filter previously fell through to "no scope filter",
+        // returning every open bid shift in the org — a scope leak.
+        if (subDeptIds.length === 0 && deptIds.length === 0) {
+            return [];
+        }
+
         let query = (supabase as any)
             .from('shifts')
             .select(`
@@ -79,10 +93,10 @@ export const biddingApi = {
             query = query.eq('organization_id', filters.organizationId);
         }
 
-        if (filters?.subDepartmentId) {
-            query = query.eq('sub_department_id', filters.subDepartmentId);
-        } else if (filters?.departmentId) {
-            query = query.eq('department_id', filters.departmentId);
+        if (subDeptIds.length > 0) {
+            query = query.in('sub_department_id', subDeptIds);
+        } else {
+            query = query.in('department_id', deptIds);
         }
 
         const response = await query;

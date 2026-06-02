@@ -33,7 +33,8 @@ import { cn } from '@/modules/core/lib/utils';
 import { Button } from '@/modules/core/ui/primitives/button';
 import { Avatar, AvatarFallback } from '@/modules/core/ui/primitives/avatar';
 import { Textarea } from '@/modules/core/ui/primitives/textarea';
-import { Drawer, DrawerContent } from '@/modules/core/ui/primitives/drawer';
+import { Drawer, DrawerContent, DrawerTitle, DrawerDescription } from '@/modules/core/ui/primitives/drawer';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import { ComplianceGate } from './ComplianceGate';
 import type {
@@ -96,7 +97,7 @@ function getOverallStatus(
 ): V8Status | null {
   if (!snapshot) return null;
   if (isSwapSnapshot(snapshot)) return snapshot.combined_status;
-  if (isBidSnapshot(snapshot)) return snapshot.status;
+  if (isBidSnapshot(snapshot)) return snapshot.overall_status;
   return null;
 }
 
@@ -581,6 +582,10 @@ export function ManagerApprovalModal({
     return (
       <Drawer open={isOpen} onOpenChange={(open) => !open && !isBusy && onClose()}>
         <DrawerContent className="h-[92dvh] bg-card border-border p-0 overflow-hidden flex flex-col">
+          <VisuallyHidden>
+            <DrawerTitle>Approval Review</DrawerTitle>
+            <DrawerDescription>Review details and compliance gates for planning request approval</DrawerDescription>
+          </VisuallyHidden>
           {innerContent}
         </DrawerContent>
       </Drawer>

@@ -44,4 +44,11 @@ export const ACCESS_LEVEL_CONFIG: Record<AccessLevel, {
         icon: Globe,
         color: 'text-emerald-400'
     },
+    zeta: {
+        label: 'Zeta',
+        description: 'System Admin - Full system access',
+        roleName: 'System Admin',
+        icon: Crown,
+        color: 'text-rose-400'
+    },
 };

@@ -46,9 +46,9 @@ export const RosterEmployeeView: React.FC<RosterEmployeeViewProps> = ({
   }>>();
 
   if (roster) {
-    roster.groups.forEach(group => {
-      group.subGroups.forEach(subGroup => {
-        subGroup.shifts.forEach(shift => {
+    ((roster as any).groups as any[] || []).forEach((group: any) => {
+      (group.subGroups || group.subgroups || []).forEach((subGroup: any) => {
+        (subGroup.shifts || []).forEach((shift: any) => {
           const shiftInfo = {
             shift,
             groupName: group.name,
@@ -199,12 +199,12 @@ export const RosterEmployeeView: React.FC<RosterEmployeeViewProps> = ({
           <React.Fragment key={employee.id}>
             <div className="p-3 border-b border-white/10 flex items-center">
               <Avatar className="h-8 w-8 mr-3">
-                <AvatarImage src={employee.avatar} />
-                <AvatarFallback>{employee.name.charAt(0)}</AvatarFallback>
+                <AvatarImage src={(employee as any).avatar || employee.avatarUrl} />
+                <AvatarFallback>{(employee.fullName || employee.firstName || '?').charAt(0)}</AvatarFallback>
               </Avatar>
               <div>
-                <div className="font-medium">{employee.name}</div>
-                <div className="text-xs text-white/70">ID: {employee.id} | {employee.tier}</div>
+                <div className="font-medium">{employee.fullName || `${employee.firstName} ${employee.lastName}`.trim()}</div>
+                <div className="text-xs text-white/70">ID: {employee.id} | {(employee as any).tier || employee.role || ''}</div>
               </div>
             </div>
             <div className="p-2 border-b border-white/10 flex flex-wrap">

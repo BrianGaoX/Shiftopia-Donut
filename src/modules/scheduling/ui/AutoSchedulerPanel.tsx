@@ -413,7 +413,7 @@ export function AutoSchedulerPanel({
     const existingRoster = React.useMemo(() => {
       const map = new Map<string, ShiftMeta[]>();
       for (const emp of employees) {
-        map.set(emp.id, emp.existing_shifts || []);
+        map.set(emp.id, (emp as any).existing_shifts || []);
       }
       return map;
     }, [employees]);

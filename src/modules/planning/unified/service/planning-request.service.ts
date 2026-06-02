@@ -23,7 +23,7 @@ import {
   fetchEmployeeShiftsV2,
 } from '@/modules/compliance/employee-context';
 import { runV8Orchestrator } from '@/modules/compliance/v8';
-import type { V8OrchestratorResult } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
 
 import {
   buildBidInput,
@@ -55,7 +55,7 @@ import type {
   RejectRequestParams,
 } from '../types';
 
-import type { V8OrchestratorShift } from '@/modules/compliance/v8/types';
+import type { V8OrchestratorShift } from '@/modules/compliance/v8/orchestrator/types';
 
 // Use "any" cast for tables not in the generated Supabase type definitions
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -112,8 +112,8 @@ function createError(code: string, message: string): Error {
  */
 function mapShiftToV2(row: Record<string, unknown>): V8OrchestratorShift {
   return {
-    shift_id: row.id as string,
-    shift_date: row.shift_date as string,
+    id: row.id as string,
+    date: row.shift_date as string,
     start_time: row.start_time as string,
     end_time: row.end_time as string,
     role_id: (row.role_id as string | null) ?? '',
@@ -187,10 +187,11 @@ async function createPlanningRequest(
   }
 
   // Update shift workflow status
+  // TODO: workflow_status is not yet in the generated Supabase types (schema drift) — cast as any.
   const newWorkflowStatus = type === 'BID' ? 'OPEN_FOR_BIDS' : 'OPEN_FOR_TRADE';
   const { error: shiftUpdateError } = await supabase
     .from('shifts')
-    .update({ workflow_status: newWorkflowStatus })
+    .update({ workflow_status: newWorkflowStatus } as any)
     .eq('id', shift_id);
 
   if (shiftUpdateError) {
@@ -494,7 +495,7 @@ async function selectOffer(params: SelectOfferParams): Promise<SelectOfferResult
       shiftUpdatedAt,
     });
 
-    finalStatus = bidResult.status;
+    finalStatus = bidResult.overall_status;
 
   } else {
     // SWAP: evaluate compliance for both parties simultaneously
@@ -568,7 +569,7 @@ async function selectOffer(params: SelectOfferParams): Promise<SelectOfferResult
       targetShiftUpdatedAt,
     });
 
-    finalStatus = combinedStatus(resultA.status, resultB.status);
+    finalStatus = combinedStatus(resultA.overall_status, resultB.overall_status);
   }
 
   const now = new Date().toISOString();
@@ -667,9 +668,10 @@ async function selectOffer(params: SelectOfferParams): Promise<SelectOfferResult
   }
 
   // Update shift workflow status
+  // TODO: workflow_status is not yet in the generated Supabase types (schema drift) — cast as any.
   await supabase
     .from('shifts')
-    .update({ workflow_status: 'PENDING_APPROVAL' })
+    .update({ workflow_status: 'PENDING_APPROVAL' } as any)
     .eq('id', request.shift_id);
 
   return {
@@ -740,9 +742,10 @@ async function cancelRequest(
   }
 
   // Reset shift to IDLE
+  // TODO: workflow_status is not yet in the generated Supabase types (schema drift) — cast as any.
   const { error: shiftError } = await supabase
     .from('shifts')
-    .update({ workflow_status: 'IDLE' })
+    .update({ workflow_status: 'IDLE' } as any)
     .eq('id', request.shift_id);
 
   if (shiftError) {
@@ -861,10 +864,11 @@ async function reopenRequest(params: ReopenRequestParams): Promise<PlanningReque
   }
 
   // Restore shift to the appropriate open status
+  // TODO: workflow_status is not yet in the generated Supabase types (schema drift) — cast as any.
   const newWorkflowStatus = request.type === 'BID' ? 'OPEN_FOR_BIDS' : 'OPEN_FOR_TRADE';
   await supabase
     .from('shifts')
-    .update({ workflow_status: newWorkflowStatus })
+    .update({ workflow_status: newWorkflowStatus } as any)
     .eq('id', request.shift_id);
 
   return updatedRequest as PlanningRequest;
@@ -985,7 +989,7 @@ async function approveRequest(params: ApproveRequestParams): Promise<PlanningReq
         result: bidResult,
         shiftUpdatedAt: mainShift.updated_at as string,
       });
-      freshStatus = bidResult.status;
+      freshStatus = bidResult.overall_status;
 
     } else {
       if (!offer.offered_shift_id) {
@@ -1038,7 +1042,7 @@ async function approveRequest(params: ApproveRequestParams): Promise<PlanningReq
         shiftUpdatedAt: mainShift.updated_at as string,
         targetShiftUpdatedAt: offeredShift.updated_at as string,
       });
-      freshStatus = combinedStatus(resultA.status, resultB.status);
+      freshStatus = combinedStatus(resultA.overall_status, resultB.overall_status);
     }
 
     // If freshly evaluated compliance is BLOCKING, block the request
@@ -1186,9 +1190,10 @@ async function rejectRequest(params: RejectRequestParams): Promise<PlanningReque
   }
 
   // Reset shift to IDLE
+  // TODO: workflow_status is not yet in the generated Supabase types (schema drift) — cast as any.
   const { error: shiftError } = await supabase
     .from('shifts')
-    .update({ workflow_status: 'IDLE' })
+    .update({ workflow_status: 'IDLE' } as any)
     .eq('id', request.shift_id);
 
   if (shiftError) {

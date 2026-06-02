@@ -49,11 +49,11 @@ function intervalsOverlap(
 }
 
 function shiftAbsStart(a: AtomicOperation): number {
-    return toAbsoluteMinutes(a.shift.shift_date, a.shift.start_time);
+    return toAbsoluteMinutes(a.shift.date, a.shift.start_time);
 }
 
 function shiftAbsEnd(a: AtomicOperation): number {
-    return toAbsoluteMinutes(a.shift.shift_date, a.shift.end_time);
+    return toAbsoluteMinutes(a.shift.date, a.shift.end_time);
 }
 
 // =============================================================================
@@ -96,7 +96,7 @@ export function buildDependencyGraph(
     const addsByEmployee = new Map<V8EmpId, AtomicOperation[]>();
 
     for (const atomic of allAtomics) {
-        const sid = atomic.shift.shift_id;
+        const sid = atomic.shift.id;
         if (atomic.type === 'ADD_EMPLOYEE_SHIFT') {
             if (!addsByShift.has(sid)) addsByShift.set(sid, []);
             addsByShift.get(sid)!.push(atomic);
@@ -191,7 +191,7 @@ export function buildDependencyGraph(
                         type:       'CONFLICT',
                         reason:
                             `Both ops add overlapping shifts for employee ${empId} `
-                            + `(${adds[i].shift.shift_id} ↔ ${adds[j].shift.shift_id}) (TIME_OVERLAP)`,
+                            + `(${adds[i].shift.id} ↔ ${adds[j].shift.id}) (TIME_OVERLAP)`,
                     });
                     conflicts.get(aOp)!.add(bOp);
                     conflicts.get(bOp)!.add(aOp);

@@ -32,7 +32,7 @@ import type { SelectedBid, RejectedBid, EvaluatedBid, BiddingConfig } from './ty
 import type {
     V8OrchestratorShift, V8ShiftId, V8EmpId, V8EmployeeContext,
 } from '../types';
-import { validateCombinedState } from '../validate-combined-state';
+import { validateV8State } from '../validate-combined-state';
 
 // =============================================================================
 // VALIDATION RESULT
@@ -82,7 +82,7 @@ export function finalValidate(
         while (!passes && candidate_shifts.length > 0 && attempts < emp_selected.length) {
             attempts++;
 
-            const result = validateCombinedState({
+            const result = validateV8State({
                 employee_id:      empId,
                 employee_context,
                 original_shifts:  existing_shifts,
@@ -93,19 +93,19 @@ export function finalValidate(
                 config:           config.compliance_config,
             });
 
-            if (result.status !== 'BLOCKING') {
+            if (result.overall_status !== 'BLOCKING') {
                 passes = true;
                 break;
             }
 
             // Find the lowest-scoring selected bid for this employee and demote it
-            const candidate_shift_ids = new Set(candidate_shifts.map(s => s.shift_id));
+            const candidate_shift_ids = new Set(candidate_shifts.map(s => s.id));
 
             // Sort emp_selected by composite_score ascending (lowest first = first to demote)
             const sortable = emp_selected
                 .filter(sel => {
                     const eb = evaluated_map.get(sel.bid_id);
-                    return eb && candidate_shift_ids.has(eb.shift.shift_id) && clean_selected.has(sel.bid_id);
+                    return eb && candidate_shift_ids.has(eb.shift.id) && clean_selected.has(sel.bid_id);
                 })
                 .sort((a, b) => {
                     const sa = evaluated_map.get(a.bid_id)?.composite_score ?? 0;
@@ -120,13 +120,13 @@ export function finalValidate(
 
             demoted.push({
                 bid_id:    to_demote.bid_id,
-                reason:    `Final validation: employee ${empId} has BLOCKING compliance violations when all selected bids are combined. Lowest-scoring bid demoted. Rule hits: ${result.rule_hits.filter(h => h.severity === 'BLOCKING').map(h => h.rule_id).join(', ')}.`,
-                rule_hits: result.rule_hits,
+                reason:    `Final validation: employee ${empId} has BLOCKING compliance violations when all selected bids are combined. Lowest-scoring bid demoted. Rule hits: ${result.hits.filter(h => h.status === 'BLOCKING').map(h => h.rule_id).join(', ')}.`,
+                rule_hits: result.hits,
             });
 
             // Rebuild candidate shifts without the demoted bid
             candidate_shifts = candidate_shifts.filter(
-                s => s.shift_id !== evaluated_map.get(to_demote.bid_id)?.shift.shift_id,
+                s => s.id !== evaluated_map.get(to_demote.bid_id)?.shift.id,
             );
         }
     }

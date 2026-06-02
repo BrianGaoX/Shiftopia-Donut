@@ -1,7 +1,8 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { parse } from 'date-fns';
-import { BidWithEmployee, GroupedBids } from '@/modules/planning/ui/components/types/bid-types';
+type BidWithEmployee = any;
+type GroupedBids = any;
 import { DateRange } from 'react-day-picker';
 
 export const useShiftFiltering = (bids: BidWithEmployee[], initialDateRange?: DateRange) => {

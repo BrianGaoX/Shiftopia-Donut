@@ -239,7 +239,7 @@ async function runComplianceGate(
             ...(sessionByEmp.get(assignment.employeeId) ?? []),
         ];
 
-        const result = runV8LegacyBridge({
+        const result = await runV8LegacyBridge({
             employee_id: assignment.employeeId,
             action_type: 'assign',
             candidate_shift: candidateShift,
@@ -286,7 +286,7 @@ async function runComplianceGate(
                     })),
                     conflicts: allConflicts,
                     summary: correctedSummary,
-                },
+                } as any,
             })
             .eq('id', sessionId);
     }
