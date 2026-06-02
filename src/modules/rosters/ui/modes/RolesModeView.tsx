@@ -277,9 +277,14 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
   const activeDeptId = departmentIds[0];
   const activeSubDeptId = subDepartmentIds[0];
 
-  const { isDnDModeActive } = useRosterStore();
+  const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
 
   const selectedV8ShiftIds = propsSelectedV8ShiftIds ?? [];
+  // O(1) lookup for per-card selection check
+  const selectedV8ShiftIdsSet = useMemo(
+    () => new Set(selectedV8ShiftIds),
+    [selectedV8ShiftIds],
+  );
 
   const { data: levels = [], isLoading: isLoadingLevels } = useRemunerationLevels();
   const { data: roles = [], isLoading: isLoadingRoles } = useRoles(organizationId, activeDeptId, activeSubDeptId);
@@ -606,7 +611,7 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
                                 shift={s} 
                                 isDnDModeActive={isDnDModeActive} 
                                 onEdit={sh => onEditShift?.(sh)} 
-                                isSelected={selectedV8ShiftIds.includes(s.id)}
+                                isSelected={selectedV8ShiftIdsSet.has(s.id)}
                                 onToggleSelection={onToggleShiftSelection || (() => {})}
                                 isBulkMode={isBulkMode ?? false}
                                 onAssignEmployee={onAssignShift || (() => {})}

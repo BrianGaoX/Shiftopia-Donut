@@ -10,17 +10,29 @@
  *   modalsRef.current?.openAddShift(context);
  */
 
-import React, { useState, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, forwardRef, useImperativeHandle, Suspense, lazy } from 'react';
 
-import {
-    EnhancedAddShiftModal,
-    ShiftContext,
-} from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
-import {
-    BulkAssignmentPanel,
-    BulkAssignmentEmployee,
-} from '@/modules/rosters/ui/dialogs/BulkAssignmentPanel';
-import { AutoSchedulerModal } from '@/modules/scheduling/ui/AutoSchedulerModal';
+// Heavy modals are lazy-loaded so the Rosters page chunk doesn't pay for
+// them on first paint. Each is ~500-1700 LOC and pulls in its own form
+// stack, compliance engine bindings, and validation logic.
+const EnhancedAddShiftModal = lazy(() =>
+    import('@/modules/rosters/ui/dialogs/EnhancedAddShiftModal').then((m) => ({
+        default: m.EnhancedAddShiftModal,
+    })),
+);
+const BulkAssignmentPanel = lazy(() =>
+    import('@/modules/rosters/ui/dialogs/BulkAssignmentPanel').then((m) => ({
+        default: m.BulkAssignmentPanel,
+    })),
+);
+const AutoSchedulerModal = lazy(() =>
+    import('@/modules/scheduling/ui/AutoSchedulerModal').then((m) => ({
+        default: m.AutoSchedulerModal,
+    })),
+);
+
+import type { ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
+import type { BulkAssignmentEmployee } from '@/modules/rosters/ui/dialogs/BulkAssignmentPanel';
 
 // =============================================================================
 // TYPES
@@ -46,9 +58,9 @@ interface RosterModalsProps {
     /** Unassigned shifts for AutoSchedulerPanel. */
     autoSchedulerShifts: AutoSchedulerShift[];
     /** Employee summary for AutoSchedulerPanel. */
-    autoSchedulerEmployees: Array<{ 
-        id: string; 
-        name: string; 
+    autoSchedulerEmployees: Array<{
+        id: string;
+        name: string;
         contract_type?: 'FT' | 'PT' | 'CASUAL' | null;
         contracted_weekly_hours?: number;
     }>;
@@ -113,43 +125,57 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
 
     return (
         <>
+            {/* Add Shift Modal — chunk fetched only on first open */}
+            {isAddOpen && (
+                <Suspense fallback={null}>
+                    <EnhancedAddShiftModal
+                        isOpen={isAddOpen}
+                        onClose={() => setIsAddOpen(false)}
+                        onSuccess={onShiftSaved}
+                        context={addContext}
+                    />
+                </Suspense>
+            )}
 
+            {/* Edit Shift Modal — same lazy chunk as Add */}
+            {isEditOpen && (
+                <Suspense fallback={null}>
+                    <EnhancedAddShiftModal
+                        isOpen={isEditOpen}
+                        onClose={() => setIsEditOpen(false)}
+                        onSuccess={onShiftSaved}
+                        context={editContext}
+                        editMode={true}
+                        existingShift={editShift}
+                    />
+                </Suspense>
+            )}
 
-            {/* Add Shift Modal */}
-            <EnhancedAddShiftModal
-                isOpen={isAddOpen}
-                onClose={() => setIsAddOpen(false)}
-                onSuccess={onShiftSaved}
-                context={addContext}
-            />
-
-            {/* Edit Shift Modal */}
-            <EnhancedAddShiftModal
-                isOpen={isEditOpen}
-                onClose={() => setIsEditOpen(false)}
-                onSuccess={onShiftSaved}
-                context={editContext}
-                editMode={true}
-                existingShift={editShift}
-            />
-
-            {/* Auto-Scheduler Modal */}
-            <AutoSchedulerModal
-                open={isAutoSchedulerOpen}
-                onClose={() => setIsAutoSchedulerOpen(false)}
-                shifts={autoSchedulerShifts}
-                employees={autoSchedulerEmployees}
-                onComplete={onAutoScheduleComplete}
-            />
+            {/* Auto-Scheduler Modal — 1.7k LOC, deferred */}
+            {isAutoSchedulerOpen && (
+                <Suspense fallback={null}>
+                    <AutoSchedulerModal
+                        open={isAutoSchedulerOpen}
+                        onClose={() => setIsAutoSchedulerOpen(false)}
+                        shifts={autoSchedulerShifts}
+                        employees={autoSchedulerEmployees}
+                        onComplete={onAutoScheduleComplete}
+                    />
+                </Suspense>
+            )}
 
             {/* Bulk Assignment Panel */}
-            <BulkAssignmentPanel
-                open={isBulkAssignOpen}
-                onClose={() => setIsBulkAssignOpen(false)}
-                selectedV8ShiftIds={selectedV8ShiftIds}
-                employees={employees}
-                onAssignComplete={onAssignComplete}
-            />
+            {isBulkAssignOpen && (
+                <Suspense fallback={null}>
+                    <BulkAssignmentPanel
+                        open={isBulkAssignOpen}
+                        onClose={() => setIsBulkAssignOpen(false)}
+                        selectedV8ShiftIds={selectedV8ShiftIds}
+                        employees={employees}
+                        onAssignComplete={onAssignComplete}
+                    />
+                </Suspense>
+            )}
         </>
     );
 });

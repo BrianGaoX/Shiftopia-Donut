@@ -585,6 +585,11 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
   // Use props if provided, otherwise fallback to context
   const selectedV8ShiftIds = propsSelectedV8ShiftIds ?? [];
+  // O(1) lookup for per-card selection check
+  const selectedV8ShiftIdsSet = React.useMemo(
+    () => new Set(selectedV8ShiftIds),
+    [selectedV8ShiftIds],
+  );
 
   // Collapsible group state (persisted to localStorage)
   const [collapsedGroups, toggleGroupCollapse] = useCollapsedGroups();
@@ -1771,7 +1776,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
           groupColor={accentColor}
           compliance={complianceMap?.[shift.id]}
           headerAction={canEdit && !isBulkMode ? menu : undefined}
-          isSelected={isBulkMode && selectedV8ShiftIds.includes(shift.id)}
+          isSelected={isBulkMode && selectedV8ShiftIdsSet.has(shift.id)}
           isLocked={isLocked || (isDnDModeActive && !shift.isDraft)}
           isPast={isPastDate}
           isDnDActive={isDnDModeActive}

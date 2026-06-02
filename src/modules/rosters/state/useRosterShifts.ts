@@ -1037,6 +1037,9 @@ export function useShiftDeltaSync(params: {
   // Initialised to "now" so we only pick up changes after mount.
   const cursorRef = useRef<string>(new Date().toISOString());
   const fetchingRef = useRef(false);
+  // Debounce realtime events — bursts (mass publish/assign) would otherwise
+  // fan out to one RPC per row change.
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const applyDelta = useCallback(async () => {
     if (!params.orgId || fetchingRef.current) return;
@@ -1106,11 +1109,18 @@ export function useShiftDeltaSync(params: {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'shifts', filter: `organization_id=eq.${params.orgId}` },
-        () => { void applyDelta(); },
+        () => {
+          if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+          debounceTimerRef.current = setTimeout(() => { void applyDelta(); }, 300);
+        },
       )
       .subscribe();
 
     return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
       void supabase.removeChannel(channel);
     };
   }, [params.orgId, applyDelta]);

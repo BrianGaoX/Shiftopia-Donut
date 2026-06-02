@@ -48,10 +48,23 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
   );
 
   // ── Worker Pool Setup ──
-  const poolRef = useRef<ProjectionWorkerPool | null>(null);
-  if (!poolRef.current) {
-    poolRef.current = new ProjectionWorkerPool({ poolSize: 4, debounceMs: 50 });
-  }
+  // useState initializer runs exactly once even under StrictMode (avoids
+  // orphan pool from a double-mounted dev render). Pool size is derived
+  // from hardware concurrency: half the cores, capped to 4, floor 1.
+  const [pool] = useState(() => {
+    const hw = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency ?? 4) : 4;
+    const size = Math.max(1, Math.min(4, Math.floor(hw / 2)));
+    return new ProjectionWorkerPool({ poolSize: size, debounceMs: 50 });
+  });
+
+  // ── nowIso stabilization ──
+  // Recomputing `new Date().toISOString()` every render churns the worker
+  // request payload even when the underlying data hasn't changed. Pin to
+  // per-minute granularity — the projection engine only needs minute precision.
+  const nowMinuteRef = useRef<{ iso: string; minute: number }>({
+    iso: new Date().toISOString(),
+    minute: Math.floor(Date.now() / 60_000),
+  });
 
   // ── Asynchronous State (for Worker-powered modes) ──
   const [workerPeople, setWorkerPeople] = useState<PeopleProjection | null>(null);
@@ -69,9 +82,6 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
       setWorkerStats(syncStats);
       return;
     }
-
-    const pool = poolRef.current;
-    if (!pool) return;
 
     // 1. Convert to DTOs
     const shiftDTOs = shiftsToDTO(shifts);
@@ -174,7 +184,13 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
       });
     };
 
-    // 4. Dispatch
+    // 4. Dispatch — pin nowIso to minute granularity so identical inputs
+    //    produce identical requests until the next minute boundary
+    const currentMinute = Math.floor(Date.now() / 60_000);
+    if (nowMinuteRef.current.minute !== currentMinute) {
+      nowMinuteRef.current = { iso: new Date().toISOString(), minute: currentMinute };
+    }
+
     pool.requestProjection({
       mode: activeMode,
       shifts: shiftDTOs,
@@ -184,18 +200,17 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
       events: eventDTOs,
       rosterStructures: rosterStructureDTOs,
       filters: filterDTOs,
-      nowIso: new Date().toISOString(),
+      nowIso: nowMinuteRef.current.iso,
     });
 
-  }, [shifts, employees, roles, levels, events, rosterStructures, advancedFilters, activeMode]);
+  }, [shifts, employees, roles, levels, events, rosterStructures, advancedFilters, activeMode, pool]);
 
   // Clean up pool on unmount
   useEffect(() => {
     return () => {
-      poolRef.current?.dispose();
-      poolRef.current = null;
+      pool.dispose();
     };
-  }, []);
+  }, [pool]);
 
   return {
     activeMode,

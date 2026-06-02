@@ -126,7 +126,7 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
   const [collapsedEvents, setCollapsedEvents] = useState<Set<string>>(new Set());
 
   // ── Roster Store ────────────────────────────────────────────────────────────
-  const { isDnDModeActive } = useRosterStore();
+  const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
 
   // ── Unpublish ────────────────────────────────────────────────────────────────
   const unpublishMutation = useUnpublishShift();

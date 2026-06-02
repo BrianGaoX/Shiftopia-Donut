@@ -27,6 +27,7 @@ import type { ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShift
 import { BulkActionsToolbar, type BulkActionResult, type BulkPublishValidationResult } from '@/modules/rosters/ui/components/BulkActionsToolbar';
 import { RosterModals, type RosterModalsHandle } from '@/modules/rosters/ui/components/RosterModals';
 import { useRosterStore } from '@/modules/rosters/state/useRosterStore';
+import { useShallow } from 'zustand/react/shallow';
 import { DndAssignModal } from '@/modules/rosters/ui/dialogs/DndAssignModal';
 import { UNASSIGNED_BUCKET_ID } from '@/modules/rosters/domain/projections/constants';
 
@@ -88,6 +89,11 @@ import {
   TooltipTrigger,
 } from '@/modules/core/ui/primitives/tooltip';
 
+// Server-side pagination cap on the employee lookup. Hoisted to module
+// scope so the BFF prefetch hook can reuse it as part of the cache key
+// (the seeded key must match the read key, which includes this limit).
+const EMPLOYEE_PAGE_SIZE = 200;
+
 /* ============================================================
    MAIN COMPONENT
    ============================================================ */
@@ -97,7 +103,13 @@ const NewRostersPage: React.FC = () => {
   const { scope, setScope, isGammaLocked } = useScopeFilter('managerial');
   const queryClient = useQueryClient();
 
-  const { showUnfilledPanel, setShowUnfilledPanel, isDnDModeActive } = useRosterStore();
+  const { showUnfilledPanel, setShowUnfilledPanel, isDnDModeActive } = useRosterStore(
+    useShallow((s) => ({
+      showUnfilledPanel: s.showUnfilledPanel,
+      setShowUnfilledPanel: s.setShowUnfilledPanel,
+      isDnDModeActive: s.isDnDModeActive,
+    })),
+  );
   // ==================== SESSION-SCOPED STATE FROM CONTEXT ====================
   // These persist across navigation but reset on browser refresh
   const {
@@ -140,21 +152,15 @@ const NewRostersPage: React.FC = () => {
   const selectedCount = selectedV8ShiftIds.size;
 
   // ==================== SYNC SCOPE FILTER → ROSTER UI CONTEXT ====================
-  // When the scope filter changes (user selects different dept/subdept), propagate
-  // to the RosterUI context so data queries (which key off RosterUI state) re-fire.
+  // Batched: a single Zustand setState applies all three scope fields in one
+  // commit so consumers re-render once per scope change instead of three times.
   React.useEffect(() => {
-    if (scope.org_ids.length > 0) {
-      setSelectedOrganizationId(scope.org_ids[0]);
-    }
-  }, [scope.org_ids.join(',')]);
-
-  React.useEffect(() => {
-    setSelectedDepartmentIds(scope.dept_ids);
-  }, [scope.dept_ids.join(',')]);
-
-  React.useEffect(() => {
-    setSelectedSubDepartmentIds(scope.subdept_ids);
-  }, [scope.subdept_ids.join(',')])
+    useRosterStore.setState({
+      ...(scope.org_ids.length > 0 ? { selectedOrganizationId: scope.org_ids[0] } : {}),
+      selectedDepartmentIds: scope.dept_ids,
+      selectedSubDepartmentIds: scope.subdept_ids,
+    });
+  }, [scope.org_ids.join(','), scope.dept_ids.join(','), scope.subdept_ids.join(',')]);
 
   // ==================== CONTEXT STATE ====================
   const [selectedRosterId, setSelectedRosterId] = useState<string | null>(null);
@@ -236,6 +242,9 @@ const NewRostersPage: React.FC = () => {
     deptIds: selectedDepartmentIds,
     subDeptIds: selectedSubDepartmentIds,
     shiftFilters: queryFilters,
+    // Must match the limit passed to useEmployees below so the BFF-seeded
+    // cache key collides with the consumer's read key (else duplicate fetch).
+    employeePageSize: EMPLOYEE_PAGE_SIZE,
   });
 
   // ==================== DELTA SYNC ====================
@@ -290,10 +299,8 @@ const NewRostersPage: React.FC = () => {
 
 
   // Employee search + pagination cap (server-side).
-  // Grid is bounded to EMPLOYEE_PAGE_SIZE rows; managers must search to find
-  // someone outside the top slice. Sized to keep DOM well under the
-  // virtualization threshold even on large orgs (10k+ users).
-  const EMPLOYEE_PAGE_SIZE = 200;
+  // Grid is bounded to EMPLOYEE_PAGE_SIZE rows (hoisted to module scope);
+  // managers must search to find someone outside the top slice.
   const [employeeSearchInput, setEmployeeSearchInput] = useState('');
   const [employeeSearchTerm, setEmployeeSearchTerm] = useState('');
   React.useEffect(() => {
@@ -481,6 +488,13 @@ const NewRostersPage: React.FC = () => {
     return shifts.filter(s => selectedV8ShiftIds.has(s.id));
   }, [shifts, selectedV8ShiftIds]);
 
+  // Stable array view of the selection Set. Memoized so downstream React.memo
+  // boundaries (rows, toolbar) don't see a fresh array on every page render.
+  const selectedV8ShiftIdsArray = useMemo(
+    () => Array.from(selectedV8ShiftIds),
+    [selectedV8ShiftIds],
+  );
+
   const stateCounts = useMemo(() => {
     const counts = {
       assignedCount: 0,
@@ -608,7 +622,7 @@ const NewRostersPage: React.FC = () => {
 
   const handleBulkDelete = async (): Promise<BulkActionResult> => {
     if (selectedV8ShiftIds.size === 0) return { successCount: 0, failedCount: 0 };
-    const result = await bulkDelete.mutateAsync(Array.from(selectedV8ShiftIds));
+    const result = await bulkDelete.mutateAsync(selectedV8ShiftIdsArray);
     clearSelection();
     setBulkModeActive(false);
     return {
@@ -1014,7 +1028,7 @@ const NewRostersPage: React.FC = () => {
               dates={dates}
               showAvailabilities={showAvailabilities}
               isBulkMode={bulkModeActive}
-              selectedShifts={Array.from(selectedV8ShiftIds)}
+              selectedShifts={selectedV8ShiftIdsArray}
               onToggleShiftSelection={handleToggleShiftSelection}
               onAddShift={(employee, date) => {
                 const context: ShiftContext = {
@@ -1062,7 +1076,7 @@ const NewRostersPage: React.FC = () => {
               // Bulk Mode
               isBulkMode={bulkModeActive}
               onBulkModeToggle={handleBulkModeToggle}
-              selectedV8ShiftIds={Array.from(selectedV8ShiftIds)}
+              selectedV8ShiftIds={selectedV8ShiftIdsArray}
               onToggleShiftSelection={handleToggleShiftSelection}
               // Day zoom
               dayZoom={dayZoom}
@@ -1103,7 +1117,7 @@ const NewRostersPage: React.FC = () => {
               onEditShift={handleEditShift}
               onMoveShift={handleDndMove}
               onAssignShift={handleDndAssignToShift}
-              selectedV8ShiftIds={Array.from(selectedV8ShiftIds)}
+              selectedV8ShiftIds={selectedV8ShiftIdsArray}
               isBulkMode={bulkModeActive}
               onToggleShiftSelection={handleToggleShiftSelection}
             />
@@ -1138,7 +1152,7 @@ const NewRostersPage: React.FC = () => {
       {bulkModeActive && selectedV8ShiftIds.size > 0 && (
         <BulkActionsToolbar
           selectedCount={selectedCount}
-          selectedV8ShiftIds={Array.from(selectedV8ShiftIds)}
+          selectedV8ShiftIds={selectedV8ShiftIdsArray}
           stateCounts={stateCounts}
           preflightData={preflightData}
           totalVisibleCount={totalSelectableCount}
@@ -1160,7 +1174,7 @@ const NewRostersPage: React.FC = () => {
       {/* Modals (add/edit shift, bulk assign, auto-scheduler) */}
       <RosterModals
         ref={modalsRef}
-        selectedV8ShiftIds={Array.from(selectedV8ShiftIds)}
+        selectedV8ShiftIds={selectedV8ShiftIdsArray}
         employees={employees.map((e) => ({
           id: e.id,
           name: `${e.first_name} ${e.last_name}`.trim() || e.id,

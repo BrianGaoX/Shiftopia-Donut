@@ -51,6 +51,7 @@ import { PlanRosterPeriodDialog } from '@/modules/rosters/ui/dialogs/PlanRosterP
 import SnapFromRosterDialog from '@/modules/rosters/ui/dialogs/SnapFromRosterDialog';
 import { useRosterStructure } from '../../state/useRosterStructure';
 import { useRosterStore } from '@/modules/rosters/state/useRosterStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useScopeFilter } from '@/platform/auth/useScopeFilter';
 
 /* ============================================================
@@ -225,7 +226,15 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
     setShowUnfilledPanel,
     showFatigueHeatmap,
     setShowFatigueHeatmap,
-  } = useRosterStore();
+  } = useRosterStore(
+    useShallow((s) => ({
+      isDnDModeActive: s.isDnDModeActive,
+      setIsDnDModeActive: s.setIsDnDModeActive,
+      setShowUnfilledPanel: s.setShowUnfilledPanel,
+      showFatigueHeatmap: s.showFatigueHeatmap,
+      setShowFatigueHeatmap: s.setShowFatigueHeatmap,
+    })),
+  );
 
   const queryClient = useQueryClient();
 

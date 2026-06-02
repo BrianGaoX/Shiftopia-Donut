@@ -37,6 +37,7 @@ import {
 } from './people-mode.types';
 import type { UnfilledShift } from './UnfilledShiftsPanel';
 import { useRosterStore } from '@/modules/rosters/state/useRosterStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useRosterUI } from '@/modules/rosters/contexts/RosterUIContext';
 import { useDrag } from 'react-dnd';
 import { canDragShift } from '@/modules/rosters/utils/dnd.utils';
@@ -256,16 +257,29 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
 }) => {
   const { toast } = useToast();
   const createShiftMutation = useCreateShift();
-  const { 
-    bulkModeActive: globalBulkModeActive, 
+  const {
+    bulkModeActive: globalBulkModeActive,
     selectedV8ShiftIds: globalSelectedV8ShiftIds,
-    toggleShiftSelection: globalToggleShiftSelection
-  } = useRosterStore();
+    toggleShiftSelection: globalToggleShiftSelection,
+  } = useRosterStore(
+    useShallow((s) => ({
+      bulkModeActive: s.bulkModeActive,
+      selectedV8ShiftIds: s.selectedV8ShiftIds,
+      toggleShiftSelection: s.toggleShiftSelection,
+    })),
+  );
 
   const isBulkMode = propIsBulkMode || globalBulkModeActive;
   const { toggleShiftSelection: uiToggleShiftSelection } = useRosterUI();
 
   const currentSelectedShifts = propsSelectedShifts;
+  // O(1) lookup for the selection check that runs once per shift card.
+  // Memoized on the array reference so identical selection state doesn't
+  // rebuild the Set on every render of the parent.
+  const currentSelectedShiftsSet = useMemo(
+    () => new Set(currentSelectedShifts),
+    [currentSelectedShifts],
+  );
 
   const handleCloneShift = useCallback(async (shift: PeopleModeShift) => {
     try {
@@ -476,7 +490,7 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
                         showFatigueHeatmap={showFatigueHeatmap}
                         cardVariant={cardVariant}
                         complianceMap={complianceMap}
-                        currentSelectedShifts={currentSelectedShifts}
+                        currentSelectedShifts={currentSelectedShiftsSet}
                         isDnDModeActive={isDnDModeActive}
                         getAvailability={getAvailability}
                         onAddShift={onAddShift}
@@ -521,7 +535,7 @@ interface EmployeeRowProps {
   showFatigueHeatmap: boolean;
   cardVariant: 'compact' | 'detailed';
   complianceMap?: Record<string, ComplianceInfo>;
-  currentSelectedShifts: string[];
+  currentSelectedShifts: Set<string>;
   isDnDModeActive: boolean;
   getAvailability: (employeeId: string, dateKey: string) => any;
   onAddShift: (employee: PeopleModeEmployee, date: Date) => void;
@@ -808,7 +822,7 @@ interface EmployeeDateCellProps {
   showAvailabilities: boolean;
   cardVariant: 'compact' | 'detailed';
   complianceMap?: Record<string, ComplianceInfo>;
-  currentSelectedShifts: string[];
+  currentSelectedShifts: Set<string>;
   isDnDModeActive: boolean;
   getAvailability: (employeeId: string, dateKey: string) => any;
   onAddShift: (employee: PeopleModeEmployee, date: Date) => void;
@@ -901,7 +915,7 @@ const EmployeeDateCellImpl: React.FC<EmployeeDateCellProps> = ({
                     variant={cardVariant}
                     groupColor={resolveGroupType(rawShift)}
                     compliance={complianceMap?.[shift.id]}
-                    isSelected={currentSelectedShifts.includes(shift.id)}
+                    isSelected={currentSelectedShifts.has(shift.id)}
                     isLocked={isLocked}
                     isPast={isPast}
                     isDnDActive={isDnDModeActive}

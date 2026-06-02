@@ -54,7 +54,8 @@ export const rosterViewBffKey = (
     endDate: string | null,
     deptIds: string[],
     subDeptIds: string[],
-) => ['roster-view-bff', orgId ?? null, startDate ?? null, endDate ?? null, deptIds, subDeptIds] as const;
+    employeePageSize?: number,
+) => ['roster-view-bff', orgId ?? null, startDate ?? null, endDate ?? null, deptIds, subDeptIds, employeePageSize ?? null] as const;
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,8 @@ interface UseRosterViewPrefetchParams {
     subDeptIds: string[];
     /** Must be the same filters object passed to useShiftsByDateRange */
     shiftFilters?: ShiftFilters;
+    /** Limit passed to useEmployees on the page; required so the seeded cache key matches the consumer's read key. */
+    employeePageSize?: number;
 }
 
 export function useRosterViewPrefetch({
@@ -77,11 +80,12 @@ export function useRosterViewPrefetch({
     deptIds,
     subDeptIds,
     shiftFilters,
+    employeePageSize,
 }: UseRosterViewPrefetchParams) {
     const queryClient = useQueryClient();
 
     const { data } = useQuery({
-        queryKey: rosterViewBffKey(orgId, startDate, endDate, deptIds, subDeptIds),
+        queryKey: rosterViewBffKey(orgId, startDate, endDate, deptIds, subDeptIds, employeePageSize),
         queryFn: async (): Promise<RosterViewPayload> => {
             const { data: payload, error } = await supabase.functions.invoke<RosterViewPayload>(
                 'get-roster-view',
@@ -131,7 +135,7 @@ export function useRosterViewPrefetch({
         const primarySubDeptId = subDeptIds[0];
 
         queryClient.setQueryData(
-            shiftKeys.lookups.employees(orgId, primaryDeptId, primarySubDeptId),
+            shiftKeys.lookups.employees(orgId, primaryDeptId, primarySubDeptId, undefined, undefined, employeePageSize),
             data.employees,
         );
 
@@ -149,5 +153,5 @@ export function useRosterViewPrefetch({
             shiftKeys.lookups.events(orgId),
             data.events,
         );
-    }, [data, orgId, startDate, endDate, deptIds, subDeptIds, shiftFilters, queryClient]);
+    }, [data, orgId, startDate, endDate, deptIds, subDeptIds, shiftFilters, employeePageSize, queryClient]);
 }
