@@ -53,19 +53,7 @@ export const isShiftStarted = (date: Date | string | undefined, startTime: strin
         // 3. Compare with absolute "now"
         const now = new Date(); // Absolute now
 
-        const started = now >= shiftStart;
-
-        if (started) {
-            console.log('[isShiftStarted] TRUE', {
-                dateStr,
-                startTime,
-                timezone,
-                shiftStart: shiftStart.toISOString(),
-                now: now.toISOString()
-            });
-        }
-
-        return started;
+        return now >= shiftStart;
 
     } catch (e) {
         console.error('[isShiftStarted] error', e);

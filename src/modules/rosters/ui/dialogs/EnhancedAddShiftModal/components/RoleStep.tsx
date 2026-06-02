@@ -90,11 +90,6 @@ export const RoleStep: React.FC<RoleStepProps> = ({
                                 <div className="text-sm font-medium text-foreground px-1">
                                     {(() => {
                                         const match = roles.find(r => r.id === field.value);
-                                        console.log('[RoleStep] Locked View Render:', {
-                                            fieldValue: field.value,
-                                            rolesCount: roles.length,
-                                            matchFound: !!match
-                                        });
                                         return isLoadingData ? (
                                             <span className="text-muted-foreground/80 italic">Loading role...</span>
                                         ) : (

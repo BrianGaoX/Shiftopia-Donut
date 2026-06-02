@@ -72,20 +72,22 @@ export function useShiftFormData({
         }
     );
 
-    React.useEffect(() => {
-        if (isOpen) {
-            console.log('[useShiftFormData] Modal Open. Context:', context);
-            console.log('[useShiftFormData] Filters:', { contextDeptId, contextSubDeptId });
-            console.log('[useShiftFormData] Fetched Rosters:', rosters.length, rosters.map(r => ({ id: r.id, start: r.start_date, sub: r.sub_department_id })));
-        }
-    }, [isOpen, context, contextDeptId, contextSubDeptId, rosters]);
+    // Note: previous debug logs here serialized the entire rosters array on
+    // every effect run, which showed up as 100+ ms of main-thread work on
+    // modal open in dev mode. Drop them — TanStack Devtools is the right
+    // surface for this kind of inspection.
 
     // 3. Metadata Hooks (Restored)
     // 3. Metadata Hooks (Restored)
     const { data: remunerationLevels = EMPTY_ARRAY, isLoading: isLoadingRem } = useRemunerationLevels();
     const { data: skills = EMPTY_ARRAY, isLoading: isLoadingSkills } = useSkills();
     const { data: licenses = EMPTY_ARRAY, isLoading: isLoadingLicenses } = useLicenses();
-    const { data: events = EMPTY_ARRAY, isLoading: isLoadingEvents } = useEvents();
+    // Events are org-scoped. Calling useEvents() with no orgId here fetched
+    // every event in the system on every modal open — confirmed via DevTools
+    // INP trace (~100 ms of network + parse on the click handler).
+    const { data: events = EMPTY_ARRAY, isLoading: isLoadingEvents } = useEvents(
+        isOpen ? context.organizationId : undefined,
+    );
 
     // 4. Derive Role Context - Prefer specific roster context if available, fallback to global context
     const selectedRoster = rosters.find(r => r.id === (selectedRosterId || context.rosterId));
@@ -111,11 +113,13 @@ export function useShiftFormData({
     const { data: rosterStructure = EMPTY_ARRAY } = useRosterStructure(selectedRosterId || context.rosterId);
 
     // 5. Active Sub-Groups Detection
-    // Fetch all shifts for this day and roster to see what groups/subgroups are currently active
-    // We fetch ALL shifts for the org/date to have the full picture
+    // Hint UI used only by the CREATE flow to show "this subgroup already has
+    // shifts on this date". For EDIT mode the user is operating on an existing
+    // shift, so skip the fetch entirely — it's a per-modal-open network call
+    // for data that the parent page's byDateRange cache often already covers.
     const { data: existingShifts = EMPTY_ARRAY } = useShiftsByDate(
-        isOpen ? context.organizationId ?? null : null,
-        isOpen ? context.date || null : null
+        isOpen && !editMode ? context.organizationId ?? null : null,
+        isOpen && !editMode ? context.date || null : null,
     );
 
     // activeSubGroups is now a mapping of groupType -> uniqueSubGroupNames[]
@@ -152,7 +156,6 @@ export function useShiftFormData({
             if (!selectedRosterId || selectedRosterId !== context.rosterId) {
                 const target = rosters.find(r => r.id === context.rosterId);
                 if (target) {
-                    console.log('[useShiftFormData] Found roster matching context.rosterId:', target.id);
                     setSelectedRosterId(target.id);
                 }
             }
@@ -176,7 +179,6 @@ export function useShiftFormData({
             });
 
             if (matchingRoster) {
-                console.log('[useShiftFormData] Found matching roster by date:', matchingRoster.id);
                 setSelectedRosterId(matchingRoster.id);
             }
         }

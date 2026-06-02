@@ -974,12 +974,10 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     }
   );
 
-  // Diagnostic log for active days (only in dev/debug)
+  // Surface only roster fetch errors to the console. Earlier diagnostic logs
+  // here mapped over the entire roster structures array on every effect run,
+  // showing up as main-thread work during view changes.
   useEffect(() => {
-    if (rosterStructures.length > 0) {
-      console.log(`[GroupModeView] Found ${rosterStructures.length} active rosters in current view.`);
-      console.log(`[GroupModeView] Active dates:`, rosterStructures.map(r => r.startDate));
-    }
     if (isRosterError) {
       console.error(`[GroupModeView] Roster fetch error:`, rosterError);
     }
@@ -1315,12 +1313,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     }
 
     const context = buildShiftContext(group, subGroup, date, 'grid', specificRosterId);
-    console.log('[GroupModeView] Opening Add Shift Modal with context:', {
-      date: context.date,
-      rosterId: context.rosterId,
-      derivedFromSpecificId: specificRosterId,
-      fallbackRosterId: rosterIdRef.current
-    });
     setShiftContext(context);
     setIsEditMode(false);
     setEditingShift(null);
@@ -1344,7 +1336,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     shiftStart.setHours(h, m, 0, 0);
 
     if (getSydneyNow() >= shiftStart && shift.rawShift.lifecycle_status !== 'Published') {
-      console.warn('[handleEditShift] Blocking edit for started shift:', shift.id);
       toast({
         title: 'Shift Locked',
         description: 'This shift has already started and cannot be edited. You can only delete it from the menu.',
@@ -1352,8 +1343,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
       });
       return;
     }
-
-    console.log('[handleEditShift] Opening edit modal for shift:', shift.id);
 
     const context = buildShiftContext(group, subGroup, date, 'edit');
 

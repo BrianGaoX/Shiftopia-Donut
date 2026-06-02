@@ -168,7 +168,6 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
 
         const match = rosters.find(r => r.start_date === context.date);
         if (match) {
-            console.log('[ScheduleStep] Auto-selecting roster matching date:', match.name);
             onRosterChange(match.id);
         }
     }, [isTemplateMode, rosters, onRosterChange, context?.date]);
