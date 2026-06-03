@@ -146,8 +146,7 @@ const DraggableShiftCard: React.FC<DraggableShiftCardProps> = React.memo(({
   children,
   disabled,
 }) => {
-  const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
-
+  // canDrag reads isDnDModeActive imperatively — see PeopleModeGrid for why.
   const [{ isDragging }, drag] = useDrag(() => ({
     type: DND_SHIFT_TYPE,
     item: {
@@ -160,11 +159,11 @@ const DraggableShiftCard: React.FC<DraggableShiftCardProps> = React.memo(({
       lifecycle_status: shift.status === 'Published' ? 'Published' : 'Draft',
       is_cancelled: shift.isCancelled,
     } as DragItem,
-    canDrag: () => canDragShift(shift, isDnDModeActive) && !disabled,
+    canDrag: () => canDragShift(shift, useRosterStore.getState().isDnDModeActive) && !disabled,
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-  }), [shift.id, groupType, subGroupName, disabled, isDnDModeActive, shift.status, shift.isCancelled]);
+  }), [shift.id, groupType, subGroupName, disabled, shift.status, shift.isCancelled]);
 
   return (
     <div 
@@ -207,8 +206,7 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
   className,
   disabled,
 }) => {
-  const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
-
+  // canDrop reads isDnDModeActive imperatively — see DraggableShiftCard.
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: DND_SHIFT_TYPE,
     drop: (item: DragItem) => {
@@ -220,9 +218,8 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
       }
     },
     canDrop: (item: DragItem) => {
-      // Single logic source: dnd.utils.ts
       return canDropOnTarget(
-        isDnDModeActive,
+        useRosterStore.getState().isDnDModeActive,
         {
           lifecycle_status: item.lifecycle_status,
           is_cancelled: item.is_cancelled,
@@ -239,7 +236,7 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
       isOver: monitor.isOver(),
       canDrop: monitor.canDrop(),
     }),
-  }), [groupType, subGroupName, groupId, subGroupId, date, onDrop, disabled, isDnDModeActive]);
+  }), [groupType, subGroupName, groupId, subGroupId, date, onDrop, disabled]);
 
   return (
     <div
@@ -1861,7 +1858,13 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
               return (
                 <div
                   key={group.type}
-                  className={cn('rounded-2xl overflow-hidden', glassStyle.container)}
+                  // CLS guard:
+                  //  - min-h-[420px] reserves enough vertical space for a
+                  //    typical 3-5 subgroup table so siblings below don't
+                  //    shift when rows materialize after shifts load.
+                  //  - [contain:layout] scopes any remaining internal reflow
+                  //    so children's growth doesn't ripple out.
+                  className={cn('rounded-2xl overflow-hidden min-h-[420px] [contain:layout]', glassStyle.container)}
                 >
                   {/* Group Header with Collapse Toggle + Stats */}
                   <div className={cn('px-5 py-3', glassStyle.header)}>

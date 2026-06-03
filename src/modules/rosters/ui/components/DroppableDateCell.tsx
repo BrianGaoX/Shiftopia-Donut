@@ -39,8 +39,10 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
   onMove,
 }) => {
   const { toast } = useToast();
-  const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
 
+  // canDrop reads isDnDModeActive imperatively so flipping DnD mode does NOT
+  // re-render this cell or re-register its drop spec. With 1.4k cells in a
+  // week view, that was the main source of the ~800ms INP on the DnD toggle.
   const [{ isOver, canDrop }, drop] = useDrop<
     UnfilledShift | ShiftDragItem,
     void,
@@ -50,10 +52,10 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
       accept: [DND_UNFILLED_SHIFT, DND_SHIFT_TYPE],
       canDrop: (item: any) => {
         return canDropOnTarget(
-          isDnDModeActive,
+          useRosterStore.getState().isDnDModeActive,
           {
-            lifecycle_status: 'lifecycle_status' in item 
-              ? item.lifecycle_status 
+            lifecycle_status: 'lifecycle_status' in item
+              ? item.lifecycle_status
               : (item.isPublished ? 'Published' : 'Draft'),
             is_cancelled: item.is_cancelled || false,
           },
@@ -90,7 +92,7 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
         canDrop: monitor.canDrop(),
       }),
     }),
-    [employeeId, dateKey, onAssign, onMove, isDnDModeActive],
+    [employeeId, dateKey, onAssign, onMove],
   );
 
   return (

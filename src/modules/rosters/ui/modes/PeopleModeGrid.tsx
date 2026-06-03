@@ -125,8 +125,6 @@ const DraggableShiftCardImpl: React.FC<DraggableShiftCardProps> = ({
   children,
   disabled,
 }) => {
-  const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
-
   const shiftId = shift.id;
   const subGroup = shift.subGroup;
   const startTime = shift.startTime;
@@ -136,6 +134,10 @@ const DraggableShiftCardImpl: React.FC<DraggableShiftCardProps> = ({
   const shiftDate = shift.rawShift?.shift_date || '';
   const sourceGroupType = (shift as any).groupType || 'people-mode';
 
+  // canDrag reads isDnDModeActive via getState() so flipping the global flag
+  // does NOT re-render every card or re-register every drag spec. Previously
+  // this was a reactive subscription + dep — measured as ~800ms INP on the
+  // DnD toggle in the 1.4k-card grid.
   const [{ isDragging }, drag] = useDrag(() => ({
     type: DND_SHIFT_TYPE,
     item: {
@@ -153,12 +155,12 @@ const DraggableShiftCardImpl: React.FC<DraggableShiftCardProps> = ({
         lifecycle_status: isPublished ? 'Published' : 'Draft',
         is_cancelled: isCancelled,
       },
-      isDnDModeActive
+      useRosterStore.getState().isDnDModeActive,
     ) && !disabled,
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-  }), [shiftId, subGroup, startTime, endTime, isPublished, isCancelled, shiftDate, sourceGroupType, isDnDModeActive, disabled, employee.id]);
+  }), [shiftId, subGroup, startTime, endTime, isPublished, isCancelled, shiftDate, sourceGroupType, disabled, employee.id]);
 
   return (
     <div
