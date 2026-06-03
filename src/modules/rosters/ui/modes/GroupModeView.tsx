@@ -2296,6 +2296,38 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                             </tr>
                           ))}
 
+                          {/* CLS guard: while shifts are loading we render
+                              skeleton rows that reserve the eventual height
+                              of populated subgroups. Without this, the page
+                              paints empty group containers first, then grows
+                              as rows materialize — measured as CLS=0.257. */}
+                          {isShiftsLoading && group.subGroups.length === 0 &&
+                            Array.from({ length: 3 }).map((_, skelIdx) => (
+                              <tr
+                                key={`skel-${skelIdx}`}
+                                aria-hidden="true"
+                                className={cn(
+                                  'animate-pulse',
+                                  skelIdx < 2 && 'border-b border-border',
+                                )}
+                              >
+                                <td className="sticky left-0 z-10 bg-card border-r border-border px-4 py-3 align-top">
+                                  <div className="h-4 w-24 rounded bg-muted/50" />
+                                </td>
+                                {dates.map((_, dateIdx) => (
+                                  <td
+                                    key={dateIdx}
+                                    className={cn(
+                                      'px-2 py-3 align-top min-h-[100px]',
+                                      dateIdx < dates.length - 1 && 'border-r border-border',
+                                    )}
+                                  >
+                                    <div className="h-[88px] rounded-lg bg-muted/20" />
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+
                         </tbody>
                       </table>
                     </div>
