@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, startTransition } from 'react';
 import { useRosterStore } from '../state/useRosterStore';
 import { applyAdvancedFilters } from '../domain/projections/utils/filters';
 import { buildStats } from '../domain/projections/projectors/shared';
@@ -104,6 +104,12 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
 
     // 2. Setup callback
     pool.onResult = (result: WorkerResult) => {
+      // Worker results trigger a cascade of state updates that reconcile the
+      // entire grid (~1.4k cells in a week view). Mark as a transition so
+      // React can interrupt this work to handle user input — the previous
+      // INP trace showed >1.2s input delay because clicks arrived while the
+      // main thread was reconciling a fresh projection result.
+      startTransition(() => {
       // Create an O(1) lookup map for fast re-hydration
       const shiftMap = new Map(shifts.map(s => [s.id, s]));
 
@@ -182,6 +188,7 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
         estimatedCost: result.stats.estimatedCost,
         costBreakdown: result.stats.costBreakdown,
       });
+      }); // end startTransition
     };
 
     // 4. Dispatch — pin nowIso to minute granularity so identical inputs
