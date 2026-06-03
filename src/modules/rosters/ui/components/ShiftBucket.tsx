@@ -51,7 +51,7 @@ export interface ShiftBucketProps {
     accentColor?: string;
 }
 
-export const ShiftBucket: React.FC<ShiftBucketProps> = ({
+const ShiftBucketImpl: React.FC<ShiftBucketProps> = ({
     bucket,
     shifts,
     canEdit,
@@ -213,5 +213,10 @@ export const ShiftBucket: React.FC<ShiftBucketProps> = ({
         </div>
     );
 };
+
+// Memoized so a Bucket-view toggle in GroupModeView doesn't re-render every
+// ShiftBucket on cells whose own props didn't change. The parent must pass
+// stable handler refs (useCallback) for memo to actually take effect.
+export const ShiftBucket = React.memo(ShiftBucketImpl);
 
 export default ShiftBucket;

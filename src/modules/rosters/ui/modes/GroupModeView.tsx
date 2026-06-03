@@ -2118,7 +2118,11 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                         className="grid grid-cols-1 gap-1.5 min-h-[60px]"
                                       >
                                         {isBucketView ? (() => {
-                                          // Bucket View: group cellShifts into buckets and render ShiftBucket components
+                                          // Single O(n) Map lookup per cell — replaces 5 inline
+                                          // cellShifts.find() chains that were O(n²) overall and
+                                          // accounted for a meaningful slice of the Bucket-view
+                                          // toggle INP (~936ms on a 1.4k-cell grid).
+                                          const cellShiftsById = new Map(cellShifts.map(s => [s.id, s]));
                                           const bucketInputShifts = cellShifts.map(s => ({
                                             id: s.id,
                                             startTime: s.startTime,
@@ -2129,10 +2133,15 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                             isLocked: s.isLocked ?? isShiftLocked(s.rawShift.shift_date, s.rawShift.start_time, 'roster_management'),
                                           }));
                                           const buckets = groupShiftsIntoBuckets(bucketInputShifts, subGroup.name, dateKey);
+                                          const accentColor = group.color?.startsWith('#')
+                                            ? group.color
+                                            : (group.color === 'blue' ? '#3b82f6' :
+                                               group.color === 'emerald' ? '#10b981' :
+                                               group.color === 'red' ? '#ef4444' : '#6b7280');
 
                                           return buckets.map(bucket => {
                                             const bucketShiftData: BucketShiftData[] = bucket.shiftIds.map(sid => {
-                                              const sd = cellShifts.find(cs => cs.id === sid)!;
+                                              const sd = cellShiftsById.get(sid)!;
                                               return {
                                                 id: sd.id,
                                                 role: sd.role,
@@ -2153,27 +2162,21 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                                 bucket={bucket}
                                                 shifts={bucketShiftData}
                                                 canEdit={canEdit}
-                                                accentColor={
-                                                  group.color?.startsWith('#') 
-                                                    ? group.color 
-                                                    : (group.color === 'blue' ? '#3b82f6' : 
-                                                       group.color === 'emerald' ? '#10b981' : 
-                                                       group.color === 'red' ? '#ef4444' : '#6b7280')
-                                                }
+                                                accentColor={accentColor}
                                                 onEditShift={(shiftId) => {
-                                                  const sd = cellShifts.find(cs => cs.id === shiftId);
+                                                  const sd = cellShiftsById.get(shiftId);
                                                   if (sd) handleEditShift(sd, group, subGroup, date);
                                                 }}
                                                 onDeleteShift={(shiftId) => {
-                                                  const sd = cellShifts.find(cs => cs.id === shiftId);
+                                                  const sd = cellShiftsById.get(shiftId);
                                                   if (sd) handleDeleteShift(sd);
                                                 }}
                                                 onPublishShift={(shiftId) => {
-                                                  const sd = cellShifts.find(cs => cs.id === shiftId);
+                                                  const sd = cellShiftsById.get(shiftId);
                                                   if (sd) handleRequestPublish(sd);
                                                 }}
                                                 onUnpublishShift={(shiftId) => {
-                                                  const sd = cellShifts.find(cs => cs.id === shiftId);
+                                                  const sd = cellShiftsById.get(shiftId);
                                                   if (sd) handleRequestUnpublish(sd);
                                                 }}
                                                 onBulkPublish={(shiftIds) => {
