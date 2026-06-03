@@ -72,7 +72,8 @@
       "Bash(sed -n '980,1005p' optimizer-service/model_builder.py)",
       "Bash(sed -n '1018,1035p' optimizer-service/model_builder.py)",
       "Bash(sed -n '1040,1080p' optimizer-service/model_builder.py)",
-      "Bash(sed -n '1140,1175p' optimizer-service/model_builder.py)"
+      "Bash(sed -n '1140,1175p' optimizer-service/model_builder.py)",
+      "Bash(awk '/const handleShiftDrop = useCallback/,/^  \\\\\\);/' /Users/vinayakkuanr/Documents/Superman_ULTIMATE/src/modules/rosters/ui/modes/GroupModeView.tsx)"
     ]
   }
 }

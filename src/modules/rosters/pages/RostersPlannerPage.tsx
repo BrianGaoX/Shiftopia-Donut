@@ -640,10 +640,19 @@ const NewRostersPage: React.FC = () => {
   }, [projection.people]);
 
   // ── Drag-and-drop assignment ─────────────────────────────────────────
+  // shifts and employees churn on every optimistic mutation. If the DnD
+  // handlers close over them directly, their identity changes on every
+  // shift update — which re-registers the drop spec on every one of
+  // ~1.4k DroppableDateCells. Read via refs to keep the handlers stable.
+  const shiftsRef = useRef(shifts);
+  const employeesRef = useRef(employees);
+  React.useEffect(() => { shiftsRef.current = shifts; }, [shifts]);
+  React.useEffect(() => { employeesRef.current = employees; }, [employees]);
+
   // handleDndAssign: Used in People Mode (Unfilled Shift -> Employee row)
   const handleDndAssign = React.useCallback(
     async (shift: UnfilledShift, employeeId: string, dateKey: string) => {
-      const employee = employees.find(e => e.id === employeeId);
+      const employee = employeesRef.current.find(e => e.id === employeeId);
       if (!employee) return;
       setPendingDndAssign({
         shift,
@@ -652,13 +661,13 @@ const NewRostersPage: React.FC = () => {
         dateKey,
       });
     },
-    [employees],
+    [],
   );
 
   // handleDndAssignToShift: Used in Group/Roles Mode (Staff Member -> Shift Card)
   const handleDndAssignToShift = React.useCallback(
     async (shiftId: string, employeeId: string, employeeName: string) => {
-      const shift = shifts.find(s => s.id === shiftId);
+      const shift = shiftsRef.current.find(s => s.id === shiftId);
       if (!shift) return;
       setPendingDndAssign({
         shift,
@@ -667,12 +676,12 @@ const NewRostersPage: React.FC = () => {
         dateKey: shift.shift_date,
       });
     },
-    [shifts],
+    [],
   );
 
   const handleDndMove = React.useCallback(
     async (shiftId: string, targetContext: { employeeId?: string; roleId?: string; roleName?: string; shiftDate: string }) => {
-      const shift = shifts.find(s => s.id === shiftId);
+      const shift = shiftsRef.current.find(s => s.id === shiftId);
       if (!shift) return;
 
       const { employeeId, roleId, roleName, shiftDate } = targetContext;
@@ -700,7 +709,7 @@ const NewRostersPage: React.FC = () => {
 
       // Reassignment or date/role move
       if (employeeId) {
-        const targetEmployee = employees.find(e => e.id === employeeId);
+        const targetEmployee = employeesRef.current.find(e => e.id === employeeId);
         if (!targetEmployee) return;
         setPendingDndAssign({
           shift,
@@ -769,7 +778,7 @@ const NewRostersPage: React.FC = () => {
         }
       }
     },
-    [shifts, employees, updateShiftMutation, toast, queryClient],
+    [updateShiftMutation, toast, queryClient],
   );
 
   const executePendingAssignment = async (options: { ignoreWarnings: boolean }) => {

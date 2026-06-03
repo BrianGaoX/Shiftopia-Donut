@@ -206,6 +206,14 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
   className,
   disabled,
 }) => {
+  // Pre-computed per cell. react-dnd evaluates canDrop on every mousemove
+  // for every registered target — running the date parse + isSydneyPast on
+  // each call across ~1.4k cells was a big contributor to drag latency.
+  const isPastDate = React.useMemo(
+    () => isSydneyPast(parse(date, 'yyyy-MM-dd', new Date())),
+    [date],
+  );
+
   // canDrop reads isDnDModeActive imperatively — see DraggableShiftCard.
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: DND_SHIFT_TYPE,
@@ -226,7 +234,7 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
         },
         {
           isLocked: disabled,
-          isPast: isSydneyPast(parse(date, 'yyyy-MM-dd', new Date())),
+          isPast: isPastDate,
           targetDate: date,
           startTime: item.startTime,
         }
@@ -236,7 +244,7 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
       isOver: monitor.isOver(),
       canDrop: monitor.canDrop(),
     }),
-  }), [groupType, subGroupName, groupId, subGroupId, date, onDrop, disabled]);
+  }), [groupType, subGroupName, groupId, subGroupId, date, onDrop, disabled, isPastDate]);
 
   return (
     <div
@@ -630,10 +638,20 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   }, [lastShiftMove, clearLastShiftMove, queryClient, toast]);
 
   // ==================== DND DROP HANDLER ====================
+  // externalShifts churns on every optimistic mutation (including the one
+  // this very handler triggers). If we close over it directly, the callback
+  // identity changes on every shift update — which re-registers the drop
+  // spec on every one of ~1.4k DroppableCells. Read via ref to keep the
+  // handler stable across renders.
+  const externalShiftsRef = useRef(externalShifts);
+  useEffect(() => {
+    externalShiftsRef.current = externalShifts;
+  }, [externalShifts]);
+
   const handleShiftDrop = useCallback(
     async (item: DragItem, targetGroupType: TemplateGroupType | 'unassigned', targetSubGroup: string, targetDate: string, targetGroupId: string, targetSubGroupId: string) => {
       // Find the shift in our data
-      const shift = externalShifts.find(s => s.id === item.shiftId);
+      const shift = externalShiftsRef.current.find(s => s.id === item.shiftId);
       if (!shift) {
         toast({
           title: 'Error',
@@ -742,7 +760,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
         queryClient.invalidateQueries({ queryKey: shiftKeys.detail(item.shiftId) });
       }
     },
-    [externalShifts, queryClient, toast]
+    [queryClient, toast]
   );
 
   // ==================== REFS FOR CLOSURE STABILITY ====================

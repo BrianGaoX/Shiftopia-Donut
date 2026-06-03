@@ -40,6 +40,15 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
 }) => {
   const { toast } = useToast();
 
+  // Pre-compute the per-cell static portion of canDrop. react-dnd evaluates
+  // canDrop on every mouseover during a drag — running the date parse +
+  // isSydneyPast for every one of ~1.4k cells per mousemove tick was the
+  // dominant cost behind "DnD super super high latency". Cached per cell.
+  const isPastDate = React.useMemo(
+    () => isSydneyPast(parse(dateKey, 'yyyy-MM-dd', new Date())),
+    [dateKey],
+  );
+
   // canDrop reads isDnDModeActive imperatively so flipping DnD mode does NOT
   // re-render this cell or re-register its drop spec. With 1.4k cells in a
   // week view, that was the main source of the ~800ms INP on the DnD toggle.
@@ -60,7 +69,7 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
             is_cancelled: item.is_cancelled || false,
           },
           {
-            isPast: isSydneyPast(parse(dateKey, 'yyyy-MM-dd', new Date())),
+            isPast: isPastDate,
           }
         );
       },
@@ -92,7 +101,7 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
         canDrop: monitor.canDrop(),
       }),
     }),
-    [employeeId, dateKey, onAssign, onMove],
+    [employeeId, dateKey, onAssign, onMove, isPastDate],
   );
 
   return (
