@@ -1777,16 +1777,16 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   };
 
   // ==================== LOADING STATE ====================
-  if (isShiftsLoading) {
-    return (
-      <div className="flex items-center justify-center h-full bg-background">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-          <p className="text-muted-foreground">Loading shifts...</p>
-        </div>
-      </div>
-    );
-  }
+  // Previously: full early-return to a centered spinner while shifts loaded.
+  // That blocked the group headers from rendering, so LCP fired on whatever
+  // text paint happened first — measured as 6.32s in a recent trace because
+  // the LCP element (the group h3) couldn't render until the query finished.
+  //
+  // visualGroups always returns the three default groups (Convention Centre,
+  // Exhibition Centre, Theatre) even with empty shifts via
+  // buildVisualGroupsFromShifts([]) — so rendering the headers immediately
+  // gives the browser an LCP candidate within the first React commit.
+  // The parent page already overlays a "Loading shifts…" indicator on top.
 
   // ==================== MAIN RENDER ====================
   return (

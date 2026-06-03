@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/modules/core/ui/primitives/button';
 import {
@@ -46,9 +46,22 @@ import { RosterFilterPopover } from './RosterFilterPopover';
 import { useRosterUI, RosterMode } from '@/modules/rosters/contexts/RosterUIContext';
 import { ToggleGroup, ToggleGroupItem } from '@/modules/core/ui/primitives/toggle-group';
 import { Separator } from '@/modules/core/ui/primitives/separator';
-import { ApplyTemplateDialog } from '@/modules/rosters/ui/dialogs/ApplyTemplateDialog';
-import { PlanRosterPeriodDialog } from '@/modules/rosters/ui/dialogs/PlanRosterPeriodDialog';
-import SnapFromRosterDialog from '@/modules/rosters/ui/dialogs/SnapFromRosterDialog';
+// Lazy: each of these dialogs ships its own queries (templates, history,
+// rostersByDateRange) plus framer-motion. When eagerly imported they were
+// firing those queries on every roster page load even with isOpen=false.
+const ApplyTemplateDialog = lazy(() =>
+  import('@/modules/rosters/ui/dialogs/ApplyTemplateDialog').then((m) => ({
+    default: m.ApplyTemplateDialog,
+  })),
+);
+const PlanRosterPeriodDialog = lazy(() =>
+  import('@/modules/rosters/ui/dialogs/PlanRosterPeriodDialog').then((m) => ({
+    default: m.PlanRosterPeriodDialog,
+  })),
+);
+const SnapFromRosterDialog = lazy(() =>
+  import('@/modules/rosters/ui/dialogs/SnapFromRosterDialog'),
+);
 import { useRosterStructure } from '../../state/useRosterStructure';
 import { useRosterStore } from '@/modules/rosters/state/useRosterStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -524,42 +537,50 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
         </div>
       </div>
 
-      {/* Plan Roster Period Dialog (replaces old per-sub-dept Activate dialog) */}
-      {selectedOrganizationId && selectedDepartmentId && (
-        <PlanRosterPeriodDialog
-          open={isPlanPeriodDialogOpen}
-          onOpenChange={setIsPlanPeriodDialogOpen}
-          organizationId={selectedOrganizationId}
-          departmentId={selectedDepartmentId}
-          preSelectedSubDeptId={selectedSubDepartmentId}
-          selectedDate={selectedDate}
-        />
+      {/* Plan Roster Period Dialog — code-split + open-gated to defer
+          query fan-out (planning periods, rosters) until first user open. */}
+      {isPlanPeriodDialogOpen && selectedOrganizationId && selectedDepartmentId && (
+        <Suspense fallback={null}>
+          <PlanRosterPeriodDialog
+            open={isPlanPeriodDialogOpen}
+            onOpenChange={setIsPlanPeriodDialogOpen}
+            organizationId={selectedOrganizationId}
+            departmentId={selectedDepartmentId}
+            preSelectedSubDeptId={selectedSubDepartmentId}
+            selectedDate={selectedDate}
+          />
+        </Suspense>
       )}
 
-      {/* Apply Template Dialog */}
-      {selectedOrganizationId && selectedDepartmentId && (
-        <ApplyTemplateDialog
-          isOpen={isApplyTemplateDialogOpen}
-          onOpenChange={setIsApplyTemplateDialogOpen}
-          organizationId={selectedOrganizationId ?? null}
-          departmentId={selectedDepartmentId ?? null}
-          subDepartmentId={selectedSubDepartmentId ?? null}
-          selectedDate={selectedDate}
-          appliedTemplateIds={currentRosterStructure?.appliedTemplateIds || []}
-          rosterId={currentRosterStructure?.rosterId ?? null}
-        />
+      {/* Apply Template Dialog — was eagerly mounting useTemplates,
+          useTemplateHistory, useRostersByDateRange on every roster page load. */}
+      {isApplyTemplateDialogOpen && selectedOrganizationId && selectedDepartmentId && (
+        <Suspense fallback={null}>
+          <ApplyTemplateDialog
+            isOpen={isApplyTemplateDialogOpen}
+            onOpenChange={setIsApplyTemplateDialogOpen}
+            organizationId={selectedOrganizationId ?? null}
+            departmentId={selectedDepartmentId ?? null}
+            subDepartmentId={selectedSubDepartmentId ?? null}
+            selectedDate={selectedDate}
+            appliedTemplateIds={currentRosterStructure?.appliedTemplateIds || []}
+            rosterId={currentRosterStructure?.rosterId ?? null}
+          />
+        </Suspense>
       )}
 
       {/* Snap — Capture Template from Roster */}
-      {selectedSubDepartmentId && (
-        <SnapFromRosterDialog
-          open={isSnapDialogOpen}
-          onOpenChange={setIsSnapDialogOpen}
-          subDepartmentId={selectedSubDepartmentId}
-          subDepartmentName={subDepartmentName}
-          defaultStartDate={format(selectedDate, 'yyyy-MM-dd')}
-          defaultEndDate={format(addDays(selectedDate, 6), 'yyyy-MM-dd')}
-        />
+      {isSnapDialogOpen && selectedSubDepartmentId && (
+        <Suspense fallback={null}>
+          <SnapFromRosterDialog
+            open={isSnapDialogOpen}
+            onOpenChange={setIsSnapDialogOpen}
+            subDepartmentId={selectedSubDepartmentId}
+            subDepartmentName={subDepartmentName}
+            defaultStartDate={format(selectedDate, 'yyyy-MM-dd')}
+            defaultEndDate={format(addDays(selectedDate, 6), 'yyyy-MM-dd')}
+          />
+        </Suspense>
       )}
 
     </div>
