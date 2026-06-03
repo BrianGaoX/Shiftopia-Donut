@@ -188,7 +188,10 @@ interface ShiftRowMenuProps {
 
 const ShiftRowMenu = React.memo<ShiftRowMenuProps>(({ shift, onEdit, onClone, onUnpublish }) => {
   return (
-    <DropdownMenu>
+    // modal={false}: skip Radix focus trap + body lock. A 3-item menu over a
+    // shift card doesn't need either; the trap traversal showed up as the
+    // FocusOnMount span in the INP trace.
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           className="h-4 w-4 flex items-center justify-center hover:bg-muted dark:hover:bg-white/20 rounded transition-colors"

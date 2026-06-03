@@ -210,7 +210,10 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
     showStatusIcons,
     detailedCost,
 }) => {
-    const colors = GROUP_COLORS[groupColor] || GROUP_COLORS.default_yellow;
+    const colors = useMemo(
+        () => GROUP_COLORS[groupColor] || GROUP_COLORS.default_yellow,
+        [groupColor],
+    );
     const employeeName = shift.assigned_employee_id ? (shift as any).assigned_profiles ? `${(shift as any).assigned_profiles.first_name} ${(shift as any).assigned_profiles.last_name}` : 'Assigned' : null;
     const roleName = shift.roles?.name || 'No Role';
 
@@ -265,7 +268,9 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
             className={cn(
                 'relative group/card cursor-pointer rounded-lg overflow-hidden bg-card',
                 'border transition-[border-color,box-shadow,transform,background-color] duration-300',
-                'will-change-[transform,box-shadow]',
+                // CSS containment: scope style + paint to this subtree so popovers
+                // opening elsewhere in the grid don't force a global recalc.
+                '[contain:layout_paint_style]',
                 onClick && (!isFullyLocked || isSelected) && 'cursor-pointer hover:shadow-md',
                 isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background border-primary/50 bg-primary/5 dark:bg-primary/20',
                 isDragging && 'opacity-50 scale-95',
@@ -345,13 +350,16 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
 
                         {showStatusIcons && statusIcons.length > 0 && (
                             <div className="flex items-center gap-1 ml-1">
+                                {/* Native title — Radix Tooltip per status icon costs
+                                    ~5k extra portal wirings across a 1.4k-card grid. */}
                                 {statusIcons.map((si, i) => (
-                                    <Tooltip key={i}>
-                                        <TooltipTrigger asChild>
-                                            <si.icon className={cn("h-3 w-3", si.color)} />
-                                        </TooltipTrigger>
-                                        <TooltipContent className="text-[10px] py-1 px-2">{si.tooltip}</TooltipContent>
-                                    </Tooltip>
+                                    <si.icon
+                                        key={i}
+                                        className={cn("h-3 w-3", si.color)}
+                                        aria-label={si.tooltip}
+                                    >
+                                        <title>{si.tooltip}</title>
+                                    </si.icon>
                                 ))}
                             </div>
                         )}
@@ -423,7 +431,10 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
     showStatusIcons,
     detailedCost,
 }) => {
-    const colors = GROUP_COLORS[groupColor] || GROUP_COLORS.default_yellow;
+    const colors = useMemo(
+        () => GROUP_COLORS[groupColor] || GROUP_COLORS.default_yellow,
+        [groupColor],
+    );
     const employeeName = shift.assigned_employee_id ? (shift as any).assigned_profiles ? `${(shift as any).assigned_profiles.first_name} ${(shift as any).assigned_profiles.last_name}` : 'Assigned' : null;
     const roleName = shift.roles?.name || 'No Role';
     const hasComplianceIssue = compliance && compliance.status !== 'compliant';
@@ -481,7 +492,9 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
             className={cn(
                 'relative group/card cursor-pointer rounded-xl overflow-hidden bg-card',
                 'border transition-[border-color,box-shadow,transform,background-color] duration-300',
-                'will-change-[transform,box-shadow]',
+                // CSS containment: scope style + paint so opening a popover/dropdown
+                // in a sibling card doesn't trigger a grid-wide recalc.
+                '[contain:layout_paint_style]',
                 onClick && !isFullyLocked && 'cursor-pointer hover:shadow-lg',
                 isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-background border-primary/50 bg-primary/5 dark:bg-primary/20',
                 isDragging && 'opacity-50 scale-95',
@@ -541,13 +554,15 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
 
                         {showStatusIcons && statusIcons.length > 0 && (
                             <div className="flex items-center gap-1.5 ml-1">
+                                {/* Native title — see CompactCard comment */}
                                 {statusIcons.map((si, i) => (
-                                    <Tooltip key={i}>
-                                        <TooltipTrigger asChild>
-                                            <si.icon className={cn("h-3.5 w-3.5", si.color)} />
-                                        </TooltipTrigger>
-                                        <TooltipContent className="text-[11px] py-1 px-2">{si.tooltip}</TooltipContent>
-                                    </Tooltip>
+                                    <si.icon
+                                        key={i}
+                                        className={cn("h-3.5 w-3.5", si.color)}
+                                        aria-label={si.tooltip}
+                                    >
+                                        <title>{si.tooltip}</title>
+                                    </si.icon>
                                 ))}
                             </div>
                         )}
