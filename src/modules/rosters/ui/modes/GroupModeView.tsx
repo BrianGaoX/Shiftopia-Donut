@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, startTransition } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { supabase } from '@/platform/realtime/client';
 import { getSydneyNow, isSydneyPast, isSydneyStarted } from '@/modules/core/lib/date.utils';
 import {
@@ -34,9 +35,9 @@ import { cn } from '@/modules/core/lib/utils';
 import { format, addDays, startOfWeek, isToday, isBefore, startOfDay, parseISO, isSameDay, differenceInHours, differenceInMinutes, parse } from 'date-fns';
 import { useDrag, useDrop } from 'react-dnd';
 import {
-  EnhancedAddShiftModal,
   ShiftContext,
 } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
+import { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal/Lazy';
 
 import { BulkActionsToolbar } from '@/modules/rosters/ui/components/BulkActionsToolbar';
 import { AddSubGroupDialog } from '@/modules/rosters/ui/dialogs/AddSubGroupDialog';
@@ -543,6 +544,83 @@ const CoverageSignalBar: React.FC<CoverageSignalBarProps> = ({ pct, accent, segm
 };
 
 /* ============================================================
+   VIRTUALIZED SUBGROUP BODY
+   ------------------------------------------------------------
+   Each canonical group renders one of these inside its <table>.
+   Per-group instance of `useVirtualizer` keeps state isolated, and
+   `getScrollElement` returns the page-level Radix ScrollArea viewport
+   so all groups share the same scroll context.
+
+   Rows are <tr>s; the virtualizer assigns each one an absolute
+   `transform: translateY(...)` and uses `measureElement` to capture
+   the actual rendered height (subgroup rows vary with shift count).
+   The container <tbody> reserves `totalSize` of vertical space so the
+   surrounding table layout stays correct.
+   ============================================================ */
+
+// Estimated subgroup row height (px). `measureElement` corrects drift.
+const SUBGROUP_ROW_HEIGHT = 110;
+const SUBGROUP_OVERSCAN = 4;
+
+interface VirtualizedSubGroupBodyProps {
+  subGroups: VisualSubGroup[];
+  getScrollElement: () => HTMLElement | null;
+  /** Render the <td>...</td> contents for the given subgroup row. */
+  renderRow: (subGroup: VisualSubGroup, subIdx: number) => React.ReactNode;
+  /** Optional className applied per row (e.g. for alternating borders). */
+  getRowClassName?: (subGroup: VisualSubGroup, subIdx: number) => string;
+  // Skeleton rows are appended as a static slot below the virtualized
+  // rows when populated subgroups don't exist yet — they reserve space
+  // during the loading phase and must NOT be virtualized.
+  skeletonSlot?: React.ReactNode;
+}
+
+const VirtualizedSubGroupBody: React.FC<VirtualizedSubGroupBodyProps> = ({
+  subGroups,
+  getScrollElement,
+  renderRow,
+  getRowClassName,
+  skeletonSlot,
+}) => {
+  const virtualizer = useVirtualizer({
+    count: subGroups.length,
+    getScrollElement,
+    estimateSize: () => SUBGROUP_ROW_HEIGHT,
+    overscan: SUBGROUP_OVERSCAN,
+    measureElement: (el) => el?.getBoundingClientRect().height ?? SUBGROUP_ROW_HEIGHT,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+
+  return (
+    <tbody style={{ height: totalSize, position: 'relative' }}>
+      {virtualItems.map((vi) => {
+        const subGroup = subGroups[vi.index];
+        if (!subGroup) return null;
+        return (
+          <tr
+            key={subGroup.id}
+            ref={virtualizer.measureElement}
+            data-index={vi.index}
+            className={getRowClassName?.(subGroup, vi.index)}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${vi.start}px)`,
+            }}
+          >
+            {renderRow(subGroup, vi.index)}
+          </tr>
+        );
+      })}
+      {skeletonSlot}
+    </tbody>
+  );
+};
+
+/* ============================================================
    MAIN COMPONENT
    ============================================================ */
 export const GroupModeView: React.FC<GroupModeViewProps> = ({
@@ -636,6 +714,27 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
       });
     }
   }, [lastShiftMove, clearLastShiftMove, queryClient, toast]);
+
+  // ==================== ROW VIRTUALIZATION SETUP ====================
+  // Radix ScrollArea renders an internal Viewport element; that — not the
+  // Root — is the actual scroll container we need to feed `useVirtualizer`.
+  // We grab it once on mount via the documented data-attribute selector and
+  // memoize the getter so each per-group virtualizer references the same
+  // element. Returning a function (rather than the ref directly) lets the
+  // virtualizer poll lazily, which copes with the brief window before the
+  // viewport is attached.
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const scrollViewportRef = useRef<HTMLElement | null>(null);
+  const getSubGroupScrollElement = useCallback(() => {
+    if (scrollViewportRef.current) return scrollViewportRef.current;
+    const root = scrollAreaRef.current;
+    if (!root) return null;
+    const viewport = root.querySelector<HTMLElement>(
+      '[data-radix-scroll-area-viewport]',
+    );
+    if (viewport) scrollViewportRef.current = viewport;
+    return viewport;
+  }, []);
 
   // ==================== DND DROP HANDLER ====================
   // externalShifts churns on every optimistic mutation (including the one
@@ -1328,10 +1427,12 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     }
 
     const context = buildShiftContext(group, subGroup, date, 'grid', specificRosterId);
-    setShiftContext(context);
-    setIsEditMode(false);
-    setEditingShift(null);
-    setIsAddShiftOpen(true);
+    startTransition(() => {
+      setShiftContext(context);
+      setIsEditMode(false);
+      setEditingShift(null);
+      setIsAddShiftOpen(true);
+    });
   };
 
   const handleEditShift = (
@@ -1371,10 +1472,12 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     context.roleId = shift.rawShift.role_id || undefined;
     context.employeeId = shift.rawShift.assigned_employee_id || undefined;
 
-    setShiftContext(context);
-    setIsEditMode(true);
-    setEditingShift(shift.rawShift); // Pass the raw shift for ID reference
-    setIsAddShiftOpen(true);
+    startTransition(() => {
+      setShiftContext(context);
+      setIsEditMode(true);
+      setEditingShift(shift.rawShift); // Pass the raw shift for ID reference
+      setIsAddShiftOpen(true);
+    });
   };
 
   const handleDeleteShift = (shift: ShiftDisplay) => {
@@ -1634,7 +1737,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     const lifecycleStatus = shift.isPublished ? 'published' : shift.isDraft ? 'draft' : 'draft';
 
     const menu = (
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             className="h-4 w-4 flex items-center justify-center hover:bg-muted dark:hover:bg-white/20 rounded transition-colors"
@@ -1850,7 +1953,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
         {/* Main Content (week / 3-day / month grid) */}
         {viewType !== 'day' && (
-        <ScrollArea className="flex-1">
+        <ScrollArea ref={scrollAreaRef} className="flex-1">
           {/* Shift Card Legend (collapsible) */}
           {showLegend && (
             <div className="px-4 pt-4">
@@ -2025,15 +2128,44 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                             })}
                           </tr>
                         </thead>
-                        <tbody>
-                          {group.subGroups.map((subGroup, subIdx) => (
-                            <tr
-                              key={subGroup.id}
-                              className={cn(
-                                'transition-colors hover:bg-accent/20',
-                                subIdx < group.subGroups.length - 1 && 'border-b border-border'
-                              )}
-                            >
+                        <VirtualizedSubGroupBody
+                          subGroups={group.subGroups}
+                          getScrollElement={getSubGroupScrollElement}
+                          getRowClassName={(_subGroup, subIdx) => cn(
+                            'transition-colors hover:bg-accent/20',
+                            subIdx < group.subGroups.length - 1 && 'border-b border-border',
+                          )}
+                          skeletonSlot={
+                            isShiftsLoading && group.subGroups.length === 0
+                              ? Array.from({ length: 3 }).map((_, skelIdx) => (
+                                  <tr
+                                    key={`skel-${skelIdx}`}
+                                    aria-hidden="true"
+                                    className={cn(
+                                      'animate-pulse',
+                                      skelIdx < 2 && 'border-b border-border',
+                                    )}
+                                  >
+                                    <td className="sticky left-0 z-10 bg-card border-r border-border px-4 py-3 align-top">
+                                      <div className="h-4 w-24 rounded bg-muted/50" />
+                                    </td>
+                                    {dates.map((_, dateIdx) => (
+                                      <td
+                                        key={dateIdx}
+                                        className={cn(
+                                          'px-2 py-3 align-top min-h-[100px]',
+                                          dateIdx < dates.length - 1 && 'border-r border-border',
+                                        )}
+                                      >
+                                        <div className="h-[88px] rounded-lg bg-muted/20" />
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))
+                              : null
+                          }
+                          renderRow={(subGroup) => (
+                            <>
                               <td className="sticky left-0 z-10 backdrop-blur-sm border-r border-border px-4 py-3 align-top bg-card group-hover:bg-accent/30 transition-colors group">
                                 <div className="flex items-center justify-between gap-2">
                                   <span className="text-sm font-medium text-foreground/80 group-hover:text-foreground transition-colors overflow-hidden text-ellipsis whitespace-nowrap">
@@ -2317,42 +2449,9 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                   </td>
                                 );
                               })}
-                            </tr>
-                          ))}
-
-                          {/* CLS guard: while shifts are loading we render
-                              skeleton rows that reserve the eventual height
-                              of populated subgroups. Without this, the page
-                              paints empty group containers first, then grows
-                              as rows materialize — measured as CLS=0.257. */}
-                          {isShiftsLoading && group.subGroups.length === 0 &&
-                            Array.from({ length: 3 }).map((_, skelIdx) => (
-                              <tr
-                                key={`skel-${skelIdx}`}
-                                aria-hidden="true"
-                                className={cn(
-                                  'animate-pulse',
-                                  skelIdx < 2 && 'border-b border-border',
-                                )}
-                              >
-                                <td className="sticky left-0 z-10 bg-card border-r border-border px-4 py-3 align-top">
-                                  <div className="h-4 w-24 rounded bg-muted/50" />
-                                </td>
-                                {dates.map((_, dateIdx) => (
-                                  <td
-                                    key={dateIdx}
-                                    className={cn(
-                                      'px-2 py-3 align-top min-h-[100px]',
-                                      dateIdx < dates.length - 1 && 'border-r border-border',
-                                    )}
-                                  >
-                                    <div className="h-[88px] rounded-lg bg-muted/20" />
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-
-                        </tbody>
+                            </>
+                          )}
+                        />
                       </table>
                     </div>
                   )

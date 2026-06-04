@@ -691,7 +691,7 @@ const DayTimelineView: React.FC<DayTimelineViewProps> = ({
                                 >
                                   <Plus className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
                                 </button>
-                                <DropdownMenu>
+                                <DropdownMenu modal={false}>
                                   <DropdownMenuTrigger asChild>
                                     <button
                                       className="p-0.5 rounded hover:bg-white/10 transition-colors"
@@ -1102,7 +1102,7 @@ const ShiftCard: React.FC<ShiftCardProps> = ({
               )}
 
               {canEdit && !isBulkMode && (
-                <DropdownMenu>
+                <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
                     <button
                       data-menu-trigger="true"

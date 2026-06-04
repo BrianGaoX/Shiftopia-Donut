@@ -28,10 +28,72 @@ interface RequestBody {
 }
 
 const SHIFT_SELECT = `
-  *,
+  id,
+  organization_id,
+  department_id,
+  sub_department_id,
+  created_at,
+  updated_at,
+  version,
+  roster_id,
+  roster_date,
+  shift_date,
+  template_id,
+  template_group,
+  template_sub_group,
+  is_from_template,
+  template_instance_id,
+  group_type,
+  sub_group_name,
+  display_order,
+  shift_group_id,
+  shift_subgroup_id,
+  role_id,
+  role_level,
+  remuneration_level_id,
+  remuneration_rate,
+  actual_hourly_rate,
+  currency,
+  start_time,
+  end_time,
+  is_overnight,
+  scheduled_length_minutes,
+  break_minutes,
+  paid_break_minutes,
+  unpaid_break_minutes,
+  net_length_minutes,
+  total_hours,
+  timezone,
+  start_at,
+  end_at,
+  assigned_employee_id,
+  assigned_at,
+  lifecycle_status,
+  assignment_status,
   assignment_outcome,
+  fulfillment_status,
+  is_draft,
+  is_cancelled,
+  is_on_bidding,
+  is_published,
+  is_locked,
+  bidding_status,
+  bidding_priority_text,
+  trade_requested_at,
+  trading_status,
   attendance_status,
   offer_expires_at,
+  event_ids,
+  tags,
+  required_skills,
+  required_licenses,
+  notes,
+  is_training,
+  published_at,
+  cancelled_at,
+  deleted_at,
+  last_modified_by,
+  target_employment_type,
   organizations(id, name),
   departments(id, name),
   sub_departments(id, name),
@@ -41,6 +103,37 @@ const SHIFT_SELECT = `
   roster_subgroup:roster_subgroups(name, roster_group:roster_groups(name)),
   timesheets(status)
 `;
+
+async function fetchWithPagination(baseQuery: any): Promise<any[]> {
+  const PAGE_SIZE = 1000;
+  
+  const { data: firstPage, count, error } = await baseQuery
+    .range(0, PAGE_SIZE - 1)
+    .count('exact');
+
+  if (error) throw error;
+  if (!firstPage || firstPage.length === 0) return [];
+  
+  const totalCount = count || firstPage.length;
+  let allData = [...firstPage];
+
+  if (totalCount > PAGE_SIZE) {
+    const promises = [];
+    for (let offset = PAGE_SIZE; offset < totalCount; offset += PAGE_SIZE) {
+      promises.push(
+        baseQuery.range(offset, offset + PAGE_SIZE - 1)
+      );
+    }
+    
+    const results = await Promise.all(promises);
+    for (const res of results) {
+      if (res.error) throw res.error;
+      if (res.data) allData = allData.concat(res.data);
+    }
+  }
+
+  return allData;
+}
 
 async function fetchShifts(
   supa: SupabaseClient,
@@ -61,13 +154,17 @@ async function fetchShifts(
   if (deptIds.length) q = q.in('department_id', deptIds);
   if (subDeptIds.length) q = q.in('sub_department_id', subDeptIds);
 
-  const { data, error } = await q
+  const queryWithOrder = q
     .order('shift_date')
     .order('display_order')
     .order('start_time');
 
-  if (error) throw new Error(`shifts: ${error.message}`);
-  return data ?? [];
+  try {
+    const data = await fetchWithPagination(queryWithOrder);
+    return data;
+  } catch (err: any) {
+    throw new Error(`shifts: ${err.message}`);
+  }
 }
 
 async function fetchEmployees(

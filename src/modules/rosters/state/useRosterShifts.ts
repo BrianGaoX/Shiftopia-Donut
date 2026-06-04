@@ -52,8 +52,16 @@ export function rollbackLists(queryClient: ReturnType<typeof useQueryClient>, sn
 export function patchLists(
   queryClient: ReturnType<typeof useQueryClient>,
   updater: (old: Shift[]) => Shift[],
+  /** Optional predicate to scope the update to specific cached queries.
+   *  Without this, the updater runs against EVERY list-type query in the
+   *  cache — e.g. 12 cached weeks × 5k shifts = 60k shift objects. */
+  predicate?: (query: { queryKey: readonly unknown[] }) => boolean,
 ) {
-  queryClient.setQueriesData<Shift[]>({ queryKey: shiftKeys.lists }, (old) =>
+  const filters: { queryKey: readonly unknown[]; predicate?: (q: any) => boolean } = {
+    queryKey: shiftKeys.lists,
+  };
+  if (predicate) filters.predicate = predicate;
+  queryClient.setQueriesData<Shift[]>(filters, (old) =>
     old && Array.isArray(old) ? updater(old) : old,
   );
 }
@@ -70,6 +78,7 @@ export function useShiftsByDate(
     queryFn: () => shiftsQueries.getShiftsForDate(organizationId!, date!, filters),
     enabled: !!organizationId && !!date,
     staleTime: 30_000,
+    gcTime: 2 * 60_000,   // F12: 2 min instead of global 10 min — shift lists are large
     refetchOnWindowFocus: true,
   });
 }
@@ -85,6 +94,7 @@ export function useShiftsByDateRange(
     queryFn: () => shiftsQueries.getShiftsForDateRange(organizationId!, startDate!, endDate!, filters),
     enabled: !!organizationId && !!startDate && !!endDate,
     staleTime: 30_000,
+    gcTime: 2 * 60_000,   // F12: 2 min instead of global 10 min — shift lists are large
     refetchOnWindowFocus: true,
   });
 }
@@ -327,7 +337,7 @@ export function useCreateShift() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: rosterKeys.all });
     },
   });
@@ -394,7 +404,10 @@ export function useUpdateShift() {
     },
 
     onSettled: (_data, _err, variables) => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      // F17: Mark stale but don't trigger immediate refetch — onSuccess already
+      // patched the cache with server-confirmed data. The next window-focus or
+      // navigation will pick up a fresh copy.
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: shiftKeys.detail(variables.shiftId) });
     },
   });
@@ -426,8 +439,10 @@ export function useDeleteShift() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
-      queryClient.invalidateQueries({ queryKey: rosterKeys.all });
+      // F17: Mark stale but don't refetch — the optimistic delete already
+      // removed the shift from cache. A refetch would just confirm it's gone.
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: rosterKeys.all, refetchType: 'none' });
     },
   });
 }
@@ -460,7 +475,7 @@ export function useBulkAssignShifts() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
     },
   });
 }
@@ -492,7 +507,7 @@ export function useBulkUnassignShifts() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
     },
   });
 }
@@ -522,7 +537,7 @@ export function usePublishShift() {
     },
 
     onSettled: (_data, _err, shiftId) => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: shiftKeys.detail(shiftId) });
     },
   });
@@ -563,7 +578,7 @@ export function useUnpublishShift() {
     },
 
     onSettled: (_data, _err, { shiftId }) => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: shiftKeys.detail(shiftId) });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offers'] });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offerCount'] });
@@ -629,7 +644,7 @@ export function useBulkUnpublishShifts() {
     },
 
     onSettled: (_data, _err, shiftIds) => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       shiftIds.forEach(id => queryClient.invalidateQueries({ queryKey: shiftKeys.detail(id) }));
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offers'] });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offerCount'] });
@@ -687,7 +702,7 @@ export function useBulkPublishShifts() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: rosterKeys.all });
     },
   });
@@ -724,7 +739,7 @@ export function useBulkDeleteShifts() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: rosterKeys.all });
     },
   });
@@ -779,7 +794,7 @@ export function useBulkUpdateShiftTimes() {
     },
 
     onSettled: (_data, _err, { shiftIds }) => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       shiftIds.forEach(id => queryClient.invalidateQueries({ queryKey: shiftKeys.detail(id) }));
     },
   });
@@ -830,7 +845,7 @@ export function useDropShift() {
 
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: rosterKeys.all });
       // Invalidate employee bids so stale "Accepted — Assigned to You" entries disappear
       queryClient.invalidateQueries({ queryKey: ['myBids'] });
@@ -849,7 +864,7 @@ export function useExpireOffer() {
   return useMutation({
     mutationFn: (shiftId: string) => shiftsCommands.expireOfferNow(shiftId),
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offers'] });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offerCount'] });
 
@@ -879,7 +894,7 @@ export function useAcceptOffer() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offers'] });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offerCount'] });
     },
@@ -916,7 +931,7 @@ export function useDeclineOffer() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offers'] });
       queryClient.invalidateQueries({ queryKey: ['shifts', 'offerCount'] });
     },
@@ -951,7 +966,7 @@ export function useCancelShift() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
     },
   });
 }
@@ -980,7 +995,7 @@ export function useRequestTrade() {
     },
 
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
     },
   });
 }
@@ -1029,6 +1044,7 @@ export function useComplianceValidation() {
 export function useShiftDeltaSync(params: {
   orgId: string | null;
   deptIds?: string[];
+  subDeptIds?: string[];
   startDate?: string | null;
   endDate?: string | null;
 }) {
@@ -1104,11 +1120,25 @@ export function useShiftDeltaSync(params: {
   useEffect(() => {
     if (!params.orgId) return;
 
+    // F13: Granular Realtime Scoping
+    // Fall back from most specific to least specific equality filter.
+    // Supabase postgres_changes only supports ONE equality filter per subscription.
+    let filter = `organization_id=eq.${params.orgId}`;
+    let channelSuffix = params.orgId;
+
+    if (params.subDeptIds && params.subDeptIds.length === 1) {
+      filter = `sub_department_id=eq.${params.subDeptIds[0]}`;
+      channelSuffix = params.subDeptIds[0];
+    } else if (params.deptIds && params.deptIds.length === 1) {
+      filter = `department_id=eq.${params.deptIds[0]}`;
+      channelSuffix = params.deptIds[0];
+    }
+
     const channel = supabase
-      .channel(`shift-delta-${params.orgId}`)
+      .channel(`shift-delta-${channelSuffix}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'shifts', filter: `organization_id=eq.${params.orgId}` },
+        { event: '*', schema: 'public', table: 'shifts', filter },
         () => {
           if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
           debounceTimerRef.current = setTimeout(() => { void applyDelta(); }, 300);
@@ -1151,7 +1181,7 @@ export function useRosterShifts(
 
   /** Hard-invalidate all shift list queries (use sparingly). */
   const invalidateAll = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
+    queryClient.invalidateQueries({ queryKey: shiftKeys.lists, refetchType: 'none' });
     queryClient.invalidateQueries({ queryKey: rosterKeys.all });
   }, [queryClient]);
 

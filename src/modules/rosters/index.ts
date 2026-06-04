@@ -49,4 +49,4 @@ export { default as MyRosterPage } from './pages/MyRosterPage';
 
 // UI Components
 export { default as RosterGroup } from './ui/components/RosterGroup';
-export { default as EnhancedAddShiftModal } from './ui/dialogs/EnhancedAddShiftModal';
+export { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from './ui/dialogs/EnhancedAddShiftModal/Lazy';

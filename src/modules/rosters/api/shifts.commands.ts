@@ -488,25 +488,29 @@ export const shiftsCommands = {
         const publishedIds: string[] = [];
         const dbFailed: Array<{ id: string; reason: string }> = [];
 
-        // Normal path — per-shift sm_publish_shift (same proven path as single publish)
+        // Normal path — bulk publish via RPC
         if (normalIds.length > 0) {
-            const perShiftResults = await processInChunks(
-                normalIds,
-                async (id) => {
-                    const result = await callAuthenticatedRpc(
-                        'sm_publish_shift',
-                        (userId) => ({ p_shift_id: id, p_user_id: userId }),
-                        PublishShiftResponseSchema,
-                    );
-                    if (!result.success) {
-                        throw new Error(result.error ?? 'Publish failed');
+            try {
+                const result = await callAuthenticatedRpc(
+                    'sm_bulk_publish_shifts',
+                    (userId) => ({ p_shift_ids: normalIds, p_actor_id: userId }),
+                    BulkPublishResponseSchema,
+                );
+
+                if (result.success !== false) {
+                    const errorMap = new Map((result.errors || []).map((e: any) => [e.shift_id, e.reason]));
+                    for (const id of normalIds) {
+                        if (errorMap.has(id)) {
+                            dbFailed.push({ id, reason: errorMap.get(id)! });
+                        } else {
+                            publishedIds.push(id);
+                        }
                     }
-                    return id;
-                },
-            );
-            for (const r of perShiftResults) {
-                if (r.ok) publishedIds.push(r.id);
-                else dbFailed.push({ id: r.id, reason: (r as any).error });
+                } else {
+                    normalIds.forEach(id => dbFailed.push({ id, reason: result.message || 'Bulk publish failed' }));
+                }
+            } catch (e: any) {
+                normalIds.forEach(id => dbFailed.push({ id, reason: e.message }));
             }
         }
 
@@ -659,27 +663,28 @@ export const shiftsCommands = {
     },
 
     /**
-     * Per-item bulk delete using processInChunks.
-     * Returns structured { deletedIds, failed } — caller knows EXACTLY which shifted deleted.
-     * Replaces the coarse bulk RPC (which only returned a count) for bulk mode UI.
+     * Per-item bulk delete mapped to sm_bulk_delete_shifts RPC to avoid 429 Too Many Requests.
+     * Replaces the coarse map/chunk logic.
      */
     async bulkDeleteShiftsPerItem(shiftIds: string[]): Promise<BulkDeletePartialResult> {
         if (!shiftIds || shiftIds.length === 0) return { deletedIds: [], failed: [] };
 
-        const results = await processInChunks(shiftIds, async (id) => {
-            await this.deleteShift(id);
-            return id;
-        });
+        try {
+            const result = await callAuthenticatedRpc(
+                'sm_bulk_delete_shifts',
+                (userId) => ({ p_shift_ids: shiftIds, p_deleted_by: userId, p_reason: 'Bulk manual deletion' }),
+                BulkDeleteResponseSchema,
+            );
 
-        const deletedIds: string[] = [];
-        const failed: Array<{ id: string; reason: string }> = [];
-
-        for (const r of results) {
-            if (r.ok) deletedIds.push(r.id);
-            else failed.push({ id: r.id, reason: (r as any).error });
+            if (result.success !== false) {
+                // If RPC succeeds but we don't have per-item errors in schema, assume all passed
+                return { deletedIds: shiftIds, failed: [] };
+            } else {
+                return { deletedIds: [], failed: shiftIds.map(id => ({ id, reason: result.error || 'Bulk delete failed' })) };
+            }
+        } catch (e: any) {
+            return { deletedIds: [], failed: shiftIds.map(id => ({ id, reason: e.message })) };
         }
-
-        return { deletedIds, failed };
     },
 
     /**

@@ -253,6 +253,7 @@ const NewRostersPage: React.FC = () => {
   useShiftDeltaSync({
     orgId: selectedOrganizationId,
     deptIds: selectedDepartmentIds.length > 0 ? selectedDepartmentIds : undefined,
+    subDeptIds: selectedSubDepartmentIds.length > 0 ? selectedSubDepartmentIds : undefined,
     startDate,
     endDate,
   });

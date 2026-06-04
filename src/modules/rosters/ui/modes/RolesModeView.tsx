@@ -22,7 +22,8 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/modules/core/ui/primitives/tooltip';
-import { EnhancedAddShiftModal, ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
+import { ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
+import { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal/Lazy';
 import { SmartShiftCard } from '@/modules/rosters/ui/components/SmartShiftCard';
 import { useShiftsByDateRange, useRemunerationLevels, useRoles, useUnpublishShift, useCreateShift } from '@/modules/rosters/state/useRosterShifts';
 import { useToast } from '@/modules/core/hooks/use-toast';
@@ -360,7 +361,7 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
   };
 
   const buildShiftMenu = (shift: any) => (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           className="h-4 w-4 flex items-center justify-center hover:bg-muted dark:hover:bg-white/20 rounded transition-colors"

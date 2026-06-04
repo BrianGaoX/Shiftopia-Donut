@@ -1,4 +1,5 @@
-import React, { useMemo, useCallback, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useCallback, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/modules/core/ui/primitives/avatar';
@@ -71,11 +72,11 @@ const NOOP_ASSIGN: (shift: UnfilledShift, employeeId: string, dateKey: string) =
 
 // ── Virtualization constants ─────────────────────────────────────────────────
 // Estimated row height in px. Real rows vary with shift count per day, but the
-// majority cluster around 200–240px. Spacer math drifts at most a row or two
-// for very-busy operators, which OVERSCAN absorbs.
+// majority cluster around 200–240px. `useVirtualizer`'s dynamic measurement
+// (`measureElement`) corrects drift after first paint, so the estimate is only
+// used for the initial total-size calculation.
 const VIRT_ROW_HEIGHT = 220;
 const VIRT_OVERSCAN = 5;
-const VIRT_THRESHOLD = 30;
 
 // ── canUnpublish — any Published shift can be unpublished (→ S1 or S2) ───────
 function canUnpublish(shift: PeopleModeShift): boolean {
@@ -366,39 +367,21 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
 
   const showFatigueHeatmap = useRosterStore(s => s.showFatigueHeatmap);
 
-  // ── Virtualization: track scroll position + viewport height to compute the
-  //    visible row window. Disabled below VIRT_THRESHOLD employees (rendering
-  //    everything is cheaper than the bookkeeping for small lists).
+  // ── Virtualization: `@tanstack/react-virtual` measures rows dynamically so
+  //    rows whose actual height differs from VIRT_ROW_HEIGHT don't drift over
+  //    long scroll distances. With negligible overhead at small list sizes we
+  //    virtualize unconditionally — no threshold guard needed.
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
 
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    setViewportHeight(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollTop(e.currentTarget.scrollTop);
-  }, []);
-
-  const shouldVirtualize = employees.length > VIRT_THRESHOLD && viewportHeight > 0;
-  const startIdx = shouldVirtualize
-    ? Math.max(0, Math.floor(scrollTop / VIRT_ROW_HEIGHT) - VIRT_OVERSCAN)
-    : 0;
-  const endIdx = shouldVirtualize
-    ? Math.min(
-        employees.length,
-        startIdx + Math.ceil(viewportHeight / VIRT_ROW_HEIGHT) + 2 * VIRT_OVERSCAN
-      )
-    : employees.length;
-  const topSpacer = startIdx * VIRT_ROW_HEIGHT;
-  const bottomSpacer = (employees.length - endIdx) * VIRT_ROW_HEIGHT;
-  const totalCols = dates.length + 1;
+  const rowVirtualizer = useVirtualizer({
+    count: employees.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => VIRT_ROW_HEIGHT,
+    overscan: VIRT_OVERSCAN,
+    measureElement: (el) => el?.getBoundingClientRect().height ?? VIRT_ROW_HEIGHT,
+  });
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -435,7 +418,6 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
 
       <div
         ref={scrollContainerRef}
-        onScroll={handleScroll}
         className="h-full overflow-y-auto custom-scrollbar"
       >
         <div className="p-6">
@@ -474,20 +456,21 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
                 </thead>
 
                 {/* ==================== BODY ROWS ==================== */}
-                <tbody>
-                  {topSpacer > 0 && (
-                    <tr aria-hidden style={{ height: topSpacer }}>
-                      <td colSpan={totalCols} />
-                    </tr>
-                  )}
-                  {employees.slice(startIdx, endIdx).map((employee, i) => {
-                    const empIdx = startIdx + i;
+                {/* `height` + `position: relative` give the virtualizer the
+                    full scroll-bounding box; rows are absolutely positioned
+                    by `translateY` so only the visible window mounts. */}
+                <tbody style={{ height: totalSize, position: 'relative' }}>
+                  {virtualItems.map((vi) => {
+                    const employee = employees[vi.index];
+                    if (!employee) return null;
                     return (
                       <EmployeeRow
                         key={employee.id}
+                        ref={rowVirtualizer.measureElement}
+                        data-index={vi.index}
                         employee={employee}
-                        empIdx={empIdx}
-                        isLastRow={empIdx === employees.length - 1}
+                        empIdx={vi.index}
+                        isLastRow={vi.index === employees.length - 1}
                         dates={dates}
                         canEdit={canEdit}
                         isBulkMode={isBulkMode}
@@ -505,14 +488,16 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
                         onUnpublishShift={onUnpublishShift}
                         onAssign={stableOnAssign}
                         onMoveShift={onMoveShift}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${vi.start}px)`,
+                        }}
                       />
                     );
                   })}
-                  {bottomSpacer > 0 && (
-                    <tr aria-hidden style={{ height: bottomSpacer }}>
-                      <td colSpan={totalCols} />
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
@@ -550,9 +535,14 @@ interface EmployeeRowProps {
   onUnpublishShift?: (shiftId: string) => void;
   onAssign: (shift: UnfilledShift, employeeId: string, dateKey: string) => void;
   onMoveShift?: (shiftId: string, targetEmployeeId: string, targetDate: string) => void;
+  // Forwarded by the virtualizer for absolute positioning + dynamic
+  // measurement. `style` carries the translateY transform; `data-index`
+  // lets `measureElement` correlate the DOM node back to the row index.
+  style?: React.CSSProperties;
+  'data-index'?: number;
 }
 
-const EmployeeRowImpl: React.FC<EmployeeRowProps> = ({
+const EmployeeRowImpl = React.forwardRef<HTMLTableRowElement, EmployeeRowProps>(({
   employee,
   empIdx,
   isLastRow,
@@ -573,9 +563,14 @@ const EmployeeRowImpl: React.FC<EmployeeRowProps> = ({
   onUnpublishShift,
   onAssign,
   onMoveShift,
-}) => {
+  style,
+  'data-index': dataIndex,
+}, ref) => {
   return (
     <tr
+      ref={ref}
+      data-index={dataIndex}
+      style={style}
       className={cn(
         'group relative border-b border-border/50',
         empIdx % 2 === 0 ? 'bg-card' : 'bg-muted/30'
@@ -810,7 +805,8 @@ const EmployeeRowImpl: React.FC<EmployeeRowProps> = ({
       ))}
     </tr>
   );
-};
+});
+EmployeeRowImpl.displayName = 'EmployeeRow';
 
 const EmployeeRow = React.memo(EmployeeRowImpl);
 

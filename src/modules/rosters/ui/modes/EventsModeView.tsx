@@ -5,7 +5,7 @@ import { Badge } from '@/modules/core/ui/primitives/badge';
 import { Card } from '@/modules/core/ui/primitives/card';
 import { Button } from '@/modules/core/ui/primitives/button';
 import { format, parseISO } from 'date-fns';
-import { EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
+import { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal/Lazy';
 import { Shift } from '@/modules/rosters/api/shifts.api';
 import { useEvents, useUnpublishShift, useCreateShift } from '@/modules/rosters/state/useRosterShifts';
 import { SmartShiftCard, ComplianceInfo } from '@/modules/rosters/ui/components/SmartShiftCard';
@@ -192,7 +192,7 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
   };
 
   const buildShiftMenu = (shift: any) => (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           className="h-4 w-4 flex items-center justify-center hover:bg-muted dark:hover:bg-white/20 rounded transition-colors"
