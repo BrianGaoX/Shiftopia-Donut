@@ -2,6 +2,7 @@
 // Runs the 5 roster-page queries in parallel using the caller's auth token,
 // so RLS continues to apply. Frontend caller: useRosterViewPrefetch.
 
+// @ts-ignore - Supabase Deno Edge functions use npm specifiers that standard TS compilers don't natively resolve
 import { createClient, SupabaseClient } from 'npm:@supabase/supabase-js@2.50.0';
 
 const corsHeaders = {
