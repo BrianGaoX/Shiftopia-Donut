@@ -130,6 +130,15 @@ const SHIFT_SELECT = `
   timesheets(status)
 ` as const;
 
+// ── Pagination ────────────────────────────────────────────────────────────────
+// Supabase caps a single response at 1000 rows; for large date-range queries
+// (week/month over 5k+ shifts) we page through until a short page arrives.
+// `count: 'planned'` skips the COUNT(*) cost (100–500 ms at 1M rows) — planner
+// estimates can be off by ~10–20%, so we keep paginating until a page is
+// shorter than PAGE_SIZE rather than trusting the estimate strictly.
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 100;
+
 /** Normalise a raw supabase row into our Shift interface shape */
 export function normalizeShiftRow(row: Record<string, any>): Shift {
     const shift = {
@@ -150,41 +159,32 @@ export function normalizeShiftRow(row: Record<string, any>): Shift {
     return shift;
 }
 
-/** 
- * Helper to fetch all rows for a query, bypassing the PostgREST max_rows limit.
- * Uses parallel fetching to minimize latency for large datasets.
+/**
+ * Helper to fetch all rows for a single-call query, escaping the PostgREST
+ * 1000-row cap.
+ *
+ * Earlier this used `.count('exact')` + parallel ranges, which triggered a
+ * full COUNT(*) scan on every fetch (100–500 ms at 1M rows even with the
+ * partial indexes). Replaced with sequential stop-on-short-page — same
+ * total bandwidth, drops the COUNT(*) cost entirely.
+ *
+ * The factory pattern matches `getShiftsForDateRange`'s loop: supabase-js
+ * query builders are single-shot, so the caller passes a builder factory.
  */
-async function fetchWithPagination(baseQuery: any): Promise<any[]> {
-    const PAGE_SIZE = 1000;
-    
-    // Fetch first page AND the total count
-    const { data: firstPage, count, error } = await baseQuery
-        .range(0, PAGE_SIZE - 1)
-        .count('exact');
-
-    if (error) throw error;
-    if (!firstPage || firstPage.length === 0) return [];
-    
-    const totalCount = count || firstPage.length;
-    let allData = [...firstPage];
-
-    // If there are more rows than PAGE_SIZE, fetch the rest in parallel
-    if (totalCount > PAGE_SIZE) {
-        const promises = [];
-        for (let offset = PAGE_SIZE; offset < totalCount; offset += PAGE_SIZE) {
-            promises.push(
-                baseQuery.range(offset, offset + PAGE_SIZE - 1)
-            );
-        }
-        
-        const results = await Promise.all(promises);
-        for (const res of results) {
-            if (res.error) throw res.error;
-            if (res.data) allData = allData.concat(res.data);
-        }
+async function fetchWithPagination(buildQuery: () => any): Promise<any[]> {
+    const all: any[] = [];
+    let page = 0;
+    while (page < MAX_PAGES) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await buildQuery().range(from, to);
+        if (error) throw error;
+        const rows = data ?? [];
+        all.push(...rows);
+        if (rows.length < PAGE_SIZE) break;
+        page += 1;
     }
-
-    return allData;
+    return all;
 }
 
 export const shiftsQueries = {
@@ -228,9 +228,10 @@ export const shiftsQueries = {
             return [];
         }
 
-        try {
-            // Build filter chain — all filters must come BEFORE .order() (transforms)
-            let query = supabase
+        // Factory: supabase-js query builders are single-shot, so each
+        // pagination iteration needs a fresh chain.
+        const buildQuery = () => {
+            let q = supabase
                 .from('shifts')
                 .select(SHIFT_SELECT)
                 .eq('organization_id', organizationId)
@@ -238,27 +239,26 @@ export const shiftsQueries = {
                 .is('deleted_at', null);
 
             if (filters?.departmentId && isValidUuid(filters.departmentId)) {
-                query = query.eq('department_id', filters.departmentId);
+                q = q.eq('department_id', filters.departmentId);
             } else if (filters?.departmentIds && filters.departmentIds.length > 0) {
-                query = query.in('department_id', filters.departmentIds.filter(isValidUuid));
+                q = q.in('department_id', filters.departmentIds.filter(isValidUuid));
             }
             if (filters?.subDepartmentId && isValidUuid(filters.subDepartmentId)) {
-                query = query.eq('sub_department_id', filters.subDepartmentId);
+                q = q.eq('sub_department_id', filters.subDepartmentId);
             } else if (filters?.subDepartmentIds && filters.subDepartmentIds.length > 0) {
-                query = query.in('sub_department_id', filters.subDepartmentIds.filter(isValidUuid));
+                q = q.in('sub_department_id', filters.subDepartmentIds.filter(isValidUuid));
             }
             if (filters?.groupType) {
-                query = query.eq('group_type', filters.groupType);
+                q = q.eq('group_type', filters.groupType);
             }
             if (filters?.status) {
-                query = query.eq('status', filters.status);
+                q = q.eq('status', filters.status);
             }
+            return q.order('display_order').order('start_time');
+        };
 
-            const queryWithOrder = query
-                .order('display_order')
-                .order('start_time');
-
-            const data = await fetchWithPagination(queryWithOrder);
+        try {
+            const data = await fetchWithPagination(buildQuery);
             return data.map(row => normalizeShiftRow(row as Record<string, unknown>));
         } catch (error) {
             console.error('Exception in getShiftsForDate:', error);
@@ -288,39 +288,60 @@ export const shiftsQueries = {
             return [];
         }
 
-        try {
-            let query = supabase
+        // Build a fresh filterable query for each page — supabase-js builders
+        // are single-shot (you can't reuse one after `.range()` resolves).
+        const buildQuery = () => {
+            let q = supabase
                 .from('shifts')
-                .select(SHIFT_SELECT)
+                .select(SHIFT_SELECT, { count: 'planned', head: false })
                 .eq('organization_id', organizationId)
                 .gte('shift_date', startDate)
                 .lte('shift_date', endDate)
                 .is('deleted_at', null);
 
             if (filters?.departmentId && isValidUuid(filters.departmentId)) {
-                query = query.eq('department_id', filters.departmentId);
+                q = q.eq('department_id', filters.departmentId);
             } else if (filters?.departmentIds && filters.departmentIds.length > 0) {
-                query = query.in('department_id', filters.departmentIds.filter(isValidUuid));
+                q = q.in('department_id', filters.departmentIds.filter(isValidUuid));
             }
             if (filters?.subDepartmentId && isValidUuid(filters.subDepartmentId)) {
-                query = query.eq('sub_department_id', filters.subDepartmentId);
+                q = q.eq('sub_department_id', filters.subDepartmentId);
             } else if (filters?.subDepartmentIds && filters.subDepartmentIds.length > 0) {
-                query = query.in('sub_department_id', filters.subDepartmentIds.filter(isValidUuid));
+                q = q.in('sub_department_id', filters.subDepartmentIds.filter(isValidUuid));
             }
             if (filters?.groupType) {
-                query = query.eq('group_type', filters.groupType);
+                q = q.eq('group_type', filters.groupType);
             }
             if (filters?.status) {
-                query = query.eq('status', filters.status);
+                q = q.eq('status', filters.status);
+            }
+            return q.order('shift_date').order('display_order').order('start_time');
+        };
+
+        try {
+            // Page through until a short page arrives. `count: 'planned'` is
+            // cheap but only an estimate (±10–20%), so we trust the actual
+            // page length, not the count, as the stop condition.
+            const all: any[] = [];
+            let page = 0;
+            // Safety cap (MAX_PAGES) at module scope: 100 × 1000 = 100k shifts,
+            // well above any realistic week/month window.
+            while (page < MAX_PAGES) {
+                const from = page * PAGE_SIZE;
+                const to = from + PAGE_SIZE - 1;
+                const { data, error } = await buildQuery().range(from, to);
+                if (error) {
+                    console.error('Error fetching shifts for date range:', error);
+                    return all.map(row => normalizeShiftRow(row as Record<string, unknown>));
+                }
+                const rows = data ?? [];
+                all.push(...rows);
+                // Short page = no more results, regardless of what the planner estimated.
+                if (rows.length < PAGE_SIZE) break;
+                page += 1;
             }
 
-            const queryWithOrder = query
-                .order('shift_date')
-                .order('display_order')
-                .order('start_time');
-
-            const data = await fetchWithPagination(queryWithOrder);
-            return data.map(row => normalizeShiftRow(row as Record<string, unknown>));
+            return all.map(row => normalizeShiftRow(row as Record<string, unknown>));
         } catch (error) {
             console.error('Exception in getShiftsForDateRange:', error);
             return [];

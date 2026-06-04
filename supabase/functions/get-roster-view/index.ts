@@ -104,36 +104,12 @@ const SHIFT_SELECT = `
   timesheets(status)
 `;
 
-async function fetchWithPagination(baseQuery: any): Promise<any[]> {
-  const PAGE_SIZE = 1000;
-  
-  const { data: firstPage, count, error } = await baseQuery
-    .range(0, PAGE_SIZE - 1)
-    .count('exact');
-
-  if (error) throw error;
-  if (!firstPage || firstPage.length === 0) return [];
-  
-  const totalCount = count || firstPage.length;
-  let allData = [...firstPage];
-
-  if (totalCount > PAGE_SIZE) {
-    const promises = [];
-    for (let offset = PAGE_SIZE; offset < totalCount; offset += PAGE_SIZE) {
-      promises.push(
-        baseQuery.range(offset, offset + PAGE_SIZE - 1)
-      );
-    }
-    
-    const results = await Promise.all(promises);
-    for (const res of results) {
-      if (res.error) throw res.error;
-      if (res.data) allData = allData.concat(res.data);
-    }
-  }
-
-  return allData;
-}
+// Supabase caps a single response at 1000 rows; for orgs with 5k+ shifts in
+// view we page through. `count: 'planned'` skips the expensive COUNT(*) — we
+// stop on the first short page rather than trusting the planner estimate
+// (which can be off by ~10–20%).
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 100; // safety cap (100k rows)
 
 async function fetchShifts(
   supa: SupabaseClient,
@@ -143,28 +119,32 @@ async function fetchShifts(
   deptIds: string[],
   subDeptIds: string[],
 ) {
-  let q = supa
-    .from('shifts')
-    .select(SHIFT_SELECT)
-    .eq('organization_id', orgId)
-    .gte('shift_date', startDate)
-    .lte('shift_date', endDate)
-    .is('deleted_at', null);
+  const buildQuery = () => {
+    let q = supa
+      .from('shifts')
+      .select(SHIFT_SELECT, { count: 'planned', head: false })
+      .eq('organization_id', orgId)
+      .gte('shift_date', startDate)
+      .lte('shift_date', endDate)
+      .is('deleted_at', null);
 
-  if (deptIds.length) q = q.in('department_id', deptIds);
-  if (subDeptIds.length) q = q.in('sub_department_id', subDeptIds);
+    if (deptIds.length) q = q.in('department_id', deptIds);
+    if (subDeptIds.length) q = q.in('sub_department_id', subDeptIds);
 
-  const queryWithOrder = q
-    .order('shift_date')
-    .order('display_order')
-    .order('start_time');
+    return q.order('shift_date').order('display_order').order('start_time');
+  };
 
-  try {
-    const data = await fetchWithPagination(queryWithOrder);
-    return data;
-  } catch (err: any) {
-    throw new Error(`shifts: ${err.message}`);
+  const all: unknown[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await buildQuery().range(from, to);
+    if (error) throw new Error(`shifts: ${error.message}`);
+    const rows = data ?? [];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
   }
+  return all;
 }
 
 async function fetchEmployees(

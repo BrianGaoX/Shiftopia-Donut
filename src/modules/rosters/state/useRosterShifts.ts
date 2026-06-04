@@ -55,15 +55,49 @@ export function patchLists(
   /** Optional predicate to scope the update to specific cached queries.
    *  Without this, the updater runs against EVERY list-type query in the
    *  cache — e.g. 12 cached weeks × 5k shifts = 60k shift objects. */
-  predicate?: (query: { queryKey: readonly unknown[] }) => boolean,
+  predicate?: (q: { queryKey: readonly unknown[] }) => boolean,
 ) {
-  const filters: { queryKey: readonly unknown[]; predicate?: (q: any) => boolean } = {
-    queryKey: shiftKeys.lists,
-  };
-  if (predicate) filters.predicate = predicate;
-  queryClient.setQueriesData<Shift[]>(filters, (old) =>
-    old && Array.isArray(old) ? updater(old) : old,
+  queryClient.setQueriesData<Shift[]>(
+    {
+      queryKey: shiftKeys.lists,
+      ...(predicate ? { predicate: predicate as (q: { queryKey: readonly unknown[] }) => boolean } : {}),
+    },
+    (old) => (old && Array.isArray(old) ? updater(old) : old),
   );
+}
+
+/**
+ * Build a predicate that scopes `patchLists` updates to byRange caches whose
+ * date window contains `shiftDate`. byDate / byEmployee caches always pass
+ * through (their dates aren't expressible as a window in the same shape).
+ */
+function dateInRange(shiftDate: string) {
+  return (q: { queryKey: readonly unknown[] }) => {
+    const k = q.queryKey;
+    if (k[2] !== 'byRange') return true; // non-range caches pass through
+    const startDate = k[4] as string | undefined;
+    const endDate = k[5] as string | undefined;
+    if (typeof startDate !== 'string' || typeof endDate !== 'string') return true;
+    return shiftDate >= startDate && shiftDate <= endDate;
+  };
+}
+
+/**
+ * Best-effort lookup of a shift's date by scanning the existing list caches.
+ * Returns undefined if the shift is not currently in any cached list — callers
+ * should fall back to an unscoped patch in that case.
+ */
+function findShiftDateInLists(
+  queryClient: ReturnType<typeof useQueryClient>,
+  shiftId: string,
+): string | undefined {
+  const lists = queryClient.getQueriesData<Shift[]>({ queryKey: shiftKeys.lists });
+  for (const [, data] of lists) {
+    if (!data || !Array.isArray(data)) continue;
+    const found = data.find(s => s.id === shiftId);
+    if (found?.shift_date) return found.shift_date;
+  }
+  return undefined;
 }
 
 // ── Query hooks ───────────────────────────────────────────────────────────────
@@ -361,22 +395,34 @@ export function useUpdateShift() {
       await queryClient.cancelQueries({ queryKey: shiftKeys.lists });
       const snapshot = snapshotLists(queryClient);
 
-      // Patch all list views — also derive assignment_status from assigned_employee_id
-      // so the cache is immediately consistent without waiting for a server refetch.
-      patchLists(queryClient, (old) =>
-        old.map(s => {
-          if (s.id !== shiftId) return s;
-          const merged: Shift = { ...s, ...updates } as Shift;
-          if (updates.assigned_employee_id !== undefined) {
-            (merged as unknown as Record<string, unknown>).assignment_status =
-              updates.assigned_employee_id ? 'assigned' : 'unassigned';
-          }
-          return merged;
-        }),
+      // Resolve the shift's date for predicate scoping. Fall back to a broad
+      // patch when the date is unknown (correctness > optimisation).
+      const prevDetail = queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId));
+      const shiftDate =
+        (updates as { shift_date?: string }).shift_date ??
+        prevDetail?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      // Patch all matching list views — also derive assignment_status from
+      // assigned_employee_id so the cache is immediately consistent without
+      // waiting for a server refetch.
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s => {
+            if (s.id !== shiftId) return s;
+            const merged: Shift = { ...s, ...updates } as Shift;
+            if (updates.assigned_employee_id !== undefined) {
+              (merged as unknown as Record<string, unknown>).assignment_status =
+                updates.assigned_employee_id ? 'assigned' : 'unassigned';
+            }
+            return merged;
+          }),
+        predicate,
       );
 
       // Also patch the detail view if loaded
-      const prevDetail = queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId));
       if (prevDetail) {
         queryClient.setQueryData(shiftKeys.detail(shiftId), { ...prevDetail, ...updates });
       }
@@ -428,7 +474,12 @@ export function useDeleteShift() {
       await queryClient.cancelQueries({ queryKey: shiftKeys.lists });
       const snapshot = snapshotLists(queryClient);
 
-      patchLists(queryClient, (old) => old.filter(s => s.id !== shiftId));
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(queryClient, (old) => old.filter(s => s.id !== shiftId), predicate);
       queryClient.removeQueries({ queryKey: shiftKeys.detail(shiftId) });
 
       return { snapshot };
@@ -523,10 +574,18 @@ export function usePublishShift() {
       await queryClient.cancelQueries({ queryKey: shiftKeys.lists });
       const snapshot = snapshotLists(queryClient);
 
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId ? { ...s, lifecycle_status: 'Published' as const } : s,
-        ),
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId ? { ...s, lifecycle_status: 'Published' as const } : s,
+          ),
+        predicate,
       );
 
       return { snapshot };
@@ -555,19 +614,27 @@ export function useUnpublishShift() {
       await queryClient.cancelQueries({ queryKey: shiftKeys.lists });
       const snapshot = snapshotLists(queryClient);
 
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId
-            ? { 
-                ...s, 
-                lifecycle_status: 'Draft' as const, 
-                is_published: false, 
-                is_draft: true,
-                assignment_outcome: null,
-                assignment_status: s.assigned_employee_id ? 'assigned' : 'unassigned',
-              }
-            : s,
-        ),
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId
+              ? {
+                  ...s,
+                  lifecycle_status: 'Draft' as const,
+                  is_published: false,
+                  is_draft: true,
+                  assignment_outcome: null,
+                  assignment_status: s.assigned_employee_id ? 'assigned' : 'unassigned',
+                }
+              : s,
+          ),
+        predicate,
       );
 
       return { snapshot };
@@ -821,18 +888,26 @@ export function useDropShift() {
         (old) => old?.filter(s => s.id !== shiftId),
       );
 
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
       // Manager / date views: unassign + flag as bidding
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId
-            ? {
-              ...s,
-              assigned_employee_id: null,
-              assignment_status: 'unassigned' as const,
-              bidding_status: 'on_bidding' as const,
-            }
-            : s,
-        ),
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId
+              ? {
+                ...s,
+                assigned_employee_id: null,
+                assignment_status: 'unassigned' as const,
+                bidding_status: 'on_bidding' as const,
+              }
+              : s,
+          ),
+        predicate,
       );
 
       return { snapshot };
@@ -881,10 +956,18 @@ export function useAcceptOffer() {
 
     onMutate: async (shiftId) => {
       const snapshot = snapshotLists(queryClient);
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId ? { ...s, assignment_outcome: 'confirmed' as const } : s,
-        ),
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId ? { ...s, assignment_outcome: 'confirmed' as const } : s,
+          ),
+        predicate,
       );
       return { snapshot };
     },
@@ -911,17 +994,25 @@ export function useDeclineOffer() {
 
     onMutate: async (shiftId) => {
       const snapshot = snapshotLists(queryClient);
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId
-            ? {
-              ...s,
-              assignment_status: 'unassigned' as const,
-              assignment_outcome: null,
-              assigned_employee_id: null,
-            }
-            : s,
-        ),
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId
+              ? {
+                ...s,
+                assignment_status: 'unassigned' as const,
+                assignment_outcome: null,
+                assigned_employee_id: null,
+              }
+              : s,
+          ),
+        predicate,
       );
       return { snapshot };
     },
@@ -950,12 +1041,20 @@ export function useCancelShift() {
       await queryClient.cancelQueries({ queryKey: shiftKeys.lists });
       const snapshot = snapshotLists(queryClient);
 
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId
-            ? { ...s, lifecycle_status: 'Cancelled' as const, is_cancelled: true }
-            : s,
-        ),
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId
+              ? { ...s, lifecycle_status: 'Cancelled' as const, is_cancelled: true }
+              : s,
+          ),
+        predicate,
       );
 
       return { snapshot };
@@ -980,12 +1079,20 @@ export function useRequestTrade() {
 
     onMutate: async (shiftId) => {
       const snapshot = snapshotLists(queryClient);
-      patchLists(queryClient, (old) =>
-        old.map(s =>
-          s.id === shiftId
-            ? { ...s, trading_status: 'TradeRequested' as const, is_trade_requested: true }
-            : s,
-        ),
+      const shiftDate =
+        queryClient.getQueryData<Shift>(shiftKeys.detail(shiftId))?.shift_date ??
+        findShiftDateInLists(queryClient, shiftId);
+      const predicate = shiftDate ? dateInRange(shiftDate) : undefined;
+
+      patchLists(
+        queryClient,
+        (old) =>
+          old.map(s =>
+            s.id === shiftId
+              ? { ...s, trading_status: 'TradeRequested' as const, is_trade_requested: true }
+              : s,
+          ),
+        predicate,
       );
       return { snapshot };
     },
@@ -1036,10 +1143,17 @@ export function useComplianceValidation() {
  * Deleted rows (deleted_at IS NOT NULL) are removed from the cache.
  * Updated rows have their changed fields patched in-place.
  *
- * @param orgId      Organisation to subscribe to (required)
- * @param deptIds    Optional dept filter (mirrors the list queries)
- * @param startDate  Optional window start (YYYY-MM-DD)
- * @param endDate    Optional window end   (YYYY-MM-DD)
+ * @param orgId       Organisation to subscribe to (required)
+ * @param deptIds     Optional dept filter (mirrors the list queries)
+ * @param subDeptIds  Optional sub-dept filter. When exactly one is supplied,
+ *                    the realtime channel is filtered server-side by
+ *                    `sub_department_id=eq.X` to drastically reduce noise at
+ *                    high shift volumes. Multi-sub-dept selections fall back
+ *                    to org-only filtering (Supabase realtime filters don't
+ *                    support IN), and client-side delta fetches still scope
+ *                    by `subDeptIds` via the RPC.
+ * @param startDate   Optional window start (YYYY-MM-DD)
+ * @param endDate     Optional window end   (YYYY-MM-DD)
  */
 export function useShiftDeltaSync(params: {
   orgId: string | null;
@@ -1056,6 +1170,11 @@ export function useShiftDeltaSync(params: {
   // Debounce realtime events — bursts (mass publish/assign) would otherwise
   // fan out to one RPC per row change.
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Stable key for the sub-dept filter so the effect/callback only re-runs
+  // when the actual set changes (not array identity).
+  const subDeptKey = (params.subDeptIds ?? []).slice().sort().join(',');
+  const deptKey = (params.deptIds ?? []).slice().sort().join(',');
 
   const applyDelta = useCallback(async () => {
     if (!params.orgId || fetchingRef.current) return;
@@ -1115,23 +1234,25 @@ export function useShiftDeltaSync(params: {
     } finally {
       fetchingRef.current = false;
     }
-  }, [params.orgId, params.deptIds, params.startDate, params.endDate, queryClient]);
+    // deptKey / subDeptKey ensure the callback re-binds when the actual scope
+    // changes, not just when array identity flips.
+  }, [params.orgId, deptKey, params.startDate, params.endDate, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!params.orgId) return;
 
-    // F13: Granular Realtime Scoping
-    // Fall back from most specific to least specific equality filter.
-    // Supabase postgres_changes only supports ONE equality filter per subscription.
+    // F13: Granular Realtime Scoping — sub-dept > dept > org.
+    // Supabase postgres_changes only supports ONE equality filter per
+    // subscription; pick the tightest scope available.
     let filter = `organization_id=eq.${params.orgId}`;
     let channelSuffix = params.orgId;
 
     if (params.subDeptIds && params.subDeptIds.length === 1) {
       filter = `sub_department_id=eq.${params.subDeptIds[0]}`;
-      channelSuffix = params.subDeptIds[0];
+      channelSuffix = `${params.orgId}-sub-${params.subDeptIds[0]}`;
     } else if (params.deptIds && params.deptIds.length === 1) {
       filter = `department_id=eq.${params.deptIds[0]}`;
-      channelSuffix = params.deptIds[0];
+      channelSuffix = `${params.orgId}-dept-${params.deptIds[0]}`;
     }
 
     const channel = supabase
@@ -1153,7 +1274,8 @@ export function useShiftDeltaSync(params: {
       }
       void supabase.removeChannel(channel);
     };
-  }, [params.orgId, applyDelta]);
+    // subDeptKey is the stable signal for "the sub-dept set changed".
+  }, [params.orgId, subDeptKey, applyDelta]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 // ── Combined convenience hook ─────────────────────────────────────────────────
