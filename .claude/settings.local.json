@@ -74,7 +74,10 @@
       "Bash(sed -n '1040,1080p' optimizer-service/model_builder.py)",
       "Bash(sed -n '1140,1175p' optimizer-service/model_builder.py)",
       "Bash(awk '/const handleShiftDrop = useCallback/,/^  \\\\\\);/' /Users/vinayakkuanr/Documents/Superman_ULTIMATE/src/modules/rosters/ui/modes/GroupModeView.tsx)",
-      "Bash(git cherry-pick *)"
+      "Bash(git cherry-pick *)",
+      "Bash(git check-ignore *)",
+      "Bash(git ls-tree *)",
+      "Bash(git fetch *)"
     ]
   }
 }
