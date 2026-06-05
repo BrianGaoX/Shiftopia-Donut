@@ -490,8 +490,8 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
   const isLoading = !projection && (isLoadingLevels || isLoadingRoles || isLoadingShifts);
   if (isLoading) return <div className="flex flex-col items-center justify-center h-[400px] text-muted-foreground gap-3"><Loader2 className="w-8 h-8 animate-spin" /><p className="text-sm font-medium tracking-wide">Loading roles…</p></div>;
 
-  const totalHours = projection?.stats.totalNetMinutes != null ? (projection.stats.totalNetMinutes / 60).toFixed(1) : '—';
-  const estCost = projection?.stats.estimatedCost ?? 0;
+  const totalHours = projection?.stats?.totalNetMinutes != null ? (projection.stats.totalNetMinutes / 60).toFixed(1) : '—';
+  const estCost = projection?.stats?.estimatedCost ?? 0;
 
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
@@ -525,26 +525,26 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
                             <div className="space-y-1.5">
                                 <div className="flex justify-between text-xs">
                                     <span className="text-white/60">Base Pay</span>
-                                    <span className="text-white font-medium">{formatCost(projection?.stats.costBreakdown.base || 0)}</span>
+                                    <span className="text-white font-medium">{formatCost(projection?.stats?.costBreakdown.base || 0)}</span>
                                 </div>
                                 <div className="flex justify-between text-xs">
                                     <span className="text-white/60">Penalties</span>
-                                    <span className="text-emerald-400 font-medium">+{formatCost(projection?.stats.costBreakdown.penalty || 0)}</span>
+                                    <span className="text-emerald-400 font-medium">+{formatCost(projection?.stats?.costBreakdown.penalty || 0)}</span>
                                 </div>
                                 <div className="flex justify-between text-xs">
                                     <span className="text-white/60">Overtime</span>
-                                    <span className="text-amber-400 font-medium">+{formatCost(projection?.stats.costBreakdown.overtime || 0)}</span>
+                                    <span className="text-amber-400 font-medium">+{formatCost(projection?.stats?.costBreakdown.overtime || 0)}</span>
                                 </div>
-                                {(projection?.stats.costBreakdown.allowance || 0) > 0 && (
+                                {(projection?.stats?.costBreakdown.allowance || 0) > 0 && (
                                     <div className="flex justify-between text-xs">
                                         <span className="text-white/60">Allowances</span>
-                                        <span className="text-blue-400 font-medium">+{formatCost(projection?.stats.costBreakdown.allowance || 0)}</span>
+                                        <span className="text-blue-400 font-medium">+{formatCost(projection?.stats?.costBreakdown.allowance || 0)}</span>
                                     </div>
                                 )}
-                                {(projection?.stats.costBreakdown.leave || 0) > 0 && (
+                                {(projection?.stats?.costBreakdown.leave || 0) > 0 && (
                                     <div className="flex justify-between text-xs">
                                         <span className="text-white/60">Leave Loading</span>
-                                        <span className="text-purple-400 font-medium">+{formatCost(projection?.stats.costBreakdown.leave || 0)}</span>
+                                        <span className="text-purple-400 font-medium">+{formatCost(projection?.stats?.costBreakdown.leave || 0)}</span>
                                     </div>
                                 )}
                                 <div className="pt-2 border-t border-white/10 flex justify-between text-sm font-bold">

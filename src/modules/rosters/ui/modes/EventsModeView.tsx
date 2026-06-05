@@ -391,7 +391,7 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const totalShifts = projection?.stats.totalShifts ?? shifts.length;
+  const totalShifts = projection?.stats?.totalShifts ?? shifts.length;
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -401,7 +401,7 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
           <span className="text-foreground tabular-nums">{eventGroups.length}</span> event{eventGroups.length !== 1 ? 's' : ''}
           <span className="mx-2 text-border">·</span>
           <span className="text-foreground tabular-nums">{totalShifts}</span> shifts
-          {projection && (
+          {projection?.stats && (
             <>
               <span className="mx-2 text-border">·</span>
               <span className="text-emerald-500/70 tabular-nums">{(projection.stats.totalNetMinutes / 60).toFixed(1)}h</span>

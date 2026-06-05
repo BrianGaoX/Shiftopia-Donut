@@ -73,7 +73,7 @@ const SHIFT_SELECT = `
   sub_group_name,
   display_order,
   shift_group_id,
-  shift_subgroup_id,
+  roster_subgroup_id,
   role_id,
   role_level,
   remuneration_level_id,
