@@ -1,7 +1,7 @@
 /**
  * DroppableDateCell
  *
- * A <td> wrapper that accepts drag-drops of unfilled shift cards (DND_UNFILLED_SHIFT).
+ * A grid-cell <div role="cell"> wrapper that accepts drag-drops of unfilled shift cards (DND_UNFILLED_SHIFT).
  * When a valid shift is dropped, it calls `onAssign` — the parent is responsible
  * for calling executeAssignShift() which runs full compliance + DB write.
  *
@@ -105,7 +105,8 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
   );
 
   return (
-    <td
+    <div
+      role="cell"
       ref={drop}
       className={cn(
         className,
@@ -116,7 +117,7 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
       onClick={onClick}
     >
       {children}
-    </td>
+    </div>
   );
 };
 

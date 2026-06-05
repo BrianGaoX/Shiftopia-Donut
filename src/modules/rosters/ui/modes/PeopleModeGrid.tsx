@@ -78,6 +78,15 @@ const NOOP_ASSIGN: (shift: UnfilledShift, employeeId: string, dateKey: string) =
 const VIRT_ROW_HEIGHT = 220;
 const VIRT_OVERSCAN = 5;
 
+// Shared CSS-grid column template. Header and every (virtualized,
+// absolutely-positioned) row reference the SAME track sizes, so columns can
+// never drift. This replaced the old <table>, whose absolutely-positioned
+// virtual <tr>s left the table's column model and misaligned the grid lines.
+const PEOPLE_COL_EMP_W = 200; // px — sticky employee column
+const PEOPLE_COL_DAY_W = 160; // px — per-day column
+const peopleGridCols = (dayCount: number) =>
+  `${PEOPLE_COL_EMP_W}px repeat(${dayCount}, ${PEOPLE_COL_DAY_W}px)`;
+
 // ── canUnpublish — any Published shift can be unpublished (→ S1 or S2) ───────
 function canUnpublish(shift: PeopleModeShift): boolean {
   return shift.lifecycleStatus === 'published';
@@ -424,42 +433,41 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
           {/* ==================== TABLE CONTAINER ==================== */}
           <div className="border border-border rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-max border-collapse relative">
+              <div role="table" className="relative" style={{ width: 'max-content', minWidth: '100%' }}>
                 {/* ==================== HEADER ROW ==================== */}
-                <thead>
-                  <tr className="bg-muted/30">
-                    {/* Employee Column Header */}
-                    <th className="sticky top-0 left-0 z-30 bg-muted/30 border-r border-b border-border px-4 py-3 text-left min-w-[200px]">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.14em] font-mono">Employee</span>
-                    </th>
+                <div role="row" className="grid bg-muted/30" style={{ gridTemplateColumns: peopleGridCols(dates.length) }}>
+                  {/* Employee Column Header */}
+                  <div role="columnheader" className="sticky top-0 left-0 z-30 flex items-center bg-muted/30 border-r border-b border-border px-4 py-3 text-left">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.14em] font-mono">Employee</span>
+                  </div>
 
-                    {/* Date Column Headers */}
-                    {dates.map((date, idx) => {
-                      const dateIsToday = format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-                      return (
-                        <th
-                          key={idx}
-                          className={cn(
-                            'sticky top-0 z-20 bg-muted/30 border-b border-border px-3 py-3 text-center min-w-[160px]',
-                            idx < dates.length - 1 && 'border-r',
-                            dateIsToday && 'bg-primary/5'
-                          )}
-                        >
-                          <div className={cn("text-[10px] font-bold uppercase tracking-[0.12em] font-mono", dateIsToday ? "text-primary" : "text-muted-foreground")}>{format(date, 'EEE')}</div>
-                          <div className={cn("text-sm font-mono tabular-nums mt-0.5", dateIsToday ? "text-primary font-bold" : "text-muted-foreground/50 font-medium")}>
-                            {format(date, 'MMM d')}
-                          </div>
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
+                  {/* Date Column Headers */}
+                  {dates.map((date, idx) => {
+                    const dateIsToday = format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
+                    return (
+                      <div
+                        role="columnheader"
+                        key={idx}
+                        className={cn(
+                          'sticky top-0 z-20 bg-muted/30 border-b border-border px-3 py-3 text-center',
+                          idx < dates.length - 1 && 'border-r',
+                          dateIsToday && 'bg-primary/5'
+                        )}
+                      >
+                        <div className={cn("text-[10px] font-bold uppercase tracking-[0.12em] font-mono", dateIsToday ? "text-primary" : "text-muted-foreground")}>{format(date, 'EEE')}</div>
+                        <div className={cn("text-sm font-mono tabular-nums mt-0.5", dateIsToday ? "text-primary font-bold" : "text-muted-foreground/50 font-medium")}>
+                          {format(date, 'MMM d')}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
 
                 {/* ==================== BODY ROWS ==================== */}
                 {/* `height` + `position: relative` give the virtualizer the
                     full scroll-bounding box; rows are absolutely positioned
                     by `translateY` so only the visible window mounts. */}
-                <tbody style={{ height: totalSize, position: 'relative' }}>
+                <div style={{ height: totalSize, position: 'relative' }}>
                   {virtualItems.map((vi) => {
                     const employee = employees[vi.index];
                     if (!employee) return null;
@@ -468,6 +476,7 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
                         key={employee.id}
                         ref={rowVirtualizer.measureElement}
                         data-index={vi.index}
+                        gridTemplateColumns={peopleGridCols(dates.length)}
                         employee={employee}
                         empIdx={vi.index}
                         isLastRow={vi.index === employees.length - 1}
@@ -498,8 +507,8 @@ export const PeopleModeGrid: React.FC<PeopleModeGridProps> = ({
                       />
                     );
                   })}
-                </tbody>
-              </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -535,6 +544,8 @@ interface EmployeeRowProps {
   onUnpublishShift?: (shiftId: string) => void;
   onAssign: (shift: UnfilledShift, employeeId: string, dateKey: string) => void;
   onMoveShift?: (shiftId: string, targetEmployeeId: string, targetDate: string) => void;
+  /** CSS grid track template shared with the header row so columns align. */
+  gridTemplateColumns: string;
   // Forwarded by the virtualizer for absolute positioning + dynamic
   // measurement. `style` carries the translateY transform; `data-index`
   // lets `measureElement` correlate the DOM node back to the row index.
@@ -542,7 +553,7 @@ interface EmployeeRowProps {
   'data-index'?: number;
 }
 
-const EmployeeRowImpl = React.forwardRef<HTMLTableRowElement, EmployeeRowProps>(({
+const EmployeeRowImpl = React.forwardRef<HTMLDivElement, EmployeeRowProps>(({
   employee,
   empIdx,
   isLastRow,
@@ -563,16 +574,18 @@ const EmployeeRowImpl = React.forwardRef<HTMLTableRowElement, EmployeeRowProps>(
   onUnpublishShift,
   onAssign,
   onMoveShift,
+  gridTemplateColumns,
   style,
   'data-index': dataIndex,
 }, ref) => {
   return (
-    <tr
+    <div
+      role="row"
       ref={ref}
       data-index={dataIndex}
-      style={style}
+      style={{ ...style, gridTemplateColumns }}
       className={cn(
-        'group relative border-b border-border/50',
+        'grid group relative border-b border-border/50',
         empIdx % 2 === 0 ? 'bg-card' : 'bg-muted/30'
       )}
     >
@@ -587,7 +600,7 @@ const EmployeeRowImpl = React.forwardRef<HTMLTableRowElement, EmployeeRowProps>(
         />
       )}
       {/* ========== EMPLOYEE INFO CELL ========== */}
-      <td className="sticky left-0 z-10 bg-card group-hover:bg-accent/50 transition-colors border-r border-border px-4 py-3 align-top">
+      <div role="cell" className="sticky left-0 z-10 bg-card group-hover:bg-accent/50 transition-colors border-r border-border px-4 py-3">
         <div className="flex items-center gap-3">
           <Avatar className={cn(
             'h-10 w-10 shrink-0 ring-2 ring-offset-1',
@@ -777,7 +790,7 @@ const EmployeeRowImpl = React.forwardRef<HTMLTableRowElement, EmployeeRowProps>(
             </div>
           </div>
         </div>
-      </td>
+      </div>
 
       {/* ========== DATE CELLS ========== */}
       {dates.map((date, dateIdx) => (
@@ -803,7 +816,7 @@ const EmployeeRowImpl = React.forwardRef<HTMLTableRowElement, EmployeeRowProps>(
           onMoveShift={onMoveShift}
         />
       ))}
-    </tr>
+    </div>
   );
 });
 EmployeeRowImpl.displayName = 'EmployeeRow';

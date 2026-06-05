@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, startTransition } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { supabase } from '@/platform/realtime/client';
 import { getSydneyNow, isSydneyPast, isSydneyStarted } from '@/modules/core/lib/date.utils';
 import {
@@ -71,8 +70,8 @@ import {
   rollbackLists,
   patchLists,
 } from '@/modules/rosters/state/useRosterShifts';
-import { 
-  useAddSubGroup, 
+import {
+  useAddSubGroup,
   useAddSubGroupRange,
   useDeleteSubGroup,
   useRenameSubGroup,
@@ -99,10 +98,10 @@ import { useRosterUI } from '@/modules/rosters/contexts/RosterUIContext';
 import { executeAssignShift } from '@/modules/rosters/domain/commands/assignShift.command';
 import { shiftKeys } from '@/modules/rosters/api/queryKeys';
 import { shiftsCommands } from '@/modules/rosters/api/shifts.commands';
-import { 
-  PeopleModeEmployee, 
-  PeopleModeShift, 
-  DND_SHIFT_TYPE, 
+import {
+  PeopleModeEmployee,
+  PeopleModeShift,
+  DND_SHIFT_TYPE,
   DND_EMPLOYEE_TYPE,
   EmployeeDragItem,
   ShiftDragItem,
@@ -167,8 +166,8 @@ const DraggableShiftCard: React.FC<DraggableShiftCardProps> = React.memo(({
   }), [shift.id, groupType, subGroupName, disabled, shift.status, shift.isCancelled]);
 
   return (
-    <div 
-      ref={drag} 
+    <div
+      ref={drag}
       className={cn(
         !disabled && isDragging && 'opacity-50 cursor-grabbing scale-105 rotate-1 shadow-2xl transition-transform'
       )}
@@ -303,7 +302,7 @@ const DroppableShiftAssign: React.FC<DroppableShiftAssignProps> = ({
     <div
       ref={drop}
       className={cn(
-        isOver && canDrop  && 'ring-2 ring-emerald-400 ring-inset rounded-lg bg-emerald-500/5',
+        isOver && canDrop && 'ring-2 ring-emerald-400 ring-inset rounded-lg bg-emerald-500/5',
         isOver && !canDrop && 'ring-2 ring-red-400 ring-inset rounded-lg opacity-60',
       )}
     >
@@ -544,79 +543,71 @@ const CoverageSignalBar: React.FC<CoverageSignalBarProps> = ({ pct, accent, segm
 };
 
 /* ============================================================
-   VIRTUALIZED SUBGROUP BODY
+   SUBGROUP BODY
    ------------------------------------------------------------
-   Each canonical group renders one of these inside its <table>.
-   Per-group instance of `useVirtualizer` keeps state isolated, and
-   `getScrollElement` returns the page-level Radix ScrollArea viewport
-   so all groups share the same scroll context.
-
-   Rows are <tr>s; the virtualizer assigns each one an absolute
-   `transform: translateY(...)` and uses `measureElement` to capture
-   the actual rendered height (subgroup rows vary with shift count).
-   The container <tbody> reserves `totalSize` of vertical space so the
-   surrounding table layout stays correct.
+   Each canonical group renders one of these inside its CSS-grid "table".
+   Rows are plain in-flow <div role="row">s laid out with `display: grid`
+   using the SAME `gridTemplateColumns` as the header, so columns always
+   align. Not virtualized — see note on the component below.
    ============================================================ */
 
-// Estimated subgroup row height (px). `measureElement` corrects drift.
-const SUBGROUP_ROW_HEIGHT = 110;
-const SUBGROUP_OVERSCAN = 4;
+// Shared column template for the subgroup grid. The header and every row
+// reference the SAME track sizes via one CSS-grid `gridTemplateColumns`, so
+// columns can never drift. This is the structural fix that replaced the old
+// <table>: its rows left the table's column model and the grid lines
+// misaligned. With CSS grid there are no per-cell widths to forget.
+const GROUP_COL_SUB_W = 160; // px — sticky sub-group label column
+const GROUP_COL_DAY_W = 280; // px — per-day column
+const groupGridCols = (dayCount: number) =>
+  `${GROUP_COL_SUB_W}px repeat(${dayCount}, ${GROUP_COL_DAY_W}px)`;
 
 interface VirtualizedSubGroupBodyProps {
   subGroups: VisualSubGroup[];
-  getScrollElement: () => HTMLElement | null;
-  /** Render the <td>...</td> contents for the given subgroup row. */
+  /** CSS grid track template shared with the header row so columns align. */
+  gridTemplateColumns: string;
+  /** Render the row's cell <div>s for the given subgroup row. */
   renderRow: (subGroup: VisualSubGroup, subIdx: number) => React.ReactNode;
   /** Optional className applied per row (e.g. for alternating borders). */
   getRowClassName?: (subGroup: VisualSubGroup, subIdx: number) => string;
-  // Skeleton rows are appended as a static slot below the virtualized
-  // rows when populated subgroups don't exist yet — they reserve space
-  // during the loading phase and must NOT be virtualized.
+  // Skeleton rows are appended as a static slot below the real rows
+  // when populated subgroups don't exist yet — they reserve space
+  // during the loading phase.
   skeletonSlot?: React.ReactNode;
 }
 
+// Subgroup rows are NOT virtualized: a group has only a handful of subgroups
+// (AM Base, PM Base, …), so windowing them buys nothing and the absolute
+// positioning it requires fought the Radix ScrollArea's scroll-element timing
+// (rows overlapped, then rendered empty). The heavy part is the shift CELLS,
+// which render either way. Plain in-flow grid rows are robust and align via the
+// shared `gridTemplateColumns`. (PeopleModeGrid keeps virtualization — it has
+// 100+ employee rows.)
 const VirtualizedSubGroupBody: React.FC<VirtualizedSubGroupBodyProps> = ({
   subGroups,
-  getScrollElement,
+  gridTemplateColumns,
   renderRow,
   getRowClassName,
   skeletonSlot,
 }) => {
-  const virtualizer = useVirtualizer({
-    count: subGroups.length,
-    getScrollElement,
-    estimateSize: () => SUBGROUP_ROW_HEIGHT,
-    overscan: SUBGROUP_OVERSCAN,
-    measureElement: (el) => el?.getBoundingClientRect().height ?? SUBGROUP_ROW_HEIGHT,
-  });
-  const virtualItems = virtualizer.getVirtualItems();
-  const totalSize = virtualizer.getTotalSize();
-
   return (
-    <tbody style={{ height: totalSize, position: 'relative' }}>
-      {virtualItems.map((vi) => {
-        const subGroup = subGroups[vi.index];
+    <div>
+      {subGroups.map((subGroup, idx) => {
         if (!subGroup) return null;
         return (
-          <tr
+          <div
+            role="row"
             key={subGroup.id}
-            ref={virtualizer.measureElement}
-            data-index={vi.index}
-            className={getRowClassName?.(subGroup, vi.index)}
+            className={cn('grid', getRowClassName?.(subGroup, idx))}
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              transform: `translateY(${vi.start}px)`,
+              gridTemplateColumns,
             }}
           >
-            {renderRow(subGroup, vi.index)}
-          </tr>
+            {renderRow(subGroup, idx)}
+          </div>
         );
       })}
       {skeletonSlot}
-    </tbody>
+    </div>
   );
 };
 
@@ -697,7 +688,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     try {
       const { shiftId, prevData } = lastShiftMove;
       await shiftsCommands.moveShift(shiftId, prevData);
-      
+
       toast({
         title: 'Move Undone',
         description: 'Shift has been restored to its previous position.',
@@ -715,26 +706,10 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     }
   }, [lastShiftMove, clearLastShiftMove, queryClient, toast]);
 
-  // ==================== ROW VIRTUALIZATION SETUP ====================
-  // Radix ScrollArea renders an internal Viewport element; that — not the
-  // Root — is the actual scroll container we need to feed `useVirtualizer`.
-  // We grab it once on mount via the documented data-attribute selector and
-  // memoize the getter so each per-group virtualizer references the same
-  // element. Returning a function (rather than the ref directly) lets the
-  // virtualizer poll lazily, which copes with the brief window before the
-  // viewport is attached.
+  // Page-level scroll container ref (the Radix ScrollArea). Subgroup rows are
+  // rendered in normal flow (not virtualized), so no scroll-element resolution
+  // is needed here anymore.
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const scrollViewportRef = useRef<HTMLElement | null>(null);
-  const getSubGroupScrollElement = useCallback(() => {
-    if (scrollViewportRef.current) return scrollViewportRef.current;
-    const root = scrollAreaRef.current;
-    if (!root) return null;
-    const viewport = root.querySelector<HTMLElement>(
-      '[data-radix-scroll-area-viewport]',
-    );
-    if (viewport) scrollViewportRef.current = viewport;
-    return viewport;
-  }, []);
 
   // ==================== DND DROP HANDLER ====================
   // externalShifts churns on every optimistic mutation (including the one
@@ -766,12 +741,12 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
         old.map(s =>
           s.id === item.shiftId
             ? {
-                ...s,
-                ...(targetDate !== item.shiftDate ? { shift_date: targetDate } : {}),
-                group_type: targetGroupType === 'unassigned' ? null : targetGroupType,
-                sub_group_name: targetSubGroup === 'Unassigned' ? null : targetSubGroup,
-                shift_group_id: targetGroupType === 'unassigned' ? null : targetGroupId,
-              }
+              ...s,
+              ...(targetDate !== item.shiftDate ? { shift_date: targetDate } : {}),
+              group_type: targetGroupType === 'unassigned' ? null : targetGroupType,
+              sub_group_name: targetSubGroup === 'Unassigned' ? null : targetSubGroup,
+              shift_group_id: targetGroupType === 'unassigned' ? null : targetGroupId,
+            }
             : s,
         ) as any,
       );
@@ -1623,7 +1598,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     // Safely extract date and time to avoid undefined which would cause isShiftLocked to artificially lock the shift
     const shiftDate = shift?.shift_date;
     const startTime = shift?.start_time;
-    
+
     // Check if shift is locked before toggling
     if (shift && shiftDate && startTime && isShiftLocked(shiftDate, startTime, 'roster_management')) {
       toast({
@@ -1815,8 +1790,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                             )}
                           >
                             <Send className="h-4 w-4 mr-2" />
-                            {isEmergency && (!shift.rawShift.assigned_employee_id || shift.rawShift.assignment_status === 'unassigned') 
-                              ? 'Publish (Assign Required)' 
+                            {isEmergency && (!shift.rawShift.assigned_employee_id || shift.rawShift.assignment_status === 'unassigned')
+                              ? 'Publish (Assign Required)'
                               : 'Publish Shift'}
                           </DropdownMenuItem>
                         )}
@@ -1828,8 +1803,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                           >
                             <Undo2 className="h-4 w-4 mr-2" />
                             {shift.rawShift.lifecycle_status === 'Published' &&
-                             shift.rawShift.assignment_status === 'assigned' &&
-                             !shift.rawShift.assignment_outcome
+                              shift.rawShift.assignment_status === 'assigned' &&
+                              !shift.rawShift.assignment_outcome
                               ? 'Retract Offer & Move to Draft'
                               : 'Unpublish Shift'}
                           </DropdownMenuItem>
@@ -1852,7 +1827,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
             );
           })()}
 
-          </DropdownMenuContent>
+        </DropdownMenuContent>
       </DropdownMenu>
     );
 
@@ -1953,126 +1928,126 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
         {/* Main Content (week / 3-day / month grid) */}
         {viewType !== 'day' && (
-        <ScrollArea ref={scrollAreaRef} className="flex-1">
-          {/* Shift Card Legend (collapsible) */}
-          {showLegend && (
-            <div className="px-4 pt-4">
-              <ShiftCardLegend />
-            </div>
-          )}
+          <ScrollArea ref={scrollAreaRef} className="flex-1">
+            {/* Shift Card Legend (collapsible) */}
+            {showLegend && (
+              <div className="px-4 pt-4">
+                <ShiftCardLegend />
+              </div>
+            )}
 
-          <div className="p-4 space-y-6">
-            {visualGroups.map((group) => {
-              const glassStyle = group.type === 'unassigned'
-                ? UNASSIGNED_GLASS_STYLE
-                : GLASS_STYLES[group.type as TemplateGroupType] ?? UNASSIGNED_GLASS_STYLE;
-              const totalShifts = group.subGroups.reduce(
-                (acc, sg) => acc + Object.values(sg.shifts).reduce((a, s) => a + s.length, 0),
-                0
-              );
-              const assignedShifts = group.subGroups.reduce(
-                (acc, sg) => acc + Object.values(sg.shifts).reduce((a, s) => a + s.filter(sh => sh.assignedEmployeeId).length, 0),
-                0
-              );
-              const coveragePct = totalShifts > 0 ? Math.min(100, Math.round((assignedShifts / totalShifts) * 100)) : 100;
+            <div className="p-4 space-y-6">
+              {visualGroups.map((group) => {
+                const glassStyle = group.type === 'unassigned'
+                  ? UNASSIGNED_GLASS_STYLE
+                  : GLASS_STYLES[group.type as TemplateGroupType] ?? UNASSIGNED_GLASS_STYLE;
+                const totalShifts = group.subGroups.reduce(
+                  (acc, sg) => acc + Object.values(sg.shifts).reduce((a, s) => a + s.length, 0),
+                  0
+                );
+                const assignedShifts = group.subGroups.reduce(
+                  (acc, sg) => acc + Object.values(sg.shifts).reduce((a, s) => a + s.filter(sh => sh.assignedEmployeeId).length, 0),
+                  0
+                );
+                const coveragePct = totalShifts > 0 ? Math.min(100, Math.round((assignedShifts / totalShifts) * 100)) : 100;
 
-              return (
-                <div
-                  key={group.type}
-                  // CLS guard:
-                  //  - min-h-[420px] reserves enough vertical space for a
-                  //    typical 3-5 subgroup table so siblings below don't
-                  //    shift when rows materialize after shifts load.
-                  //  - [contain:layout] scopes any remaining internal reflow
-                  //    so children's growth doesn't ripple out.
-                  className={cn('rounded-2xl overflow-hidden min-h-[420px] [contain:layout]', glassStyle.container)}
-                >
-                  {/* Group Header with Collapse Toggle + Stats */}
-                  <div className={cn('px-5 py-3', glassStyle.header)}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {/* Collapse Toggle Button */}
-                        <button
-                          onClick={() => toggleGroupCollapse(group.id)}
-                          className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/20 transition-colors"
-                          aria-label={collapsedGroups.has(group.id) ? 'Expand group' : 'Collapse group'}
-                        >
-                          {collapsedGroups.has(group.id) ? (
-                            <ChevronRight className="h-4 w-4 text-white" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4 text-white" />
-                          )}
-                        </button>
-                        <div className="w-3 h-3 rounded-full bg-white/80 shadow-lg" />
-                        <div>
-                          <h3 className={cn('text-lg font-bold tracking-wide leading-tight', glassStyle.headerText)}>
-                            {group.name}
-                          </h3>
-                          {/* Data Ops label row */}
-                          <div className="flex items-center gap-3 mt-1">
-                            <CoverageSignalBar pct={coveragePct} accent={glassStyle.accent} />
-                            <span className="text-[10px] tracking-[0.12em] uppercase font-mono text-white/50">
-                              {assignedShifts}/{totalShifts} filled
-                              {group.totalHours !== undefined && group.totalHours > 0 && (
-                                <> · <span className="tabular-nums">{group.totalHours.toFixed(1)}h</span></>
-                              )}
-                            </span>
+                return (
+                  <div
+                    key={group.type}
+                    // CLS guard:
+                    //  - min-h-[420px] reserves enough vertical space for a
+                    //    typical 3-5 subgroup table so siblings below don't
+                    //    shift when rows materialize after shifts load.
+                    //  - [contain:layout] scopes any remaining internal reflow
+                    //    so children's growth doesn't ripple out.
+                    className={cn('rounded-2xl overflow-hidden min-h-[420px] [contain:layout]', glassStyle.container)}
+                  >
+                    {/* Group Header with Collapse Toggle + Stats */}
+                    <div className={cn('px-5 py-3', glassStyle.header)}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {/* Collapse Toggle Button */}
+                          <button
+                            onClick={() => toggleGroupCollapse(group.id)}
+                            className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/20 transition-colors"
+                            aria-label={collapsedGroups.has(group.id) ? 'Expand group' : 'Collapse group'}
+                          >
+                            {collapsedGroups.has(group.id) ? (
+                              <ChevronRight className="h-4 w-4 text-white" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-white" />
+                            )}
+                          </button>
+                          <div className="w-3 h-3 rounded-full bg-white/80 shadow-lg" />
+                          <div>
+                            <h3 className={cn('text-lg font-bold tracking-wide leading-tight', glassStyle.headerText)}>
+                              {group.name}
+                            </h3>
+                            {/* Data Ops label row */}
+                            <div className="flex items-center gap-3 mt-1">
+                              <CoverageSignalBar pct={coveragePct} accent={glassStyle.accent} />
+                              <span className="text-[10px] tracking-[0.12em] uppercase font-mono text-white/50">
+                                {assignedShifts}/{totalShifts} filled
+                                {group.totalHours !== undefined && group.totalHours > 0 && (
+                                  <> · <span className="tabular-nums">{group.totalHours.toFixed(1)}h</span></>
+                                )}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        {/* Inline Group Stats */}
-                        <GroupStatsSummary
-                          shifts={externalShifts.filter(s => s.group_type === group.type)}
-                          compact
-                          className="text-white/70"
-                        />
-                        <Badge className="bg-white/20 border-white/30 text-white backdrop-blur-sm font-mono tabular-nums">
-                          {totalShifts} shift{totalShifts !== 1 ? 's' : ''}
-                        </Badge>
-                        {/* Add Subgroup Button (Header) — only for canonical groups, not 'unassigned' */}
-                        {canEdit && group.type !== 'unassigned' && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAddSubGroup(group);
-                            }}
-                            className={cn(
-                              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all border shadow-sm",
-                              glassStyle.accent === 'emerald'
-                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/30"
-                                : glassStyle.accent === 'blue'
-                                  ? "bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/30"
-                                  : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/30"
-                            )}
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                            Add Subgroup
-                          </button>
-                        )}
+                        <div className="flex items-center gap-3">
+                          {/* Inline Group Stats */}
+                          <GroupStatsSummary
+                            shifts={externalShifts.filter(s => s.group_type === group.type)}
+                            compact
+                            className="text-white/70"
+                          />
+                          <Badge className="bg-white/20 border-white/30 text-white backdrop-blur-sm font-mono tabular-nums">
+                            {totalShifts} shift{totalShifts !== 1 ? 's' : ''}
+                          </Badge>
+                          {/* Add Subgroup Button (Header) — only for canonical groups, not 'unassigned' */}
+                          {canEdit && group.type !== 'unassigned' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddSubGroup(group);
+                              }}
+                              className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all border shadow-sm",
+                                glassStyle.accent === 'emerald'
+                                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/30"
+                                  : glassStyle.accent === 'blue'
+                                    ? "bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/30"
+                                    : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/30"
+                              )}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Add Subgroup
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Collapsible Content */}
-                  {!collapsedGroups.has(group.id) && (
-                    <div className="overflow-auto">
-                      <table className="w-full min-w-max border-collapse relative">
-                        <thead>
-                          <tr className="bg-muted/30 sticky top-0 z-20">
-                            <th className="sticky left-0 z-10 backdrop-blur-sm border-r border-b border-border px-4 py-3 text-left min-w-[160px] bg-muted/30">
+                    {/* Collapsible Content */}
+                    {!collapsedGroups.has(group.id) && (
+                      <div className="overflow-auto">
+                        <div role="table" className="relative" style={{ width: 'max-content', minWidth: '100%' }}>
+                          <div role="row" className="grid sticky top-0 z-20 bg-muted/30" style={{ gridTemplateColumns: groupGridCols(dates.length) }}>
+                            <div role="columnheader" className="sticky left-0 z-10 flex items-center backdrop-blur-sm border-r border-b border-border px-4 py-3 text-left bg-muted/30">
                               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.14em] font-mono">Sub-Group</span>
-                            </th>
+                            </div>
                             {dates.map((date, idx) => {
                               const dateIsToday = isToday(date);
                               const dateIsPast = isSydneyPast(date);
                               const isGhost = !isDateInTemplate(date);
 
                               return (
-                                <th
+                                <div
+                                  role="columnheader"
                                   key={idx}
                                   className={cn(
-                                    'px-3 py-3 text-center min-w-[280px] bg-muted/30 border-b',
+                                    'px-3 py-3 text-center bg-muted/30 border-b',
                                     idx < dates.length - 1 && 'border-r border-border',
                                     // Ghost cell styling
                                     isGhost && 'bg-muted/40 border-dashed border-border opacity-50',
@@ -2083,321 +2058,323 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                   )}
                                 >
                                   <div className="flex flex-col items-center gap-1.5 pt-1">
-                                    <div className={cn(
-                                      "text-[10px] font-bold uppercase tracking-[0.12em] font-mono leading-tight",
-                                      isGhost
-                                        ? 'text-muted-foreground/30'
-                                        : dateIsToday
-                                          ? 'text-primary'
-                                          : 'text-muted-foreground'
-                                    )}>
-                                      {format(date, 'EEE')}
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
                                       <div className={cn(
-                                        "text-sm font-mono tabular-nums font-medium leading-none",
+                                        "text-[10px] font-bold uppercase tracking-[0.12em] font-mono leading-tight",
                                         isGhost
                                           ? 'text-muted-foreground/30'
                                           : dateIsToday
-                                            ? 'text-primary font-bold'
-                                            : 'text-muted-foreground/50'
+                                            ? 'text-primary'
+                                            : 'text-muted-foreground'
                                       )}>
-                                        {format(date, 'MMM d')}
+                                        {format(date, 'EEE')}
                                       </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <div className={cn(
+                                          "text-sm font-mono tabular-nums font-medium leading-none",
+                                          isGhost
+                                            ? 'text-muted-foreground/30'
+                                            : dateIsToday
+                                              ? 'text-primary font-bold'
+                                              : 'text-muted-foreground/50'
+                                        )}>
+                                          {format(date, 'MMM d')}
+                                        </div>
 
-                                      {/* Roster Indicator (from DB status) - Robust matching */}
-                                      {rosterStructures.some(r => {
-                                        if (!r.startDate) return false;
-                                        try {
-                                          return isSameDay(parseISO(r.startDate), date);
-                                        } catch {
-                                          return false;
-                                        }
-                                      }) && (
-                                          <div
-                                            className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/30 border border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.3)] hover:scale-125 transition-transform flex-shrink-0 cursor-help"
-                                            title="Active Roster Found"
-                                          >
-                                            <Zap className="h-3 w-3 fill-emerald-400 text-emerald-400 drop-shadow-[0_0_4px_rgba(16,185,129,0.9)]" />
-                                          </div>
-                                        )}
+                                        {/* Roster Indicator (from DB status) - Robust matching */}
+                                        {rosterStructures.some(r => {
+                                          if (!r.startDate) return false;
+                                          try {
+                                            return isSameDay(parseISO(r.startDate), date);
+                                          } catch {
+                                            return false;
+                                          }
+                                        }) && (
+                                            <div
+                                              className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/30 border border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.3)] hover:scale-125 transition-transform flex-shrink-0 cursor-help"
+                                              title="Active Roster Found"
+                                            >
+                                              <Zap className="h-3 w-3 fill-emerald-400 text-emerald-400 drop-shadow-[0_0_4px_rgba(16,185,129,0.9)]" />
+                                            </div>
+                                          )}
+                                      </div>
                                     </div>
                                   </div>
-                                </th>
-                              );
-                            })}
-                          </tr>
-                        </thead>
-                        <VirtualizedSubGroupBody
-                          subGroups={group.subGroups}
-                          getScrollElement={getSubGroupScrollElement}
-                          getRowClassName={(_subGroup, subIdx) => cn(
-                            'transition-colors hover:bg-accent/20',
-                            subIdx < group.subGroups.length - 1 && 'border-b border-border',
-                          )}
-                          skeletonSlot={
-                            isShiftsLoading && group.subGroups.length === 0
-                              ? Array.from({ length: 3 }).map((_, skelIdx) => (
-                                  <tr
+                                );
+                              })}
+                          </div>
+                          <VirtualizedSubGroupBody
+                            subGroups={group.subGroups}
+                            gridTemplateColumns={groupGridCols(dates.length)}
+                            getRowClassName={(_subGroup, subIdx) => cn(
+                              'transition-colors hover:bg-accent/20',
+                              subIdx < group.subGroups.length - 1 && 'border-b border-border',
+                            )}
+                            skeletonSlot={
+                              isShiftsLoading && group.subGroups.length === 0
+                                ? Array.from({ length: 3 }).map((_, skelIdx) => (
+                                  <div
+                                    role="row"
                                     key={`skel-${skelIdx}`}
                                     aria-hidden="true"
                                     className={cn(
-                                      'animate-pulse',
+                                      'grid animate-pulse',
                                       skelIdx < 2 && 'border-b border-border',
                                     )}
+                                    style={{ gridTemplateColumns: groupGridCols(dates.length) }}
                                   >
-                                    <td className="sticky left-0 z-10 bg-card border-r border-border px-4 py-3 align-top">
+                                    <div className="sticky left-0 z-10 bg-card border-r border-border px-4 py-3">
                                       <div className="h-4 w-24 rounded bg-muted/50" />
-                                    </td>
+                                    </div>
                                     {dates.map((_, dateIdx) => (
-                                      <td
+                                      <div
                                         key={dateIdx}
                                         className={cn(
-                                          'px-2 py-3 align-top min-h-[100px]',
+                                          'px-2 py-3 min-h-[100px]',
                                           dateIdx < dates.length - 1 && 'border-r border-border',
                                         )}
                                       >
                                         <div className="h-[88px] rounded-lg bg-muted/20" />
-                                      </td>
-                                    ))}
-                                  </tr>
-                                ))
-                              : null
-                          }
-                          renderRow={(subGroup) => (
-                            <>
-                              <td className="sticky left-0 z-10 backdrop-blur-sm border-r border-border px-4 py-3 align-top bg-card group-hover:bg-accent/30 transition-colors group">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-sm font-medium text-foreground/80 group-hover:text-foreground transition-colors overflow-hidden text-ellipsis whitespace-nowrap">
-                                    {subGroup.name}
-                                  </span>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-9 w-9 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="start" className="w-48 bg-gray-900 border-gray-800">
-                                      <DropdownMenuItem 
-                                        className="gap-2 focus:bg-white/5 cursor-pointer"
-                                        onClick={() => {
-                                          setActiveSubGroup({ 
-                                            id: subGroup.id, 
-                                            name: subGroup.name,
-                                            groupExternalId: group.type || '' 
-                                          });
-                                          setIsRenameOpen(true);
-                                        }}
-                                      >
-                                        <Edit2 className="h-3.5 w-3.5" />
-                                        Rename
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem 
-                                        className="gap-2 focus:bg-white/5 cursor-pointer"
-                                        onClick={() => {
-                                          setActiveSubGroup({ 
-                                            id: subGroup.id, 
-                                            name: subGroup.name,
-                                            groupExternalId: group.type || '' 
-                                          });
-                                          setIsCloneOpen(true);
-                                        }}
-                                      >
-                                        <ArrowLeftRight className="h-3.5 w-3.5" />
-                                        Clone
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator className="bg-white/10" />
-                                      <DropdownMenuItem 
-                                        className="gap-2 text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
-                                        onClick={() => {
-                                          setActiveSubGroup({ 
-                                            id: subGroup.id, 
-                                            name: subGroup.name,
-                                            groupExternalId: group.type || '' 
-                                          });
-                                          setIsDeleteOpen(true);
-                                        }}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
-                              </td>
-
-                              {dates.map((date, dateIdx) => {
-                                const dateKey = format(date, 'yyyy-MM-dd');
-                                const cellShifts = subGroup.shifts[dateKey] || [];
-                                const cellIsToday = isToday(date);
-                                const cellIsPast = isSydneyPast(date);
-                                const isGhost = !isDateInTemplate(date);
-
-                                return (
-                                  <td
-                                    key={dateIdx}
-                                    className={cn(
-                                      'px-2 py-3 align-top min-h-[100px] relative group',
-                                      dateIdx < dates.length - 1 && 'border-r border-border',
-                                      // Ghost cell styling
-                                      isGhost && 'bg-muted/30 border-dashed border-border cursor-pointer hover:bg-muted/50',
-                                      // Today highlighting (only if not ghost)
-                                      !isGhost && cellIsToday && 'bg-primary/5',
-                                      // Past date styling (only if not ghost and not today)
-                                      !isGhost && cellIsPast && !cellIsToday && 'opacity-50'
-                                    )}
-                                    onClick={isGhost && onNavigateToMonth ? () => onNavigateToMonth(date) : undefined}
-                                  >
-                                    {isGhost ? (
-                                      // Ghost Cell Content - "Go to [Month]" link
-                                      <div className="absolute inset-0 flex items-center justify-center">
-                                        <span className="text-muted-foreground text-sm font-medium hover:text-foreground transition-colors">
-                                          Go to {format(date, 'MMMM')} →
-                                        </span>
                                       </div>
-                                    ) : (
-                                      // Active Cell Content - Shifts and Add button
-                                      <DroppableCell
-                                        groupType={group.type}
-                                        subGroupName={subGroup.name}
-                                        groupId={group.id}
-                                        subGroupId={subGroup.id}
-                                        date={dateKey}
-                                        onDrop={handleShiftDrop}
-                                        disabled={isBulkMode || !canEdit || cellIsPast || !isDnDModeActive}
-                                        className="grid grid-cols-1 gap-1.5 min-h-[60px]"
-                                      >
-                                        {isBucketView ? (() => {
-                                          // Single O(n) Map lookup per cell — replaces 5 inline
-                                          // cellShifts.find() chains that were O(n²) overall and
-                                          // accounted for a meaningful slice of the Bucket-view
-                                          // toggle INP (~936ms on a 1.4k-cell grid).
-                                          const cellShiftsById = new Map(cellShifts.map(s => [s.id, s]));
-                                          const bucketInputShifts = cellShifts.map(s => ({
-                                            id: s.id,
-                                            startTime: s.startTime,
-                                            endTime: s.endTime,
-                                            isPublished: s.isPublished,
-                                            isDraft: s.isDraft,
-                                            assignedEmployeeId: s.assignedEmployeeId,
-                                            isLocked: s.isLocked ?? isShiftLocked(s.rawShift.shift_date, s.rawShift.start_time, 'roster_management'),
-                                          }));
-                                          const buckets = groupShiftsIntoBuckets(bucketInputShifts, subGroup.name, dateKey);
-                                          const accentColor = group.color?.startsWith('#')
-                                            ? group.color
-                                            : (group.color === 'blue' ? '#3b82f6' :
-                                               group.color === 'emerald' ? '#10b981' :
-                                               group.color === 'red' ? '#ef4444' : '#6b7280');
-
-                                          return buckets.map(bucket => {
-                                            const bucketShiftData: BucketShiftData[] = bucket.shiftIds.map(sid => {
-                                              const sd = cellShiftsById.get(sid)!;
-                                              return {
-                                                id: sd.id,
-                                                role: sd.role,
-                                                startTime: sd.startTime,
-                                                endTime: sd.endTime,
-                                                employeeName: sd.employeeName,
-                                                isAssigned: !!sd.assignedEmployeeId,
-                                                isPublished: sd.isPublished,
-                                                isDraft: sd.isDraft,
-                                                isLocked: sd.isLocked ?? isShiftLocked(sd.rawShift.shift_date, sd.rawShift.start_time, 'roster_management'),
-                                                assignedEmployeeId: sd.assignedEmployeeId,
-                                              };
+                                    ))}
+                                  </div>
+                                ))
+                                : null
+                            }
+                            renderRow={(subGroup) => (
+                              <>
+                                <div role="cell" className="sticky left-0 z-10 backdrop-blur-sm border-r border-border px-4 py-3 bg-card group-hover:bg-accent/30 transition-colors group">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-sm font-medium text-foreground/80 group-hover:text-foreground transition-colors overflow-hidden text-ellipsis whitespace-nowrap">
+                                      {subGroup.name}
+                                    </span>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-9 w-9 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                                          <MoreHorizontal className="h-4 w-4" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="start" className="w-48 bg-gray-900 border-gray-800">
+                                        <DropdownMenuItem
+                                          className="gap-2 focus:bg-white/5 cursor-pointer"
+                                          onClick={() => {
+                                            setActiveSubGroup({
+                                              id: subGroup.id,
+                                              name: subGroup.name,
+                                              groupExternalId: group.type || ''
                                             });
+                                            setIsRenameOpen(true);
+                                          }}
+                                        >
+                                          <Edit2 className="h-3.5 w-3.5" />
+                                          Rename
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          className="gap-2 focus:bg-white/5 cursor-pointer"
+                                          onClick={() => {
+                                            setActiveSubGroup({
+                                              id: subGroup.id,
+                                              name: subGroup.name,
+                                              groupExternalId: group.type || ''
+                                            });
+                                            setIsCloneOpen(true);
+                                          }}
+                                        >
+                                          <ArrowLeftRight className="h-3.5 w-3.5" />
+                                          Clone
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator className="bg-white/10" />
+                                        <DropdownMenuItem
+                                          className="gap-2 text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
+                                          onClick={() => {
+                                            setActiveSubGroup({
+                                              id: subGroup.id,
+                                              name: subGroup.name,
+                                              groupExternalId: group.type || ''
+                                            });
+                                            setIsDeleteOpen(true);
+                                          }}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </div>
 
-                                            return (
-                                              <ShiftBucket
-                                                key={bucket.key}
-                                                bucket={bucket}
-                                                shifts={bucketShiftData}
-                                                canEdit={canEdit}
-                                                accentColor={accentColor}
-                                                onEditShift={(shiftId) => {
-                                                  const sd = cellShiftsById.get(shiftId);
-                                                  if (sd) handleEditShift(sd, group, subGroup, date);
-                                                }}
-                                                onDeleteShift={(shiftId) => {
-                                                  const sd = cellShiftsById.get(shiftId);
-                                                  if (sd) handleDeleteShift(sd);
-                                                }}
-                                                onPublishShift={(shiftId) => {
-                                                  const sd = cellShiftsById.get(shiftId);
-                                                  if (sd) handleRequestPublish(sd);
-                                                }}
-                                                onUnpublishShift={(shiftId) => {
-                                                  const sd = cellShiftsById.get(shiftId);
-                                                  if (sd) handleRequestUnpublish(sd);
-                                                }}
-                                                onBulkPublish={(shiftIds) => {
-                                                  // Build a flat id→ShiftDisplay map from visualGroups
-                                                  const shiftLookup = new Map<string, ShiftDisplay>();
-                                                  for (const vg of visualGroups) {
-                                                    for (const sg of vg.subGroups) {
-                                                      for (const dayShifts of Object.values(sg.shifts)) {
-                                                        for (const sd of dayShifts) shiftLookup.set(sd.id, sd);
+                                {dates.map((date, dateIdx) => {
+                                  const dateKey = format(date, 'yyyy-MM-dd');
+                                  const cellShifts = subGroup.shifts[dateKey] || [];
+                                  const cellIsToday = isToday(date);
+                                  const cellIsPast = isSydneyPast(date);
+                                  const isGhost = !isDateInTemplate(date);
+
+                                  return (
+                                    <div
+                                      role="cell"
+                                      key={dateIdx}
+                                      className={cn(
+                                        'px-2 py-3 min-h-[100px] relative group',
+                                        dateIdx < dates.length - 1 && 'border-r border-border',
+                                        // Ghost cell styling
+                                        isGhost && 'bg-muted/30 border-dashed border-border cursor-pointer hover:bg-muted/50',
+                                        // Today highlighting (only if not ghost)
+                                        !isGhost && cellIsToday && 'bg-primary/5',
+                                        // Past date styling (only if not ghost and not today)
+                                        !isGhost && cellIsPast && !cellIsToday && 'opacity-50'
+                                      )}
+                                      onClick={isGhost && onNavigateToMonth ? () => onNavigateToMonth(date) : undefined}
+                                    >
+                                      {isGhost ? (
+                                        // Ghost Cell Content - "Go to [Month]" link
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                          <span className="text-muted-foreground text-sm font-medium hover:text-foreground transition-colors">
+                                            Go to {format(date, 'MMMM')} →
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        // Active Cell Content - Shifts and Add button
+                                        <DroppableCell
+                                          groupType={group.type}
+                                          subGroupName={subGroup.name}
+                                          groupId={group.id}
+                                          subGroupId={subGroup.id}
+                                          date={dateKey}
+                                          onDrop={handleShiftDrop}
+                                          disabled={isBulkMode || !canEdit || cellIsPast || !isDnDModeActive}
+                                          className="grid grid-cols-1 gap-1.5 min-h-[60px]"
+                                        >
+                                          {isBucketView ? (() => {
+                                            // Single O(n) Map lookup per cell — replaces 5 inline
+                                            // cellShifts.find() chains that were O(n²) overall and
+                                            // accounted for a meaningful slice of the Bucket-view
+                                            // toggle INP (~936ms on a 1.4k-cell grid).
+                                            const cellShiftsById = new Map(cellShifts.map(s => [s.id, s]));
+                                            const bucketInputShifts = cellShifts.map(s => ({
+                                              id: s.id,
+                                              startTime: s.startTime,
+                                              endTime: s.endTime,
+                                              isPublished: s.isPublished,
+                                              isDraft: s.isDraft,
+                                              assignedEmployeeId: s.assignedEmployeeId,
+                                              isLocked: s.isLocked ?? isShiftLocked(s.rawShift.shift_date, s.rawShift.start_time, 'roster_management'),
+                                            }));
+                                            const buckets = groupShiftsIntoBuckets(bucketInputShifts, subGroup.name, dateKey);
+                                            const accentColor = group.color?.startsWith('#')
+                                              ? group.color
+                                              : (group.color === 'blue' ? '#3b82f6' :
+                                                group.color === 'emerald' ? '#10b981' :
+                                                  group.color === 'red' ? '#ef4444' : '#6b7280');
+
+                                            return buckets.map(bucket => {
+                                              const bucketShiftData: BucketShiftData[] = bucket.shiftIds.map(sid => {
+                                                const sd = cellShiftsById.get(sid)!;
+                                                return {
+                                                  id: sd.id,
+                                                  role: sd.role,
+                                                  startTime: sd.startTime,
+                                                  endTime: sd.endTime,
+                                                  employeeName: sd.employeeName,
+                                                  isAssigned: !!sd.assignedEmployeeId,
+                                                  isPublished: sd.isPublished,
+                                                  isDraft: sd.isDraft,
+                                                  isLocked: sd.isLocked ?? isShiftLocked(sd.rawShift.shift_date, sd.rawShift.start_time, 'roster_management'),
+                                                  assignedEmployeeId: sd.assignedEmployeeId,
+                                                };
+                                              });
+
+                                              return (
+                                                <ShiftBucket
+                                                  key={bucket.key}
+                                                  bucket={bucket}
+                                                  shifts={bucketShiftData}
+                                                  canEdit={canEdit}
+                                                  accentColor={accentColor}
+                                                  onEditShift={(shiftId) => {
+                                                    const sd = cellShiftsById.get(shiftId);
+                                                    if (sd) handleEditShift(sd, group, subGroup, date);
+                                                  }}
+                                                  onDeleteShift={(shiftId) => {
+                                                    const sd = cellShiftsById.get(shiftId);
+                                                    if (sd) handleDeleteShift(sd);
+                                                  }}
+                                                  onPublishShift={(shiftId) => {
+                                                    const sd = cellShiftsById.get(shiftId);
+                                                    if (sd) handleRequestPublish(sd);
+                                                  }}
+                                                  onUnpublishShift={(shiftId) => {
+                                                    const sd = cellShiftsById.get(shiftId);
+                                                    if (sd) handleRequestUnpublish(sd);
+                                                  }}
+                                                  onBulkPublish={(shiftIds) => {
+                                                    // Build a flat id→ShiftDisplay map from visualGroups
+                                                    const shiftLookup = new Map<string, ShiftDisplay>();
+                                                    for (const vg of visualGroups) {
+                                                      for (const sg of vg.subGroups) {
+                                                        for (const dayShifts of Object.values(sg.shifts)) {
+                                                          for (const sd of dayShifts) shiftLookup.set(sd.id, sd);
+                                                        }
                                                       }
                                                     }
-                                                  }
 
-                                                  // Filter out S1+emergent shifts (unassigned, TTS < 4h)
-                                                  const publishable: string[] = [];
-                                                  const skipped: string[] = [];
-                                                  for (const id of shiftIds) {
-                                                    const sd = shiftLookup.get(id);
-                                                    if (sd && !sd.rawShift.assigned_employee_id && sd.rawShift.assignment_status === 'unassigned') {
-                                                      const urg = computeShiftUrgency(sd.rawShift.shift_date ?? '', sd.rawShift.start_time ?? '', sd.rawShift.start_at ?? undefined);
-                                                      if (urg === 'emergent') { skipped.push(id); continue; }
+                                                    // Filter out S1+emergent shifts (unassigned, TTS < 4h)
+                                                    const publishable: string[] = [];
+                                                    const skipped: string[] = [];
+                                                    for (const id of shiftIds) {
+                                                      const sd = shiftLookup.get(id);
+                                                      if (sd && !sd.rawShift.assigned_employee_id && sd.rawShift.assignment_status === 'unassigned') {
+                                                        const urg = computeShiftUrgency(sd.rawShift.shift_date ?? '', sd.rawShift.start_time ?? '', sd.rawShift.start_at ?? undefined);
+                                                        if (urg === 'emergent') { skipped.push(id); continue; }
+                                                      }
+                                                      publishable.push(id);
                                                     }
-                                                    publishable.push(id);
-                                                  }
 
-                                                  if (publishable.length > 0) {
-                                                    bulkPublishMutation.mutate(publishable, {
-                                                      onSuccess: () => {
-                                                        const skipMsg = skipped.length > 0
-                                                          ? ` ${skipped.length} skipped (Emergent Restriction).`
-                                                          : '';
-                                                        toast({
-                                                          title: 'Bulk Publish Complete',
-                                                          description: `${publishable.length} shift${publishable.length !== 1 ? 's' : ''} published.${skipMsg}`,
-                                                        });
-                                                      },
-                                                    });
-                                                  } else if (skipped.length > 0) {
-                                                    toast({
-                                                      title: 'All Shifts Skipped',
-                                                      description: `${skipped.length} shift${skipped.length !== 1 ? 's' : ''} skipped — all are within the 4h emergent window and must be assigned before publishing.`,
-                                                      variant: 'destructive',
-                                                    });
-                                                  }
-                                                }}
-                                                onBulkUnpublish={(shiftIds) => {
-                                                  bulkUnpublishMutation.mutate(shiftIds);
-                                                }}
-                                                onBulkDelete={(shiftIds) => {
-                                                  bulkDeleteMutation.mutate(shiftIds);
-                                                }}
-                                              />
-                                            );
-                                          });
-                                        })() : (
-                                          cellShifts.map((shift, shiftIdx) => (
-                                            <div
-                                              key={shift.id}
-                                              style={{ '--i': shiftIdx, animationDelay: `calc(${shiftIdx} * 40ms)` } as React.CSSProperties}
-                                              className="animate-[slideUpFade_0.25s_ease_forwards]"
-                                            >
+                                                    if (publishable.length > 0) {
+                                                      bulkPublishMutation.mutate(publishable, {
+                                                        onSuccess: () => {
+                                                          const skipMsg = skipped.length > 0
+                                                            ? ` ${skipped.length} skipped (Emergent Restriction).`
+                                                            : '';
+                                                          toast({
+                                                            title: 'Bulk Publish Complete',
+                                                            description: `${publishable.length} shift${publishable.length !== 1 ? 's' : ''} published.${skipMsg}`,
+                                                          });
+                                                        },
+                                                      });
+                                                    } else if (skipped.length > 0) {
+                                                      toast({
+                                                        title: 'All Shifts Skipped',
+                                                        description: `${skipped.length} shift${skipped.length !== 1 ? 's' : ''} skipped — all are within the 4h emergent window and must be assigned before publishing.`,
+                                                        variant: 'destructive',
+                                                      });
+                                                    }
+                                                  }}
+                                                  onBulkUnpublish={(shiftIds) => {
+                                                    bulkUnpublishMutation.mutate(shiftIds);
+                                                  }}
+                                                  onBulkDelete={(shiftIds) => {
+                                                    bulkDeleteMutation.mutate(shiftIds);
+                                                  }}
+                                                />
+                                              );
+                                            });
+                                          })() : (
+                                            cellShifts.map((shift, shiftIdx) => (
+                                              <div
+                                                key={shift.id}
+                                                style={{ '--i': shiftIdx, animationDelay: `calc(${shiftIdx} * 40ms)` } as React.CSSProperties}
+                                                className="animate-[slideUpFade_0.25s_ease_forwards]"
+                                              >
                                                 <DraggableShiftCard
                                                   shift={shift}
                                                   groupType={group.type}
                                                   subGroupName={subGroup.name}
                                                   disabled={
-                                                    isBulkMode || 
-                                                    cellIsPast || 
+                                                    isBulkMode ||
+                                                    cellIsPast ||
                                                     isSydneyStarted(format(date, 'yyyy-MM-dd'), shift.startTime) ||
-                                                    !canEdit || 
-                                                    !isDnDModeActive || 
+                                                    !canEdit ||
+                                                    !isDnDModeActive ||
                                                     (isDnDModeActive && !shift.isDraft)
                                                   }
                                                 >
@@ -2414,53 +2391,53 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                                     renderShiftCard(shift, group, subGroup, date)
                                                   )}
                                                 </DraggableShiftCard>
-                                            </div>
-                                          ))
-                                        )}
+                                              </div>
+                                            ))
+                                          )}
 
-                                        {/* Unified Add Shift Button — Repositioned to corner if shifts exist */}
-                                        {!isBulkMode && canEdit && !cellIsPast && (
-                                          <div className={cn(
-                                            "absolute inset-0 flex pointer-events-none z-10",
-                                            cellShifts.length > 0 ? "items-end justify-end p-2" : "items-center justify-center"
-                                          )}>
-                                            <button
-                                              onClick={() => handleAddShift(group, subGroup, date)}
-                                              className={cn(
-                                                "flex items-center justify-center rounded-full transition-all duration-300 pointer-events-auto",
-                                                "bg-primary/30 text-primary border border-primary/40 backdrop-blur-md",
-                                                "hover:bg-primary/60 hover:scale-110 active:scale-95 shadow-[0_0_20px_rgba(var(--primary),0.3)]",
-                                                cellShifts.length > 0 
-                                                  ? "w-9 h-9 opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:scale-100"
-                                                  : "w-9 h-9 opacity-40 scale-90 hover:opacity-100 [@media(hover:none)]:opacity-100",
-                                                "group/add"
-                                              )}
-                                              title="Add Shift"
-                                            >
-                                              <Plus className={cn(
-                                                cellShifts.length > 0 ? "h-4 w-4" : "h-5 w-5",
-                                                "transition-transform group-hover/add:rotate-90"
-                                              )} />
-                                            </button>
-                                          </div>
-                                        )}
-                                      </DroppableCell>
-                                    )}
-                                  </td>
-                                );
-                              })}
-                            </>
-                          )}
-                        />
-                      </table>
-                    </div>
-                  )
-                  }
-                </div>
-              );
-            })}
-          </div>
-        </ScrollArea>
+                                          {/* Unified Add Shift Button — Repositioned to corner if shifts exist */}
+                                          {!isBulkMode && canEdit && !cellIsPast && (
+                                            <div className={cn(
+                                              "absolute inset-0 flex pointer-events-none z-10",
+                                              cellShifts.length > 0 ? "items-end justify-end p-2" : "items-center justify-center"
+                                            )}>
+                                              <button
+                                                onClick={() => handleAddShift(group, subGroup, date)}
+                                                className={cn(
+                                                  "flex items-center justify-center rounded-full transition-all duration-300 pointer-events-auto",
+                                                  "bg-primary/30 text-primary border border-primary/40 backdrop-blur-md",
+                                                  "hover:bg-primary/60 hover:scale-110 active:scale-95 shadow-[0_0_20px_rgba(var(--primary),0.3)]",
+                                                  cellShifts.length > 0
+                                                    ? "w-9 h-9 opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:scale-100"
+                                                    : "w-9 h-9 opacity-40 scale-90 hover:opacity-100 [@media(hover:none)]:opacity-100",
+                                                  "group/add"
+                                                )}
+                                                title="Add Shift"
+                                              >
+                                                <Plus className={cn(
+                                                  cellShifts.length > 0 ? "h-4 w-4" : "h-5 w-5",
+                                                  "transition-transform group-hover/add:rotate-90"
+                                                )} />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </DroppableCell>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </>
+                            )}
+                          />
+                        </div>
+                      </div>
+                    )
+                    }
+                  </div>
+                );
+              })}
+            </div>
+          </ScrollArea>
         )}
 
         {/* Delete Dialog */}
@@ -2493,23 +2470,23 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
 
 
-      {/* Add/Edit Shift Modal */}
-      <EnhancedAddShiftModal
-        isOpen={isAddShiftOpen}
-        onClose={() => {
-          setIsAddShiftOpen(false);
-          setShiftContext(null);
-          setIsEditMode(false);
-          setEditingShift(null);
-        }}
-        onSuccess={handleShiftCreated}
-        context={shiftContext}
-        editMode={isEditMode}
-        existingShift={editingShift}
-      />
+        {/* Add/Edit Shift Modal */}
+        <EnhancedAddShiftModal
+          isOpen={isAddShiftOpen}
+          onClose={() => {
+            setIsAddShiftOpen(false);
+            setShiftContext(null);
+            setIsEditMode(false);
+            setEditingShift(null);
+          }}
+          onSuccess={handleShiftCreated}
+          context={shiftContext}
+          editMode={isEditMode}
+          existingShift={editingShift}
+        />
 
-      {/* Bulk actions toolbar removed - now rendered in RostersPlannerPage */}
-    </div>
+        {/* Bulk actions toolbar removed - now rendered in RostersPlannerPage */}
+      </div>
 
       {/* Confirmation Dialog */}
       <AlertDialog open={confirmActionOpen} onOpenChange={setConfirmActionOpen}>
@@ -2593,7 +2570,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
             isOpen={isRenameOpen}
             onOpenChange={setIsRenameOpen}
             onRename={async (newName) => {
-              await renameSubGroupMutation.mutateAsync({ 
+              await renameSubGroupMutation.mutateAsync({
                 orgId: organizationId || '',
                 deptId: departmentId || '',
                 groupExternalId: activeSubGroup.groupExternalId,
@@ -2610,7 +2587,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
             isOpen={isCloneOpen}
             onOpenChange={setIsCloneOpen}
             onClone={async (newName) => {
-              await cloneSubGroupMutation.mutateAsync({ 
+              await cloneSubGroupMutation.mutateAsync({
                 orgId: organizationId || '',
                 deptId: departmentId || '',
                 groupExternalId: activeSubGroup.groupExternalId,
