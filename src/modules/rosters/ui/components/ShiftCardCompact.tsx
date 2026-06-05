@@ -313,8 +313,9 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
                 if (!isActiveBidding && b !== 'bidding_closed_no_winner') return <Ban className="w-4 h-4 text-gray-400" />;
                 if (b === 'bidding_closed_no_winner') return <Ban className="w-4 h-4 text-gray-600" />;
                 const urg = computeShiftUrgency(rawShift.shift_date, rawShift.start_time);
-                // S5 + emergent: bidding window closed, pending backend reset
-                if (urg === 'emergent' && stateId === 'S5') return <Ban className="w-4 h-4 text-rose-500" />;
+                // An actively on-bidding shift (S5) is on bidding — emergent just
+                // means the start is imminent/passed, not that bidding expired.
+                // "Expired" is `bidding_closed_no_winner` only (handled above).
                 if (urg === 'emergent') return <Flame className="w-4 h-4 text-rose-500 animate-[pulse_0.8s_ease-in-out_infinite]" />;
                 if (urg === 'urgent')   return <Flame className="w-4 h-4 text-orange-500 animate-pulse" />;
                 return <Gavel className="w-4 h-4 text-blue-500" />;
@@ -331,7 +332,6 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
                   if (!isActiveBidding && b !== 'bidding_closed_no_winner') return 'NotOnBidding';
                   if (b === 'bidding_closed_no_winner') return 'ClosedNoWinner';
                   const urg = computeShiftUrgency(rawShift.shift_date, rawShift.start_time);
-                  if (urg === 'emergent' && stateId === 'S5') return 'BidExpired';
                   if (urg === 'emergent') return 'Emergent';
                   if (urg === 'urgent')   return 'Urgent';
                   return 'Normal';

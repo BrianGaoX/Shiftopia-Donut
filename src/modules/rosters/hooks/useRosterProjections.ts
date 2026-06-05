@@ -126,7 +126,13 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
         const mappedEmployees: ProjectedEmployee[] = peopleResult.employees.map(emp => {
           const newShifts: Record<string, any[]> = {};
           for (const [date, psArray] of Object.entries(emp.shifts)) {
-            newShifts[date] = mapShifts(psArray as unknown as ProjectedShiftResult[]);
+            // PeopleModeGrid cells read `shift.rawShift` (the full DB row) and
+            // skip-render anything missing it. `mapShifts` attaches the row as
+            // `.raw`; expose it under `rawShift` too, mirroring GroupModeView's
+            // ShiftDisplay mapping. Without this every people-mode cell renders
+            // empty — including the Open Shifts row.
+            newShifts[date] = mapShifts(psArray as unknown as ProjectedShiftResult[])
+              .map(s => ({ ...s, rawShift: (s as any).raw }));
           }
           return { ...emp, shifts: newShifts };
         });
