@@ -16,7 +16,7 @@
  * existing callers using complianceService.validateShiftCompliance().
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { isValidUuid } from '@/modules/rosters/domain/shift.entity';
 
 // ── Types ──────────────────────────────────────────────────────────────────

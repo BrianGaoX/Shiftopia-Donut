@@ -10,7 +10,7 @@
  * Never writes to the database — only proposes assignments.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type {
     OptimizeRequest,
     OptimizeResponse,

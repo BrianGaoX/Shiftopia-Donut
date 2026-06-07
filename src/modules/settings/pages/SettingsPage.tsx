@@ -12,7 +12,7 @@ import { Button } from '@/modules/core/ui/primitives/button';
 import { Check, User, Shield, Bell, CreditCard, Link, Loader2, Save, Palette } from 'lucide-react';
 import { Switch } from '@/modules/core/ui/primitives/switch';
 import { useSettings, SUPPORTED_LOCALES } from '../hooks/useSettings';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { toast } from '@/modules/core/ui/primitives/use-toast';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/platform/i18n';

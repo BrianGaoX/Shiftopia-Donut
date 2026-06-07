@@ -15,7 +15,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useAuth } from '@/platform/auth/useAuth';
 import type { AccessLevel } from '@/platform/auth/types';
 

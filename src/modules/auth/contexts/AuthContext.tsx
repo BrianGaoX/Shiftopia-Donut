@@ -2,7 +2,7 @@
 // DEBUG VERSION - Find exactly where it's hanging
 
 import React, { createContext, useEffect, useState } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export type Role = 'admin' | 'manager' | 'teamlead' | 'member';
 

@@ -10,7 +10,7 @@
 //                     IN query across all author_ids.
 // ============================================================
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type {
     BroadcastGroupWithStats,
     BroadcastGroupFull,

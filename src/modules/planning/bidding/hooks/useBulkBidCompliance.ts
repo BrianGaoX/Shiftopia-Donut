@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/platform/auth/useAuth';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { format, parseISO, subDays, addDays, min, max } from 'date-fns';
 import {
     runV8LegacyBridge,

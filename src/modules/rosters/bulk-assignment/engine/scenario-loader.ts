@@ -12,7 +12,7 @@
  * manager's RLS scope, preventing false-pass compliance results.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { getScenarioWindow } from '@/modules/compliance';
 import { fetchV8EmployeeContext } from '@/modules/compliance/employee-context';
 import type { CandidateShift, EmployeeInfo, InjectedSimulationData } from '../types';

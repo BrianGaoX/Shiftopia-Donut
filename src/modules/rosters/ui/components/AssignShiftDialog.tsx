@@ -16,7 +16,7 @@ import { useEmployees } from '@/modules/users/hooks/useEmployees';
 import { format, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from '@/modules/core/ui/primitives/avatar';
 import { ScrollArea } from '@/modules/core/ui/primitives/scroll-area';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
   runV8LegacyBridgeNow,
   buildComplianceInput,

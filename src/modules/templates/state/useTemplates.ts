@@ -2,7 +2,7 @@
 // Production-ready Templates hook with atomic operations, validation, and security
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import {
   Template,

@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { SwapRequestWithDetails } from '../model/swap.types';
 import { isValidUuid } from '@/modules/rosters/domain/shift.entity';
 

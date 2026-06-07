@@ -3,7 +3,7 @@
  * Domain layer - orchestrates shift updates
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface UpdateShiftInput {
     shiftId: string;

@@ -22,7 +22,7 @@
 
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { shiftKeys, type ShiftFilters } from '@/modules/rosters/api/queryKeys';
 import { normalizeShiftRow } from '@/modules/rosters/api/shifts.queries';
 import type { Shift } from '@/modules/rosters/api/shifts.api';

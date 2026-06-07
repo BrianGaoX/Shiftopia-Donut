@@ -19,7 +19,7 @@ import {
 } from '@/modules/compliance';
 import { useAuth } from '@/platform/auth/useAuth';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { ThumbsUp, Loader2, Shield, AlertTriangle, XCircle, Play } from 'lucide-react';
 import { cn } from '@/modules/core/lib/utils';
 import { validateCompliance } from '@/modules/rosters/services/compliance.service';

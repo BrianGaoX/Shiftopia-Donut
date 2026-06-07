@@ -9,7 +9,7 @@
  */
 
 import * as Sentry from '@sentry/react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { V8OrchestratorInput, V8Hit } from './types';
 
 // Opt-out via env: when not exactly 'false' the DB persist runs (default on).

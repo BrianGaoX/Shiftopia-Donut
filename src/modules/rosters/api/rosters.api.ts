@@ -1,6 +1,6 @@
 // src/modules/rosters/api/rosters.api.ts
 import { eachDayOfInterval, format, parse } from 'date-fns';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Roster, Group } from '@/modules/core/types';
 import { RosterDay } from '../model/roster.types';
 

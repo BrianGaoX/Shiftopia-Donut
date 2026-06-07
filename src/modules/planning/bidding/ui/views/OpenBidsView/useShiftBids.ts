@@ -1,7 +1,7 @@
 // src/modules/planning/bidding/ui/views/OpenBidsView/useShiftBids.ts
 
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { shiftKeys } from '@/modules/rosters/api/queryKeys';
 import type { EmployeeBid } from './types';
 

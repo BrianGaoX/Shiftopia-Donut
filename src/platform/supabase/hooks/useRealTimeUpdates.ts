@@ -1,6 +1,6 @@
 
 import { useEffect, useState } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { ErrorHandler } from '@/modules/core/lib/error-handler';
 

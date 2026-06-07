@@ -3,7 +3,7 @@
  * Domain layer - fetches rosters for a date range
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface RosterSummary {
     id: string;

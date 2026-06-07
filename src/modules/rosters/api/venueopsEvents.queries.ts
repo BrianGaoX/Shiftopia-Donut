@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { fromZonedTime } from 'date-fns-tz';
 
 const ICC_TIMEZONE = 'Australia/Sydney';

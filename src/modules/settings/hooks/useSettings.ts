@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useAuth } from '@/platform/auth/useAuth';
 import { toast } from '@/modules/core/ui/primitives/use-toast';
 

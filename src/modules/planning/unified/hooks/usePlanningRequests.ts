@@ -18,7 +18,7 @@
  */
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type { PlanningRequest, PlanningRequestStatus } from '../types';
 
 const db = supabase as any;

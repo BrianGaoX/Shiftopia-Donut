@@ -25,7 +25,7 @@
  * `state` is included for observability and debugging.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type { ScenarioWindow } from './scenario-window';
 
 // =============================================================================

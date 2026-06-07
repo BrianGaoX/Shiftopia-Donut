@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Group, SubGroup, Template } from '../model/templates.types';
 import type { Shift } from '@/modules/rosters/model/shift.types';
 import type { CaptureTemplateInput, CaptureTemplateResult } from '../model/templates.types';

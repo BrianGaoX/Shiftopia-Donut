@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { runHardValidation, HardValidationResult, ShiftTimeRange } from '@/modules/compliance';
 import { format, addDays, subDays } from 'date-fns';
 import { getNowInTimezone, SYDNEY_TZ } from '@/modules/core/lib/date.utils';

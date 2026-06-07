@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Shield, User, Filter, Download, Users } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/modules/core/ui/primitives/button';

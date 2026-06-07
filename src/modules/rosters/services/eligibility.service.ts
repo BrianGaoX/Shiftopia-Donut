@@ -19,7 +19,7 @@
  *   - autoschedule.api.ts → fetchBaseline()
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { isValidUuid } from '../domain/shift.entity';
 
 // ── Types ─────────────────────────────────────────────────────────────────────

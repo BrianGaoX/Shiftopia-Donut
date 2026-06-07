@@ -30,7 +30,7 @@ import type { Shift } from '../domain/shift.entity';
 import { shiftKeys, rosterKeys, type ShiftFilters } from '../api/queryKeys';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import { isAppError } from '@/platform/supabase/rpc/errors';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────

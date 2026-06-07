@@ -9,7 +9,7 @@
  *   const { client, enqueue } = createSupabaseMock();
  *
  *   // vi.mock must import this before the module under test
- *   vi.mock('@/platform/realtime/client', () => ({ supabase: client }));
+ *   vi.mock('@/platform/supabase/client', () => ({ supabase: client }));
  *
  *   // Arrange responses in call order
  *   enqueue({ data: shiftRow, error: null });

@@ -5,7 +5,7 @@
  * for use in the Peoples Mode grid.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { format } from 'date-fns';
 import {
     RawAvailability,

@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { AccessLevel, Role, User, UserContract, AccessCertificate, PermissionObject } from './types';
 import { mapRole } from './access.policy';
 

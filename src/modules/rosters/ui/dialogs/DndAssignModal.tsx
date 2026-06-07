@@ -32,7 +32,7 @@ import { getAvailabilitySlots } from '@/modules/availability/api/availability.ap
 import { getAssignedShiftsForAvailability } from '@/modules/availability/api/availability-view.api';
 import type { V8AvailabilityData } from '@/modules/compliance/v8/orchestrator/types';
 import type { V8OrchestratorShift, V8OrchestratorInput } from '@/modules/compliance/v8/orchestrator/types';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 // =============================================================================
 // PROPS

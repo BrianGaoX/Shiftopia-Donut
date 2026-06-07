@@ -26,7 +26,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { runV8Orchestrator } from '@/modules/compliance/v8';
 import {
   fetchV8EmployeeContext,

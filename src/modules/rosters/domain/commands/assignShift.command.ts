@@ -20,7 +20,7 @@
  *   the mutation is BLOCKED — never silently allowed.
  */
 
-import { supabase }                      from '@/platform/realtime/client';
+import { supabase }                      from '@/platform/supabase/client';
 import { runV8Orchestrator }            from '@/modules/compliance/v8/index';
 import { buildAssignInput }              from '@/modules/planning/unified/compliance/input-builder';
 import {

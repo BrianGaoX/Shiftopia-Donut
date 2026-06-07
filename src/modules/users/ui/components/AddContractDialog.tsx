@@ -8,7 +8,7 @@ import { useContractForm } from '../hooks/useContractForm';
 import { CommandSelector } from './CommandSelector';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/modules/core/lib/utils';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Input } from '@/modules/core/ui/primitives/input';
 
 interface AddContractDialogProps {

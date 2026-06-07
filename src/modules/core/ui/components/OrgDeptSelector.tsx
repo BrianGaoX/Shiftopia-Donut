@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/modules/core/lib/utils'; // Assuming standard utils
 

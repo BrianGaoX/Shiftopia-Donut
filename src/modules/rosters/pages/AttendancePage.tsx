@@ -20,7 +20,7 @@ import {
 import { cn } from '@/modules/core/lib/utils';
 import { CustomDateRangePicker } from '@/modules/core/ui/components/CustomDateRangePicker';
 import { useAuth } from '@/platform/auth/useAuth';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { shiftsQueries } from '@/modules/rosters/api/shifts.queries';
 import { shiftKeys } from '@/modules/rosters/api/queryKeys';
 import { useClockIn, useClockOut } from '@/modules/rosters/state/useClockInOut';

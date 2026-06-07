@@ -20,7 +20,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
   getAssignedShiftsForAvailability,
   AssignedShiftInterval,

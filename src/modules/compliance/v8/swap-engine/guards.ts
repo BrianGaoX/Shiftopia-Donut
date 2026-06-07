@@ -18,7 +18,7 @@
  *   if (!guard.passed) throw new SwapGuardError(guard);
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 // =============================================================================
 // TYPES

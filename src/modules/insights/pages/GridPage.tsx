@@ -10,7 +10,7 @@ import {
 import { calculateMinutesBetweenTimes } from '@/modules/rosters/domain/shift.entity';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/modules/core/ui/primitives/badge';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
     Tooltip,
     TooltipContent,

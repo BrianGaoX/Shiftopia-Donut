@@ -3,7 +3,7 @@
  * Domain layer - fetches full shift details with joins
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface ShiftDetails {
     id: string;

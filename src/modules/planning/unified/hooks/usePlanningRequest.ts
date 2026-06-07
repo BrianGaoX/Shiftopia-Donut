@@ -18,7 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type { PlanningRequest, PlanningOffer } from '../types';
 
 // Cast to `any` because planning_requests / planning_offers are not in the
