@@ -6,6 +6,9 @@
  * (shift must be > 4 hours away) never fire in happy-path tests.
  */
 
+import type { V8OrchestratorResult } from '@/modules/compliance/v8/orchestrator/types';
+import type { V8Hit, V8Status } from '@/modules/compliance/v8/types';
+
 // =============================================================================
 // ACTOR IDs
 // =============================================================================
@@ -165,35 +168,52 @@ export const selectedSwapOfferRow = {
 // COMPLIANCE RESULTS
 // =============================================================================
 
-export const passComplianceResult = {
-  status:      'PASS' as const,
-  rule_hits:   [],
-  evaluated_at: new Date().toISOString(),
-};
+/**
+ * Build a V8Hit. Only the fields the planning snapshot/extraction logic reads
+ * (rule_id, status, summary) need to vary per test; the rest get sane defaults.
+ */
+export function makeV8Hit(
+  rule_id: string,
+  status: V8Status,
+  summary: string,
+): V8Hit {
+  return {
+    rule_id,
+    rule_name:       rule_id,
+    status,
+    summary,
+    details:         summary,
+    affected_shifts: [],
+    blocking:        status === 'BLOCKING',
+  };
+}
 
-export const blockingComplianceResult = {
-  status:    'BLOCKING' as const,
-  rule_hits: [
-    {
-      rule_id:  'R01_no_overlap',
-      severity: 'BLOCKING' as const,
-      message:  'Shift overlaps with existing assignment',
-    },
-  ],
-  evaluated_at: new Date().toISOString(),
-};
+/** Build a V8OrchestratorResult with the given overall status and hits. */
+export function makeV8Result(
+  overall_status: V8Status,
+  hits: V8Hit[] = [],
+): V8OrchestratorResult {
+  return {
+    passed:                overall_status !== 'BLOCKING',
+    overall_status,
+    hits,
+    consolidated_groups:   [],
+    conflict_pairs:        [],
+    delta_explanation:     null,
+    evaluated_shift_count: 1,
+    evaluation_time_ms:    0,
+  };
+}
 
-export const warningComplianceResult = {
-  status:    'WARNING' as const,
-  rule_hits: [
-    {
-      rule_id:  'R03_avg_four_week',
-      severity: 'WARNING' as const,
-      message:  'Average weekly hours approaching limit',
-    },
-  ],
-  evaluated_at: new Date().toISOString(),
-};
+export const passComplianceResult: V8OrchestratorResult = makeV8Result('PASS');
+
+export const blockingComplianceResult: V8OrchestratorResult = makeV8Result('BLOCKING', [
+  makeV8Hit('R01_no_overlap', 'BLOCKING', 'Shift overlaps with existing assignment'),
+]);
+
+export const warningComplianceResult: V8OrchestratorResult = makeV8Result('WARNING', [
+  makeV8Hit('R03_avg_four_week', 'WARNING', 'Average weekly hours approaching limit'),
+]);
 
 // =============================================================================
 // EMPLOYEE CONTEXT (minimal, passes all field checks)

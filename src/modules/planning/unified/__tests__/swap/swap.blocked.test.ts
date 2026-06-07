@@ -15,7 +15,7 @@ import {
   openSwapRequestRow, empAShiftRow, empBShiftRow,
   submittedSwapOfferRow, managerPendingSwapRequestRow,
   passComplianceResult, blockingComplianceResult, warningComplianceResult,
-  empContextA, empContextB,
+  makeV8Hit, empContextA, empContextB,
 } from '../helpers/fixtures';
 
 const { ctx, supabaseProxy, mockEvaluate } = vi.hoisted(() => {
@@ -135,7 +135,7 @@ describe('blocking_hits attribution — SWAP', () => {
   it("labels party A's exclusive hits as party: 'A'", async () => {
     const partyAResult = {
       ...blockingComplianceResult,
-      rule_hits: [{ rule_id: 'R01', severity: 'BLOCKING' as const, message: 'A blocked' }],
+      hits: [makeV8Hit('R01', 'BLOCKING', 'A blocked')],
     };
 
     mockEvaluate
@@ -163,10 +163,10 @@ describe('blocking_hits attribution — SWAP', () => {
   });
 
   it("labels shared hits as party: 'BOTH'", async () => {
-    const sharedHit = { rule_id: 'R02', severity: 'BLOCKING' as const, message: 'Shared block' };
+    const sharedHit = makeV8Hit('R02', 'BLOCKING', 'Shared block');
     mockEvaluate
-      .mockReturnValueOnce({ ...blockingComplianceResult, rule_hits: [sharedHit] })
-      .mockReturnValueOnce({ ...blockingComplianceResult, rule_hits: [sharedHit] });
+      .mockReturnValueOnce({ ...blockingComplianceResult, hits: [sharedHit] })
+      .mockReturnValueOnce({ ...blockingComplianceResult, hits: [sharedHit] });
 
     const blockedRow = { ...openSwapRequestRow, status: 'BLOCKED' };
 

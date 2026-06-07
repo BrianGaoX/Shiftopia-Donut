@@ -2,13 +2,16 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { projectGroup } from '../../projections/projectors/group.projector';
 import type { Shift } from '../../shift.entity';
 import type { WorkerShiftDTO } from '../../projections/worker/protocol';
+import { shiftToDTO } from '../../projections/worker/mappers';
+import { GROUP_COLORS } from '../../projections/constants';
+import type { TemplateGroupType } from '../../shift.entity';
 
 // ── Shift factory ─────────────────────────────────────────────────────────────
 
 let _id = 0;
-function makeShift(overrides: Partial<Shift> = {}): Shift {
+function makeShift(overrides: Partial<Shift> = {}): WorkerShiftDTO {
   _id++;
-  return ({
+  return shiftToDTO(({
     id: `shift-${_id}`,
     organization_id: null,
     department_id: 'dept-1',
@@ -92,7 +95,7 @@ function makeShift(overrides: Partial<Shift> = {}): Shift {
     confirmed_at: null,
     roles: { id: 'role-1', name: 'V8Stage Hand' },
     ...overrides,
-  } as unknown as Shift);
+  } as unknown as Shift));
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -206,6 +209,9 @@ describe('projectGroup — projected shift fields', () => {
     const result = projectGroup(shifts as unknown as WorkerShiftDTO[]);
     const theatre = result.groups.find(g => g.type === 'theatre')!;
     const ps = Object.values(theatre.subGroups[0].shiftsByDate).flat()[0];
-    expect(ps.groupColors.accent).toBe('red');
+    // The projected shift carries a lightweight color KEY; the UI resolves it
+    // to the canonical color set. Theatre's accent must be red.
+    expect(ps.groupColorKey).toBe('theatre');
+    expect(GROUP_COLORS[ps.groupColorKey as TemplateGroupType].accent).toBe('red');
   });
 });

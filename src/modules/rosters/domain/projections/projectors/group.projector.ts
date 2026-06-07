@@ -25,6 +25,7 @@ import { getCachedCost, makeCacheKey } from '../cache/projection.cache';
 import { ZERO_COST_BREAKDOWN } from '../utils/cost/constants';
 import { coverageHealth } from '../utils/coverage';
 import { determineShiftState } from '../../shift-state.utils';
+import { statsFromProjectedShifts } from './stats.util';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -226,6 +227,9 @@ export function projectGroup(
     });
   });
 
+  // Every projected shift (incl. cancelled) for top-level stats aggregation.
+  const allProjected: ProjectedShiftResult[] = [];
+
   shifts.forEach(shift => {
     const rawGroupKey: TemplateGroupType | 'unassigned' =
       (shift.groupType && ALL_GROUP_TYPES.includes(shift.groupType as TemplateGroupType))
@@ -243,7 +247,9 @@ export function projectGroup(
     if (!groupMap.has(subGroupName)) groupMap.set(subGroupName, new Map());
     const dateMap  = groupMap.get(subGroupName)!;
     if (!dateMap.has(date)) dateMap.set(date, []);
-    dateMap.get(date)!.push(toProjectedShift(shift));
+    const ps = toProjectedShift(shift);
+    dateMap.get(date)!.push(ps);
+    allProjected.push(ps);
   });
 
   const groupOrder: (TemplateGroupType | 'unassigned')[] = [
@@ -302,14 +308,6 @@ export function projectGroup(
 
   return {
     groups: finalGroups,
-    stats:  {
-      totalShifts: 0,
-      assignedShifts: 0,
-      openShifts: 0,
-      publishedShifts: 0,
-      totalNetMinutes: 0,
-      estimatedCost: 0,
-      costBreakdown: { base: 0, penalty: 0, overtime: 0, allowance: 0, leave: 0 },
-    },
+    stats:  statsFromProjectedShifts(allProjected),
   };
 }
