@@ -63,6 +63,17 @@ export const useAuth = () => {
     ['beta', 'gamma', 'delta', 'epsilon', 'zeta'].includes(getEffectiveLevel());
 
   /* ============================================================
+     Role-aware Landing Page
+     ============================================================ */
+
+  // Where this user should land after login (or when a generic
+  // "home"/"workspace" target is needed). Managers and above (gamma+)
+  // go to the Roster Planner; everyone else to their My Roster view.
+  // Mirrors the FeatureGate guard on the /rosters route.
+  const getLandingPage = (): string =>
+    isManagerOrAbove() ? '/rosters' : '/my-roster';
+
+  /* ============================================================
      Feature Permission Checking
      ============================================================ */
 
@@ -72,7 +83,6 @@ export const useAuth = () => {
     // Define feature permissions based on AccessLevel
     const permissions: Record<string, AccessLevel[]> = {
       // Everyone (alpha+)
-      dashboard: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'],
       'my-roster': ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'],
       availabilities: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'],
       bids: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'],
@@ -163,6 +173,7 @@ export const useAuth = () => {
     isAdmin,
     isManagerOrAbove,
     isTeamLeadOrAbove,
+    getLandingPage,
     hasPermission,
     isEligibleForShift,
     checkWorkHourCompliance,

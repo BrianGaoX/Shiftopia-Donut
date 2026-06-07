@@ -34,7 +34,7 @@ const DEEP_LINK_MAP: Record<string, string> = {
 };
 
 export function resolveNotificationLink(n: AppNotification): string {
-  return n.link ?? DEEP_LINK_MAP[n.type] ?? '/dashboard';
+  return n.link ?? DEEP_LINK_MAP[n.type] ?? '/my-roster';
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;

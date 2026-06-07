@@ -26,13 +26,13 @@ const SignUpPage: React.FC = () => {
 
     const navigate = useNavigate();
     const { toast } = useToast();
-    const { isAuthenticated, isLoading } = useAuth();
+    const { isAuthenticated, isLoading, getLandingPage } = useAuth();
 
     useEffect(() => {
         if (isAuthenticated && !isLoading) {
-            navigate('/dashboard', { replace: true });
+            navigate(getLandingPage(), { replace: true });
         }
-    }, [isAuthenticated, isLoading, navigate]);
+    }, [isAuthenticated, isLoading, navigate, getLandingPage]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

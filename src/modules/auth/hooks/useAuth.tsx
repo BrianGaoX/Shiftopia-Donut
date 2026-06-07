@@ -46,7 +46,6 @@ export const useAuth = () => {
     // Define feature permissions
     const permissions: Record<string, Role[]> = {
       // Everyone can access
-      dashboard: ['admin', 'manager', 'teamlead', 'member'],
       'my-roster': ['admin', 'manager', 'teamlead', 'member'],
       availabilities: ['admin', 'manager', 'teamlead', 'member'],
       bids: ['admin', 'manager', 'teamlead', 'member'],

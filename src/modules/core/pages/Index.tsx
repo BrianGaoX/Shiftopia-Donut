@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '@/platform/auth/useAuth';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowRight,
@@ -297,6 +298,13 @@ const SocialProof: React.FC = () => (
 /* -------------------------------------------------------------------------- */
 
 const Index: React.FC = () => {
+  const { isAuthenticated, getLandingPage } = useAuth();
+  // Authenticated visitors landing on the marketing page jump straight to
+  // their workspace; everyone else is funnelled to sign-up.
+  const ctaPath = isAuthenticated ? getLandingPage() : '/signup';
+  const ctaLabel = isAuthenticated ? 'Go to Workspace' : 'Get Started';
+  const heroCtaLabel = isAuthenticated ? 'Go to Workspace' : 'Start Scheduling';
+
   return (
     <div
       className="flex min-h-screen w-full flex-col overflow-hidden font-sans"
@@ -321,10 +329,10 @@ const Index: React.FC = () => {
             Log In
           </Link>
           <Link
-            to="/signup"
+            to={ctaPath}
             className="rounded-full bg-[#140d2c] border border-purple-500/30 px-6 py-2.5 text-[15px] font-semibold text-white shadow-[0_0_20px_rgba(168,85,247,0.6)] transition-all hover:scale-[1.03] hover:shadow-[0_0_30px_rgba(168,85,247,0.8)] active:scale-95"
           >
-            Get Started
+            {ctaLabel}
           </Link>
         </div>
       </motion.nav>
@@ -363,10 +371,10 @@ const Index: React.FC = () => {
           >
             <div className="relative">
               <Link
-                to="/signup"
+                to={ctaPath}
                 className="group inline-flex w-fit items-center gap-3 rounded-full bg-[#140d2c] border border-purple-500/20 px-8 py-4 text-[17px] font-semibold text-white shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all hover:scale-[1.03] hover:shadow-[0_0_25px_rgba(168,85,247,0.4)] active:scale-95"
               >
-                Start Scheduling
+                {heroCtaLabel}
                 <ChevronRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
               </Link>
 
