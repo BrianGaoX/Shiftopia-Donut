@@ -224,7 +224,7 @@ export interface SynthesizeShiftsOptions {
   mergeMicroPeaks?: boolean;
 }
 
-// Main function to synthesise shifts from demand tensor input
+// Main function to synthesize shifts from demand tensor input
 export function synthesizeShifts(
   demandTensor: DemandTensor,
   options: SynthesizeShiftsOptions = {},

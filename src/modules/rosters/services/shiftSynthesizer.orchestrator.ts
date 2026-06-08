@@ -8,7 +8,7 @@ import {
 import {
   synthesizeShifts,
   getCoverageWindow,
-} from './shiftSynthesiser.service';
+} from './shiftSynthesizer.service';
 import { SLOT_MINUTES, type DemandSlot } from '../domain/shiftSynthesizer.policy';
 import type { DemandTensorInsertRow } from '../api/demandTensor.queries';
 import { shiftsCommands } from '../api/shifts.commands';
@@ -38,7 +38,7 @@ import { runV8Orchestrator } from '@/modules/compliance/v8/index';
 import { buildSkeletonInput } from '@/modules/planning/unified/compliance/input-builder';
 import type { V8OrchestratorInput, V8OrchestratorShift } from '@/modules/compliance/v8/index';
 
-const logger = createModuleLogger('shiftSynthesiser.orchestrator');
+const logger = createModuleLogger('shiftSynthesizer.orchestrator');
 
 export interface SynthesizeAndInsertParams {
   demandTensors?: DemandTensor[];

@@ -272,7 +272,7 @@ export function buildDraftInput(params: {
 
 /**
  * Build a structural-only V8OrchestratorInput for an unassigned shift
- * (employee_id 'skeleton'). Used by the shift synthesiser to validate
+ * (employee_id 'skeleton'). Used by the shift synthesizer to validate
  * shape (overlap / duration / meal break) without a real employee.
  *
  * The employee_context fields are minimum-valid placeholders — only

@@ -1,4 +1,4 @@
-import {} from './shiftSynthesiser.service';
+import {} from './shiftSynthesizer.service';
 import {
   DemandSlot,
   DemandTensor,
