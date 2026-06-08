@@ -157,7 +157,7 @@ const AppearanceSettings: React.FC = () => {
 
       <div className="h-px bg-white/5 w-full"></div>
 
-      {/* Dashboard Charts Section */}
+      {/* Chart Style Section */}
       <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
         <div>
           <h3 className="text-base font-semibold text-white">{t('settings.chart_style')}</h3>

@@ -3,8 +3,11 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/modules/core/ui/primitives/button';
 import { ShieldAlert } from 'lucide-react';
+import { useAuth } from '@/platform/auth/useAuth';
 
 const UnauthorizedPage: React.FC = () => {
+  const { getLandingPage } = useAuth();
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 text-center">
       <ShieldAlert className="h-16 w-16 text-red-500 mb-6" />
@@ -14,7 +17,7 @@ const UnauthorizedPage: React.FC = () => {
       </p>
       <div className="flex gap-4">
         <Button asChild variant="outline">
-          <Link to="/dashboard">Return to Dashboard</Link>
+          <Link to={getLandingPage()}>Back to Home</Link>
         </Button>
       </div>
     </div>

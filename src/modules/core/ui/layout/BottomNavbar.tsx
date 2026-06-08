@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutGrid,
   Calendar,
   Fingerprint,
   CalendarDays,
@@ -260,26 +259,6 @@ const BottomNavbar: React.FC = () => {
         style={{ pointerEvents: isBottomDrawerActive ? 'none' : 'auto' }}
         className="md:hidden fixed bottom-6 left-4 right-4 z-[60] h-[72px] bg-background/80 dark:bg-black/60 backdrop-blur-3xl border border-white/20 dark:border-white/10 shadow-[0_24px_40px_-10px_rgba(0,0,0,0.3)] rounded-[36px] flex items-center p-2 gap-2 overflow-hidden"
       >
-        {/* HOME BUTTON (Pinned Left - Fixed Width) */}
-        <NavLink
-          to="/dashboard"
-          className={({ isActive }) =>
-            cn(
-              "relative flex items-center justify-center h-full rounded-full transition-all duration-300 flex-shrink-0 z-10",
-              isActive 
-                ? "w-[48px] bg-primary text-primary-foreground shadow-[0_8px_16px_rgba(var(--primary-rgb),0.2)]" 
-                : "w-[48px] bg-card text-foreground shadow-sm hover:bg-muted"
-            )
-          }
-        >
-          {({ isActive }) => (
-            <LayoutGrid className="h-5 w-5" strokeWidth={isActive ? 2.5 : 2} />
-          )}
-        </NavLink>
-
-        {/* DIVIDER */}
-        <div className="w-px h-8 bg-border/40 rounded-full flex-shrink-0 mx-0.5" />
-
         {/* SCROLLABLE TRACK */}
         <div 
           ref={scrollContainerRef}

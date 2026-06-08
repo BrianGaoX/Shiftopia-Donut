@@ -32,7 +32,6 @@ const ALL_ACCESS_LEVELS: AccessLevel[] = ['alpha', 'beta', 'gamma', 'delta', 'ep
 
 /** Personal pages — accessible via Type X certificates */
 export const PERSONAL_PAGES: Record<string, AccessLevel> = {
-    'dashboard': 'alpha',
     'my_roster': 'alpha',
     'my_availabilities': 'alpha',
     'my_bids': 'alpha',

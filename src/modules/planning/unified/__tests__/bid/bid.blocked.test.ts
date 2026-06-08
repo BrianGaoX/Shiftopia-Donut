@@ -53,8 +53,8 @@ describe('selectOffer — BID, BLOCKING compliance', () => {
       ...openBidRequestRow,
       status: 'BLOCKED',
       compliance_snapshot: {
-        status:      'BLOCKING',
-        rule_hits:   blockingComplianceResult.rule_hits,
+        overall_status:   'BLOCKING',
+        hits:             blockingComplianceResult.hits,
         shift_updated_at: openShiftRow.updated_at,
         evaluated_at:     new Date().toISOString(),
       },

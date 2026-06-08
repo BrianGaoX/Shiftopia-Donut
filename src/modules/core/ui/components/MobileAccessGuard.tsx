@@ -18,7 +18,6 @@ import { Monitor, Wifi, ArrowRight, Layout, BarChart3, Users, Settings } from 'l
 // These paths are fully optimised for mobile and pass through the guard.
 
 export const ALLOWED_MOBILE_ROUTES = new Set([
-  '/dashboard',
   '/profile',
   '/my-roster',
   '/my-attendance',

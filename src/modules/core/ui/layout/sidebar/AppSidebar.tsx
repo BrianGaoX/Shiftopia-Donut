@@ -4,7 +4,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { biddingApi, swapsApi } from '@/modules/planning';
 import {
   Calendar,
-  LayoutDashboard,
   Clock,
   Users,
   Workflow,
@@ -48,7 +47,6 @@ import { useTranslation } from 'react-i18next';
    ICON COLOR MAP
    ============================================================ */
 type IconColorKey =
-  | 'dashboard'
   | 'workspace'
   | 'myRoster'
   | 'availabilities'
@@ -77,7 +75,6 @@ type IconColorKey =
   | 'performance';
 
 const iconColorMap: Record<IconColorKey, string> = {
-  dashboard: 'text-blue-400',
   workspace: 'text-purple-400',
   myRoster: 'text-cyan-400',
   availabilities: 'text-teal-400',

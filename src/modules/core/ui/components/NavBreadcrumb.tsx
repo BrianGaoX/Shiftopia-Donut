@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { 
+import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
@@ -9,9 +9,13 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/modules/core/ui/primitives/breadcrumb';
+import { useAuth } from '@/platform/auth/useAuth';
 
 export function NavBreadcrumb() {
   const location = useLocation();
+  const { getLandingPage } = useAuth();
+  const landingPath = getLandingPage();
+  const landingSegment = landingPath.replace(/^\//, '');
   const pathSegments = location.pathname.split('/').filter(Boolean);
   
   if (pathSegments.length === 0) {
@@ -38,11 +42,11 @@ export function NavBreadcrumb() {
   return (
     <Breadcrumb>
       <BreadcrumbList>
-        {pathSegments[0] !== 'dashboard' && (
+        {pathSegments[0] !== landingSegment && (
           <>
             <BreadcrumbItem>
               <BreadcrumbLink asChild>
-                <Link to="/dashboard">Dashboard</Link>
+                <Link to={landingPath}>Home</Link>
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
