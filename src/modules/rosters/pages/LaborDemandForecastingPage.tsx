@@ -120,7 +120,7 @@ import {
   buildScopeDemand,
   type ScopeDemandResult,
 } from "../services/demandTensorBuilder.service";
-import { synthesizeShifts } from "../services/shiftSynthesiser.service";
+import { synthesizeShifts } from "../services/shiftSynthesizer.service";
 import {
   ConfirmGenerationModal,
   type GenerationOptions,

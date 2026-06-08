@@ -1187,7 +1187,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
         // S3: Published + assigned + assignment_outcome IS NULL (awaiting acceptance)
         // S4: Published + assigned + assignment_outcome === 'confirmed'
-        // Do not synthesise stale values — keep null as-is.
+        // Do not synthesize stale values — keep null as-is.
         const assignmentOutcome = (shift as any).assignment_outcome ?? null;
 
         const isPublished = ['Published', 'InProgress', 'Completed'].includes(shift.lifecycle_status || '');

@@ -2,7 +2,7 @@ import {
   DemandTensor,
   SynthesizedShift,
 } from '../domain/shiftSynthesizer.policy';
-import { synthesizeShifts } from './shiftSynthesiser.service';
+import { synthesizeShifts } from './shiftSynthesizer.service';
 import type { Shift } from '../domain/shift.entity';
 import { timeToMinutes } from '../domain/shiftSynthesizer.policy';
 

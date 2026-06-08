@@ -4,12 +4,12 @@ import {
   rollbackSynthesisRun,
   type SynthesizeAndInsertParams,
   type SynthesizeAndInsertResult,
-} from '../services/shiftSynthesiser.orchestrator';
+} from '../services/shiftSynthesizer.orchestrator';
 import {
   previewShiftSynthesis,
   type DeltaPreviewResponse,
   markSynthesisAsApplied,
-} from '../services/shiftSynthesiser.scan';
+} from '../services/shiftSynthesizer.scan';
 import { computeExistingCoverage } from '../services/demandTensorBuilder.service';
 import { synthesisRunsQueries } from '../api/synthesisRuns.queries';
 import { shiftKeys } from '../api/queryKeys';
