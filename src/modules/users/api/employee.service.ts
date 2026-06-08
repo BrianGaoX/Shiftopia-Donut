@@ -1,5 +1,5 @@
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Employee } from '../model/employee.types';
 
 /**

@@ -19,7 +19,7 @@
  * a mock. The exported singleton wires the real production client.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { supabase as prodSupabase } from '@/platform/realtime/client';
+import { supabase as prodSupabase } from '@/platform/supabase/client';
 import type { ExistingShiftRef } from '../types';
 import type { ShiftMeta, EmployeeMeta } from '../optimizer/solution-parser';
 

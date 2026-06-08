@@ -18,7 +18,7 @@ import {
 import { validateTemplateName, sanitizeTemplateName } from '@/modules/templates/model/templates.types';
 import { format, addMonths, startOfMonth } from 'date-fns';
 import { shiftsApi as enhancedShiftService } from '@/modules/rosters';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 interface CreateTemplateDialogProps {
   isOpen: boolean;

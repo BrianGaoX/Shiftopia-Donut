@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { processInChunks } from '../domain/bulk-action-engine';
 import { Shift, isValidUuid, safeUuid, calculateMinutesBetweenTimes } from '../domain/shift.entity';
 import { CreateShiftData, UpdateShiftData } from './shifts.dto';

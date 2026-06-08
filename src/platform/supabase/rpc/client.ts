@@ -15,7 +15,7 @@
  */
 
 import { z, ZodType } from 'zod';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
   AppError,
   AuthenticationError,

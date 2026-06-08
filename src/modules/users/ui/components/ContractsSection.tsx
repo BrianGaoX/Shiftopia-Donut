@@ -1,6 +1,6 @@
 import React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Card, CardHeader, CardTitle, CardContent } from '@/modules/core/ui/primitives/card';
 import { Badge } from '@/modules/core/ui/primitives/badge';
 import { Button } from '@/modules/core/ui/primitives/button';

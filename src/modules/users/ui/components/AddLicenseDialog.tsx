@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/modules/core/ui/primitives/label';
 import { Input } from '@/modules/core/ui/primitives/input';
 import { Plus, Award, Shield, Loader2, Calendar } from 'lucide-react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useToast } from '@/modules/core/ui/primitives/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';

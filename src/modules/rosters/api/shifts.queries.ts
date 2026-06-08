@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Shift, ShiftStatus, TemplateGroupType, isValidUuid } from '../domain/shift.entity';
 import { callAuthenticatedRpc } from '@/platform/supabase/rpc/client';
 import { OfferActionResponseSchema } from './contracts';

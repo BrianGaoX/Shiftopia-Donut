@@ -3,7 +3,7 @@
  * Domain layer - determines if a roster can be published
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface CanPublishRosterInput {
     rosterId: string;

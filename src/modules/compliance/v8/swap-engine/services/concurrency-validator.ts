@@ -31,7 +31,7 @@ import { swapEvaluator } from '../swap-evaluator';
 import { getScenarioWindow }  from '../utils/scenario-window';
 import { aggregateSchedules } from '../utils/schedule-aggregator';
 import type { SolverResult } from '../types';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 const db = supabase as any;
 

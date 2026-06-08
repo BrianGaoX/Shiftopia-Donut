@@ -4,7 +4,7 @@
  * NO business logic, NO conditionals about eligibility
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface DeleteShiftResult {
     success: boolean;

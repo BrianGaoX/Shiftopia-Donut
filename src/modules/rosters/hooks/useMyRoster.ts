@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, addDays, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
-import { useAuth } from '@/modules/auth/hooks/useAuth';
+import { useAuth } from '@/platform/auth/useAuth';
 import { CalendarView } from '@/modules/rosters/contexts/RosterUIContext';
 import { shiftsQueries } from '@/modules/rosters/api/shifts.queries';
 import { shiftKeys } from '@/modules/rosters/api/queryKeys';

@@ -115,7 +115,7 @@ import {
 } from "lucide-react";
 
 // Phase 5: shift synthesis wiring
-import { supabase } from "@/platform/realtime/client";
+import { supabase } from "@/platform/supabase/client";
 import {
   buildScopeDemand,
   type ScopeDemandResult,

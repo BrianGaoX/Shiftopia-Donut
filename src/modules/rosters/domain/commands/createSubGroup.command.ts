@@ -3,7 +3,7 @@
  * Domain layer - creates a new shift subgroup
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface CreateSubGroupInput {
     groupId: string;

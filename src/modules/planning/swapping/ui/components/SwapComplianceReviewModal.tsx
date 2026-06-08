@@ -36,7 +36,7 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import { cn } from '@/modules/core/lib/utils';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
     swapEvaluator,
     ConstraintViolation,

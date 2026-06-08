@@ -14,7 +14,7 @@
  *   - rules_primary: rules drive the synthesizer; ML gated by VITE_ML_RUNTIME_MODE.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { fromZonedTime } from 'date-fns-tz';
 import type { Shift } from '../domain/shift.entity';
 

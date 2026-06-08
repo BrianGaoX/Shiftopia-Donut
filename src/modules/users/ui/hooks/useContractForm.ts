@@ -1,6 +1,6 @@
 
 import { useState } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useToast } from '@/modules/core/ui/primitives/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 

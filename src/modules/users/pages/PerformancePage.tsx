@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { BarChart3, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { cn } from '@/modules/core/lib/utils';
 import {
     useQuarterlyReport,

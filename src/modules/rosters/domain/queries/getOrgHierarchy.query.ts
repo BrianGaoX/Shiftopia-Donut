@@ -3,7 +3,7 @@
  * Domain layer - fetches org → department → sub-department cascade
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface Organization {
     id: string;

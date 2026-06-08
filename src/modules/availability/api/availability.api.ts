@@ -14,7 +14,7 @@
  * - Contain UI or layout logic
  */
 
-import { supabase } from "@/platform/realtime/client";
+import { supabase } from "@/platform/supabase/client";
 import {
   AvailabilityRule,
   AvailabilitySlot,

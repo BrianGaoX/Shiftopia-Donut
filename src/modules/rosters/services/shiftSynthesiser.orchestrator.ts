@@ -20,7 +20,7 @@ import {
 } from '../api/workRules.queries';
 import type { CreateShiftData } from '../api/shifts.dto';
 import type { TemplateGroupType } from '../domain/shift.entity';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { createModuleLogger } from '@/modules/core/lib/logger';
 import { tryAutoBuildTemplate, buildClusterKey } from './templateBuilder.service';
 import { deriveRoomCount } from './eventFeatureBuilder.service';

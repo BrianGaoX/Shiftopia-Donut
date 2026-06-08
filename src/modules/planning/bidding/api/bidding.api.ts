@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Shift } from '@/modules/rosters';
 import { Bid, BidStatus } from '../model/bid.types';
 import { computeBiddingUrgency } from '@/modules/rosters/domain/bidding-urgency';

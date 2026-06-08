@@ -7,7 +7,7 @@ import { useEmployeeLicenses, useRemoveEmployeeLicense } from '@/modules/users/h
 import { Shield, CheckCircle, XCircle, AlertTriangle, AlertOctagon, Loader2, Trash2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { AddLicenseDialog } from './AddLicenseDialog';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useToast } from '@/modules/core/ui/primitives/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 

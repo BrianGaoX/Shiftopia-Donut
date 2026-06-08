@@ -11,7 +11,7 @@ import {
     AlertDialogTrigger 
 } from '@/modules/core/ui/primitives/alert-dialog';
 import { Button } from '@/modules/core/ui/primitives/button';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { toast } from 'sonner';
 import { User as UserIcon, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 

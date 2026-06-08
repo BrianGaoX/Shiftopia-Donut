@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { runV8LegacyBridge } from '@/modules/compliance/v8';
 import { ShiftTimeRange } from '@/modules/compliance/types';
 import { EligibilityService } from '../services/eligibility.service';

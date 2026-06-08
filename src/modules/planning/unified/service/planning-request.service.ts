@@ -17,7 +17,7 @@
  *   rejectRequest          — manager rejects; shift reverts to IDLE
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
   fetchV8EmployeeContext,
   fetchEmployeeShiftsV2,

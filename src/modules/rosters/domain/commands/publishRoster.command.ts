@@ -3,7 +3,7 @@
  * Domain layer - publishes a roster and its shifts
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface PublishRosterInput {
     rosterId: string;

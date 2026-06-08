@@ -9,7 +9,7 @@ import { cn } from '@/modules/core/lib/utils';
 import { CommandSelector } from './CommandSelector';
 import { AccessLevel, CertificateType } from '@/platform/auth/types';
 import { useReferenceData } from '../hooks/useReferenceData';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 interface AccessCertificateDialogProps {
     employeeId: string;

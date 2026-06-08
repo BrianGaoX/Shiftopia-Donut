@@ -3,7 +3,7 @@
  * Domain layer - orchestrates shift creation
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 export interface CreateShiftInput {
     organizationId?: string;

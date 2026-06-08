@@ -1,7 +1,7 @@
 // src/modules/planning/ui/views/OpenBidsView/hooks/useHierarchyData.ts
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type { Organization, Department, SubDepartment } from '@/modules/rosters/domain/queries/getOrgHierarchy.query';
 
 interface UseHierarchyDataReturn {

@@ -44,7 +44,7 @@ import {
 import { cn } from '@/modules/core/lib/utils';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import { useEmployees } from '@/modules/users/hooks/useEmployees';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
     checkBulkCompliance,
     BulkComplianceCheckResponse,

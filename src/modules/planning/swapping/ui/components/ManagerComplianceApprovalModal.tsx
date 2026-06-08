@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/modules/core/lib/utils';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { getScenarioWindow } from '@/modules/compliance';
 import { fetchV8EmployeeContext } from '@/modules/compliance/employee-context';
 import type { V8OrchestratorInput, V8OrchestratorShift } from '@/modules/compliance/v8/orchestrator/types';

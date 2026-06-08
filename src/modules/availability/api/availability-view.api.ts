@@ -17,7 +17,7 @@
  * No separate lock table exists or should be created.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { getAvailabilitySlots } from './availability.api';
 import { AvailabilitySlot } from '../model/availability.types';
 

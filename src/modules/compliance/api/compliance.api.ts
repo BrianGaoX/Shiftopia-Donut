@@ -2,7 +2,7 @@
  * Compliance API
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
     ComplianceCheckInput,
     ComplianceCheckResult

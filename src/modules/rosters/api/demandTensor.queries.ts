@@ -1,5 +1,5 @@
-import { supabase } from '@/platform/realtime/client';
-import type { Json } from '@/platform/realtime/types';
+import { supabase } from '@/platform/supabase/client';
+import type { Json } from '@/platform/supabase/types';
 
 /**
  * Demand Engine L7 — demand_tensor write queries.

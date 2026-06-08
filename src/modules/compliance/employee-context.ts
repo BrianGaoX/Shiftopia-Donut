@@ -8,7 +8,7 @@
  * Used by all assignment entry points that need to run V2 compliance checks.
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { format, addDays, subDays, parseISO } from 'date-fns';
 import type { ContractRecordV2, QualificationV2, ContractType } from './v8/types';
 import type { V8EmployeeContext, V8OrchestratorShift } from './v8/orchestrator/types';

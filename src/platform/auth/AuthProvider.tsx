@@ -2,7 +2,7 @@
 // Certificate-driven auth with Type X/Y permission model
 
 import React, { createContext, useEffect, useState } from 'react';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { User, AccessLevel, Role, UserContract, AccessCertificate, PermissionObject } from './types';
 import { authService } from './auth.service';
 import { hasAccess as checkAccess } from './access.policy';

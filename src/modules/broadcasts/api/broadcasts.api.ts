@@ -48,7 +48,7 @@ export {
 import { broadcastGroupQueries, broadcastChannelQueries, broadcastQueries, groupParticipantQueries, broadcastNotificationQueries } from './broadcasts.queries';
 import { broadcastGroupCommands, broadcastChannelCommands, broadcastCommands, broadcastAttachmentCommands, groupParticipantCommands, broadcastNotificationCommands } from './broadcasts.commands';
 import { toCamelCase } from './broadcasts.dto';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import type {
     Broadcast,
     BroadcastAcknowledgement,

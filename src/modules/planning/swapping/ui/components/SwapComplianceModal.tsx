@@ -29,7 +29,7 @@ import {
     getScenarioWindow,
 } from '@/modules/compliance';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Loader2, Shield, ArrowRightLeft, Play, Send } from 'lucide-react';
 import { cn } from '@/modules/core/lib/utils';
 import { validateCompliance } from '@/modules/rosters/services/compliance.service';

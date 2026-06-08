@@ -17,7 +17,7 @@
  * 5. Build overall summary and response
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import {
     BulkComplianceCheckRequest,
     BulkComplianceCheckResponse,

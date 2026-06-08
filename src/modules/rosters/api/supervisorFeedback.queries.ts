@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { requireUser } from '@/platform/supabase/rpc/client';
 import type {
     CreateFeedbackInput,

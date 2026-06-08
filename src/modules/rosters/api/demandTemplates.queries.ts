@@ -1,4 +1,4 @@
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 
 /**
  * Demand Engine L9 — demand_templates read/write queries.

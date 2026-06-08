@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/modules/core/lib/utils';
 import { useSnapRosterAsTemplate } from '@/modules/templates/state/useTemplates';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { useNavigate } from 'react-router-dom';
 
 /* ============================================================

@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const fromMock = vi.fn();
 
-vi.mock('@/platform/realtime/client', () => ({
+vi.mock('@/platform/supabase/client', () => ({
   supabase: {
     from: (...args: any[]) => fromMock(...args),
   },

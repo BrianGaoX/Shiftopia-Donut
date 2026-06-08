@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/platform/auth/useAuth';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { broadcastKeys } from '../api/queryKeys';
 
 export interface AnalyticsData {

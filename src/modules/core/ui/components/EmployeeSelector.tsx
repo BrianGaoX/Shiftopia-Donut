@@ -5,7 +5,7 @@ import { Button } from '@/modules/core/ui/primitives/button';
 import { Checkbox } from '@/modules/core/ui/primitives/checkbox';
 import { ScrollArea } from '@/modules/core/ui/primitives/scroll-area';
 import { Skeleton } from '@/modules/core/ui/primitives/skeleton';
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { Employee } from '@/modules/broadcasts/model/broadcast.types';
 
 interface EmployeeSelectorProps {

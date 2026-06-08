@@ -3,7 +3,7 @@
  * Fetches shift data with timesheet overlays from Supabase
  */
 
-import { supabase } from '@/platform/realtime/client';
+import { supabase } from '@/platform/supabase/client';
 import { isShiftFinished } from '../ui/components/TimesheetTable.utils';
 
 
