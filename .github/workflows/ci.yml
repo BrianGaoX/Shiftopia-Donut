@@ -1,4 +1,13 @@
-name: CI
+name: CI & Deploy
+
+# Single gated pipeline:
+#   verify  → type-check + unit tests + build (runs on every push & PR)
+#   deploy  → runs ONLY if verify passes. main push → production,
+#             PR → preview (URL auto-commented). A red build never ships.
+#
+# Activation: the deploy job is guarded on the VERCEL_TOKEN secret. Until that
+# secret exists it skips cleanly (green) so the pipeline is safe to land before
+# the token is in place. Vercel's own Git auto-deploy stays ON until cutover.
 
 on:
   pull_request:
@@ -7,15 +16,22 @@ on:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-deploy-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
 
 jobs:
   verify:
     name: Type-check, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +44,7 @@ jobs:
         run: npm ci
 
       - name: Type-check
-        run: npx tsc --noEmit
+        run: npm run type-check
 
       # Lint is temporarily disabled — eslint 9 / @typescript-eslint version
       # mismatch breaks rule loading. Re-enable after upgrading the plugin.
@@ -47,3 +63,81 @@ jobs:
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
           VITE_SENTRY_RELEASE: ${{ github.sha }}
         run: npm run build
+
+  deploy:
+    name: Deploy (Vercel)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Guard — require VERCEL_TOKEN
+        id: guard
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::warning::VERCEL_TOKEN secret not set — skipping deploy. Add it to activate the gated pipeline."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve target (production on main push, else preview)
+        if: steps.guard.outputs.ok == 'true'
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "env=production" >> "$GITHUB_OUTPUT"
+            echo "flag=--prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=preview" >> "$GITHUB_OUTPUT"
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.ok == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.ok == 'true'
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        if: steps.guard.outputs.ok == 'true'
+        run: npm i -g vercel@latest
+
+      - name: Pull Vercel project settings & env
+        if: steps.guard.outputs.ok == 'true'
+        run: vercel pull --yes --environment=${{ steps.target.outputs.env }} --token="$VERCEL_TOKEN"
+
+      - name: Build
+        if: steps.guard.outputs.ok == 'true'
+        run: vercel build ${{ steps.target.outputs.flag }} --token="$VERCEL_TOKEN"
+
+      - name: Deploy
+        if: steps.guard.outputs.ok == 'true'
+        id: deploy
+        run: |
+          url=$(vercel deploy --prebuilt ${{ steps.target.outputs.flag }} --token="$VERCEL_TOKEN" | tail -n1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed ${{ steps.target.outputs.env }}: $url"
+          echo "### 🚀 Deployed (${{ steps.target.outputs.env }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment preview URL on PR
+        if: steps.guard.outputs.ok == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deploy.outputs.url }}';
+            const marker = '<!-- vercel-preview -->';
+            const body = `${marker}\n🔍 **Preview deployed:** ${url}\n\n_Updated for ${context.sha.slice(0,7)}_`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }

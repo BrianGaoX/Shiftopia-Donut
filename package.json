@@ -17,6 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "verify": "npm run type-check && npm run test && npm run build",
+    "ship": "npm run verify && git push",
     "seed:generate": "npx tsx scripts/generate-venueops-seed.ts > supabase/seed.sql"
   },
   "dependencies": {
