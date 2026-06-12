@@ -1,4 +1,5 @@
-export const TOTAL_STEPS = 2;
+// Drawer wizard: 1 Schedule & Details · 2 Assignment · 3 Compliance & Notes
+export const TOTAL_STEPS = 3;
 
 export const TIMEZONES = [
     { value: 'Australia/Sydney', label: 'Sydney (AEST/AEDT)' },

@@ -225,8 +225,6 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
   const {
     activeMode,
     setActiveMode,
-    isBucketView,
-    setIsBucketView,
     selectedDepartmentIds,
     selectedSubDepartmentIds,
     navigateNext,
@@ -477,11 +475,9 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
                   ? 'DnD Mode — not available in Events mode'
                   : isBulkMode
                     ? 'DnD Mode — not available in Bulk selection mode'
-                    : isBucketView
-                      ? 'DnD Mode — not available in Bucket view'
-                      : isDnDModeActive
-                        ? 'Deactivate DnD Mode'
-                        : 'Activate DnD Mode'
+                    : isDnDModeActive
+                      ? 'Deactivate DnD Mode'
+                      : 'Activate DnD Mode'
               }
               onClick={() => {
                 const nextActive = !isDnDModeActive;
@@ -494,43 +490,24 @@ export const RosterFunctionBar: React.FC<RosterFunctionBarProps> = ({
               }}
               isActive={isDnDModeActive}
               variant={isDnDModeActive ? 'warning' : 'default'}
-              disabled={activeMode === 'events' || isBulkMode || isBucketView}
+              disabled={activeMode === 'events' || isBulkMode}
             />
 
             <Separator orientation="vertical" className="h-5 bg-slate-200 dark:bg-white/10 mx-0.5" />
 
             {/* ── View group ─────────────────────────────────────────── */}
             <IconButton
-              icon={<Box className="h-4 w-4" />}
-              tooltip={
-                activeMode !== 'group'
-                  ? "Buckets — switch to Group mode to enable"
-                  : viewType === 'day'
-                    ? "Buckets — not available in Day view"
-                    : isDnDModeActive
-                      ? "Buckets — not available in DnD mode"
-                      : isBulkMode
-                        ? "Buckets — not available in Bulk selection mode"
-                        : "Shift Buckets"
-              }
-              onClick={() => setIsBucketView(!isBucketView)}
-              isActive={isBucketView}
-              disabled={activeMode !== 'group' || viewType === 'day' || isDnDModeActive || isBulkMode}
-            />
-            <IconButton
               icon={<Layers className="h-4 w-4" />}
               tooltip={
                 isDnDModeActive
                   ? "Bulk Selection — not available in DnD mode"
-                  : isBucketView
-                    ? "Bulk Selection — not available in Bucket view"
-                    : isBulkMode
-                      ? "Exit Bulk Selection (Esc)"
-                      : "Bulk Selection mode"
+                  : isBulkMode
+                    ? "Exit Bulk Selection (Esc)"
+                    : "Bulk Selection mode"
               }
               onClick={onBulkModeToggle || (() => { })}
               isActive={isBulkMode}
-              disabled={isDnDModeActive || isBucketView}
+              disabled={isDnDModeActive}
             />
           </div>
 

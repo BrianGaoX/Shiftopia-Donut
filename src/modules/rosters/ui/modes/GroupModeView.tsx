@@ -36,7 +36,7 @@ import { useDrag, useDrop } from 'react-dnd';
 import {
   ShiftContext,
 } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
-import { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal/Lazy';
+import { useShiftFormNav } from '@/modules/rosters/hooks/useShiftFormNav';
 
 import { BulkActionsToolbar } from '@/modules/rosters/ui/components/BulkActionsToolbar';
 import { AddSubGroupDialog } from '@/modules/rosters/ui/dialogs/AddSubGroupDialog';
@@ -46,6 +46,7 @@ import {
   DeleteSubGroupDialog
 } from '@/modules/rosters/ui/dialogs/SubGroupActionsDialogs';
 import { SmartShiftCard, type ComplianceInfo } from '@/modules/rosters/ui/components/SmartShiftCard';
+import * as import_GroupSummaryCell from '@/modules/rosters/ui/components/GroupSummaryCell';
 import { GroupStatsSummary } from '@/modules/rosters/ui/components/GroupStatsSummary';
 import { ShiftCardLegend } from '@/modules/rosters/ui/components/ShiftCardLegend';
 import {
@@ -81,7 +82,6 @@ import {
   getAllowedActions
 } from '../../domain/bulk-validation';
 import { computeShiftUrgency, computeBiddingUrgency, isOnBidding } from '../../domain/bidding-urgency';
-import DayTimelineView from './DayTimelineView';
 import { useRosterStore } from '@/modules/rosters/state/useRosterStore';
 import { startOfMonth, endOfMonth } from 'date-fns';
 import {
@@ -111,8 +111,7 @@ import { determineShiftState } from '@/modules/rosters/domain/shift-state.utils'
 import { isShiftLocked } from '@/modules/rosters/domain/shift-locking.utils';
 // complianceService and calculateMinutesBetweenTimes removed — handleShiftDrop now
 // routes through executeAssignShift which encapsulates all compliance logic.
-import { groupShiftsIntoBuckets, type ShiftBucket as ShiftBucketType } from '@/modules/rosters/utils/bucket.utils';
-import { ShiftBucket, type BucketShiftData } from '@/modules/rosters/ui/components/ShiftBucket';
+
 import { canDragShift, canDropOnTarget } from '@/modules/rosters/utils/dnd.utils';
 import { ToastAction } from '@/modules/core/ui/primitives/toast';
 import type { GroupProjection } from '@/modules/rosters/domain/projections/types';
@@ -137,9 +136,12 @@ interface DraggableShiftCardProps {
   subGroupName: string;
   children: React.ReactNode;
   disabled?: boolean;
+  /** When false, no useDrag is registered — the card renders inert. Gated on
+   *  DnD mode so populated grids don't pay per-card drag registration. */
+  active?: boolean;
 }
 
-const DraggableShiftCard: React.FC<DraggableShiftCardProps> = React.memo(({
+const DraggableShiftCardActive: React.FC<DraggableShiftCardProps> = React.memo(({
   shift,
   groupType,
   subGroupName,
@@ -177,7 +179,16 @@ const DraggableShiftCard: React.FC<DraggableShiftCardProps> = React.memo(({
   );
 });
 
-DraggableShiftCard.displayName = 'DraggableShiftCard';
+DraggableShiftCardActive.displayName = 'DraggableShiftCardActive';
+
+// Gate: only register useDrag when `active` (DnD mode on). Otherwise render the
+// card inert in a plain div, so populated grids don't mount a useDrag per card.
+const DraggableShiftCard: React.FC<DraggableShiftCardProps> = ({ active = true, ...props }) => {
+  if (!active) {
+    return <div>{props.children}</div>;
+  }
+  return <DraggableShiftCardActive {...props} />;
+};
 
 // ============================================================================
 // DROPPABLE CELL WRAPPER
@@ -193,9 +204,14 @@ interface DroppableCellProps {
   children: React.ReactNode;
   className?: string;
   disabled?: boolean;
+  /** When false, no react-dnd drop target is registered (renders a plain div).
+   *  The grid mounts hundreds of cells in week/month views; registering a
+   *  useDrop per cell when DnD mode is off dominated INP (~253ms processing on
+   *  an empty month grid). Gate registration on the DnD toggle. */
+  active?: boolean;
 }
 
-const DroppableCell: React.FC<DroppableCellProps> = ({
+const DroppableCellActive: React.FC<DroppableCellProps> = ({
   groupType,
   subGroupName,
   groupId,
@@ -258,6 +274,17 @@ const DroppableCell: React.FC<DroppableCellProps> = ({
       {children}
     </div>
   );
+};
+
+// Gate: only mount the react-dnd drop target when `active` (DnD mode on).
+// Default view (DnD off) renders a plain div, so week/month grids don't pay
+// for hundreds of useDrop registrations. Swapping component types on toggle
+// remounts the cell — acceptable for an explicit mode switch.
+const DroppableCell: React.FC<DroppableCellProps> = ({ active = true, ...props }) => {
+  if (!active) {
+    return <div className={props.className}>{props.children}</div>;
+  }
+  return <DroppableCellActive {...props} />;
 };
 
 // ============================================================================
@@ -382,6 +409,10 @@ interface GroupModeViewProps {
   onToggleShiftSelection?: (shiftId: string) => void;
   /** Centralized employee-to-shift assignment handler (from RostersPlannerPage) */
   onAssignShift?: (shiftId: string, employeeId: string, employeeName: string) => void;
+  /** Phase-3: pre-aggregated server-side summary map for month view */
+  summaryData?: Map<string, import('@/modules/rosters/api/rosterSummary.queries').RosterSummaryCellDTO>;
+  /** Callback to open drill-down panel */
+  onDrillDown?: (date: string, groupType: string, subGroupName?: string) => void;
 }
 
 interface VisualGroup {
@@ -451,6 +482,12 @@ const GROUP_COLORS: Record<TemplateGroupType, {
     badge: 'bg-red-100 text-red-700 border-red-200',
     accent: 'red',
   },
+  the_cutaway: {
+    card: 'bg-amber-500/10 hover:bg-amber-500/15',
+    cardBorder: 'border-l-amber-500',
+    badge: 'bg-amber-100 text-amber-700 border-amber-200',
+    accent: 'amber',
+  },
 };
 
 /* ============================================================
@@ -480,6 +517,12 @@ const GLASS_STYLES: Record<TemplateGroupType, {
     headerText: 'text-white drop-shadow-lg',
     accent: 'red',
   },
+  the_cutaway: {
+    container: 'bg-amber-500/5 dark:bg-amber-500/5 backdrop-blur-xl border border-amber-500/20 dark:border-amber-500/20 shadow-[0_8px_32px_rgba(245,158,11,0.15)]',
+    header: 'bg-gradient-to-r from-amber-600/90 to-amber-500/80 dark:from-amber-600/90 dark:to-amber-500/80 backdrop-blur-md border-b border-amber-400/30',
+    headerText: 'text-white drop-shadow-lg',
+    accent: 'amber',
+  },
 };
 
 // Unassigned group style (separate to avoid type conflicts)
@@ -495,6 +538,7 @@ const DEFAULT_SUB_GROUPS_MAP: Record<TemplateGroupType, string[]> = {
   convention_centre: [],
   exhibition_centre: [],
   theatre: [],
+  the_cutaway: [],
 };
 
 // Human-readable group names
@@ -502,6 +546,7 @@ const GROUP_DISPLAY_NAMES: Record<TemplateGroupType | 'unassigned', string> = {
   convention_centre: 'Convention Centre',
   exhibition_centre: 'Exhibition Centre',
   theatre: 'Theatre',
+  the_cutaway: 'The Cutaway',
   unassigned: 'Unassigned',
 };
 
@@ -521,6 +566,7 @@ const CoverageSignalBar: React.FC<CoverageSignalBarProps> = ({ pct, accent, segm
     blue: 'bg-blue-400',
     emerald: 'bg-emerald-400',
     red: 'bg-red-400',
+    amber: 'bg-amber-400',
     gray: 'bg-slate-400',
   };
   const barColor = colorMap[accent] ?? 'bg-white/40';
@@ -559,7 +605,19 @@ const CoverageSignalBar: React.FC<CoverageSignalBarProps> = ({ pct, accent, segm
 const GROUP_COL_SUB_W = 160; // px — sticky sub-group label column
 const GROUP_COL_DAY_W = 280; // px — per-day column
 const groupGridCols = (dayCount: number) =>
-  `${GROUP_COL_SUB_W}px repeat(${dayCount}, ${GROUP_COL_DAY_W}px)`;
+  `${GROUP_COL_SUB_W}px repeat(${dayCount}, minmax(${GROUP_COL_DAY_W}px, 1fr))`;
+
+// Per-cell card cap. At high shift volume a single (subgroup, date) cell can
+// hold dozens of shifts; rendering them all is the dominant DOM-node multiplier
+// in week/month views (cells × cards, each SmartShiftCard being ~15-20 nodes).
+// We render the first N and collapse the rest behind a "+N more" toggle, the
+// same way mature calendars do. Bucket view is exempt — it already condenses.
+const MAX_CARDS_PER_CELL = 4;
+
+// Month view is bounded to the selected month ± this many days (calendar
+// continuity buffer). Must match RostersPlannerPage's fetch window so the
+// rendered columns line up with the data that was actually fetched.
+const MONTH_BUFFER_DAYS = 3;
 
 interface VirtualizedSubGroupBodyProps {
   subGroups: VisualSubGroup[];
@@ -612,6 +670,37 @@ const VirtualizedSubGroupBody: React.FC<VirtualizedSubGroupBodyProps> = ({
 };
 
 /* ============================================================
+   GROUP CELL SHIFT LIST
+   ------------------------------------------------------------
+   Renders a single cell's shift cards, capped at MAX_CARDS_PER_CELL with a
+   local "+N more" toggle. Expansion state lives HERE (not in GroupModeView), so
+   clicking "+N more" re-renders only this one cell instead of the whole grid —
+   the grid-level Set version cost ~200ms INP per click.
+   ============================================================ */
+interface GroupCellShiftListProps {
+  shifts: ShiftDisplay[];
+  renderItem: (shift: ShiftDisplay, idx: number) => React.ReactNode;
+}
+
+const GroupCellShiftList: React.FC<GroupCellShiftListProps> = ({ shifts, renderItem }) => {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? shifts : shifts.slice(0, MAX_CARDS_PER_CELL);
+  return (
+    <>
+      {visible.map((shift, idx) => renderItem(shift, idx))}
+      {shifts.length > MAX_CARDS_PER_CELL && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
+          className="relative z-10 w-full text-[11px] font-semibold text-primary/80 hover:text-primary bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-md px-2 py-1 transition-colors"
+        >
+          {expanded ? 'Show less' : `+${shifts.length - MAX_CARDS_PER_CELL} more`}
+        </button>
+      )}
+    </>
+  );
+};
+
+/* ============================================================
    MAIN COMPONENT
    ============================================================ */
 export const GroupModeView: React.FC<GroupModeViewProps> = ({
@@ -642,6 +731,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   selectedV8ShiftIds: propsSelectedV8ShiftIds, // Destructure the prop and rename it
   onToggleShiftSelection,
   onAssignShift,
+  summaryData,
+  onDrillDown,
 }) => {
   const { toast } = useToast();
   const { isDark } = useTheme();
@@ -649,7 +740,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   const {
     advancedFilters,
     hasActiveFilters,
-    isBucketView,
   } = useRosterUI();
 
   const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
@@ -667,6 +757,32 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
   // Collapsible group state (persisted to localStorage)
   const [collapsedGroups, toggleGroupCollapse] = useCollapsedGroups();
+
+  // Per-cell "+N more" expansion now lives inside GroupCellShiftList (local
+  // component state), so toggling it re-renders only that one cell instead of
+  // the whole grid (the old grid-level Set caused ~200ms INP per click).
+
+  // Track groups the user has explicitly expanded (session-only, resets on remount).
+  // When a past group is auto-collapsed and the user clicks to expand it, we record
+  // the group here so effectiveCollapsed no longer forces it shut.
+  const userExpandedGroupsRef = useRef<Set<string>>(new Set());
+
+  // Wrapped toggle: if the group is currently effectively collapsed (either by
+  // explicit choice or auto-collapse) and the user clicks → they are expanding →
+  // record in userExpandedGroupsRef so the auto-collapse rule is suppressed.
+  const handleToggleGroupCollapse = useCallback((groupId: string) => {
+    if (collapsedGroups.has(groupId) || userExpandedGroupsRef.current.has(groupId) === false) {
+      // Toggling from collapsed → open: mark as explicitly expanded so
+      // pastGroupIds auto-collapse is bypassed for this group.
+      userExpandedGroupsRef.current = new Set(userExpandedGroupsRef.current).add(groupId);
+    } else {
+      // Toggling from open → collapsed: remove from expanded set.
+      const next = new Set(userExpandedGroupsRef.current);
+      next.delete(groupId);
+      userExpandedGroupsRef.current = next;
+    }
+    toggleGroupCollapse(groupId);
+  }, [collapsedGroups, toggleGroupCollapse]);
 
   // TanStack Query mutation hooks (auto-invalidate caches on success)
   const deleteShiftMutation = useDeleteShift();
@@ -948,11 +1064,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   }, [templateStartDate, templateEndDate]);
 
 
-  // ==================== MODAL STATE ====================
-  const [isAddShiftOpen, setIsAddShiftOpen] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [editingShift, setEditingShift] = useState<Shift | null>(null);
-  const [shiftContext, setShiftContext] = useState<ShiftContext | null>(null);
+  // Add/Edit shift now navigates to the dedicated full-page form route.
+  const openShiftForm = useShiftFormNav();
 
   // ==================== DELETE CONFIRMATION ====================
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -1018,14 +1131,14 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
         for (let i = 0; i < 7; i++) result.push(addDays(weekStart, i));
         break;
       case 'month': {
-        // Use templateEndDate if available, otherwise calculate end of month
-        const monthEnd = templateEndDate
-          ? startOfDay(templateEndDate)
-          : new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-
-        // Generate all dates from startOfMonth(selectedDate) to monthEnd
-        let current = startOfMonth(selectedDate);
-        while (current <= monthEnd) {
+        // Bound to the selected month ± a small buffer (matches the parent
+        // fetch window in RostersPlannerPage). Previously this extended to
+        // templateEndDate, which for multi-month templates rendered dozens of
+        // EMPTY future columns — the fetch is month-scoped, so Jul/Aug/Sept
+        // had no data. Capping removes that waste and bounds the column count.
+        const windowEnd = addDays(endOfMonth(selectedDate), MONTH_BUFFER_DAYS);
+        let current = addDays(startOfMonth(selectedDate), -MONTH_BUFFER_DAYS);
+        while (current <= windowEnd) {
           result.push(current);
           current = addDays(current, 1);
         }
@@ -1033,7 +1146,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
       }
     }
     return result;
-  }, [selectedDate, viewType, templateEndDate]);
+  }, [selectedDate, viewType]);
 
   // Profiles are now fetched via useEmployees React Query hook above
 
@@ -1094,7 +1207,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     }>();
 
     const toCanonicalKey = (name: string, externalId: string | null): string => {
-      if (externalId && ['convention_centre', 'exhibition_centre', 'theatre'].includes(externalId)) {
+      if (externalId && ['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'].includes(externalId)) {
         return externalId;
       }
       return name.trim().toLowerCase().replace(/\s+/g, '_');
@@ -1104,7 +1217,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
       const key = toCanonicalKey(name, externalId);
       if (!groupsMap.has(key)) {
         let type: TemplateGroupType = 'convention_centre';
-        if (['convention_centre', 'exhibition_centre', 'theatre'].includes(key)) {
+        if (['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'].includes(key)) {
           type = key as TemplateGroupType;
         }
         groupsMap.set(key, {
@@ -1124,7 +1237,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     };
 
     // Initialize with standard ICC Sydney groups
-    (['convention_centre', 'exhibition_centre', 'theatre'] as TemplateGroupType[]).forEach((type, idx) => {
+    (['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'] as TemplateGroupType[]).forEach((type, idx) => {
       ensureGroup(null as any, GROUP_DISPLAY_NAMES[type], type, idx);
     });
 
@@ -1241,7 +1354,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   };
 
   const getDefaultGroups = (): VisualGroup[] => {
-    return (['convention_centre', 'exhibition_centre', 'theatre'] as TemplateGroupType[]).map((type) => ({
+    return (['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'] as TemplateGroupType[]).map((type) => ({
       id: type,
       name: GROUP_DISPLAY_NAMES[type],
       type,
@@ -1254,8 +1367,86 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     }));
   };
 
+  // ==================== BUILD VISUAL GROUPS (BUCKET VIEW / SUMMARY) ====================
+  // Scalability path: in the Group-mode default Bucket View the grid renders
+  // aggregate GroupSummaryCells only and never individual shift cards, so the
+  // parent skips the heavy per-shift fetch. We therefore derive the ROW
+  // structure (groups + subgroups) from the already-fetched aggregate summary
+  // instead of from `shifts` — merging the distinct (group_type, sub_group_name)
+  // pairs present in the summary with the three default template groups so the
+  // templates always render even when empty. Per-cell totals still resolve via
+  // the existing `summaryData.get(`${dateKey}::${group.type}::${subGroup.name}`)`
+  // lookup in the render path; rows just need to exist without shift data.
+  const buildVisualGroupsFromSummary = (
+    summary: Map<string, import('@/modules/rosters/api/rosterSummary.queries').RosterSummaryCellDTO>,
+  ): VisualGroup[] => {
+    // Start from the three default template groups (guaranteed to render).
+    const base = getDefaultGroups();
+    const byType = new Map<string, VisualGroup>(base.map(g => [g.type, g]));
+
+    // Track subgroup names already present per group so we don't duplicate.
+    const subNamesByType = new Map<string, Set<string>>();
+    for (const g of base) {
+      subNamesByType.set(g.type, new Set(g.subGroups.map(sg => sg.name)));
+    }
+
+    // Collect distinct (group_type, sub_group_name) pairs from the summary.
+    for (const cell of summary.values()) {
+      const type = (cell.group_type || 'unassigned') as TemplateGroupType | 'unassigned';
+      const subName = cell.sub_group_name || 'General';
+
+      let group = byType.get(type);
+      if (!group) {
+        // A group present in the summary but not in the default templates
+        // (e.g. an ad-hoc / unassigned bucket). Create it so its rows render.
+        const isTemplate = ['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'].includes(type);
+        group = {
+          id: type,
+          name: GROUP_DISPLAY_NAMES[type] ?? type,
+          type,
+          color: isTemplate
+            ? GLASS_STYLES[type as TemplateGroupType].accent
+            : UNASSIGNED_GLASS_STYLE.accent,
+          subGroups: [],
+        };
+        byType.set(type, group);
+        subNamesByType.set(type, new Set());
+      }
+
+      const existingNames = subNamesByType.get(type)!;
+      if (!existingNames.has(subName)) {
+        existingNames.add(subName);
+        group.subGroups.push({
+          id: `summary-${type}-${subName}`,
+          name: subName,
+          shifts: {}, // Bucket View renders aggregate cells — no per-shift data.
+        });
+      }
+    }
+
+    // Stable ordering: templates first (in canonical order), then any extras.
+    const order: Record<string, number> = {
+      convention_centre: 0,
+      exhibition_centre: 1,
+      theatre: 2,
+      the_cutaway: 3,
+    };
+    const groups = Array.from(byType.values()).sort(
+      (a, b) => (order[a.type] ?? 99) - (order[b.type] ?? 99),
+    );
+    groups.forEach(g => g.subGroups.sort((a, b) => a.name.localeCompare(b.name)));
+    return groups;
+  };
+
   // ==================== DERIVE VISUAL GROUPS VIA MEMO ====================
   const visualGroups = useMemo((): VisualGroup[] => {
+    // Bucket View: build rows from the aggregate summary (no shift fetch).
+    // This branch takes priority over `projection`/`shifts` precisely because
+    // in this mode the parent intentionally did not fetch shifts.
+    if (!isDnDModeActive && summaryData) {
+      return buildVisualGroupsFromSummary(summaryData);
+    }
+
     // Phase-2: when projection snapshot is available, map directly from it.
     // Filtering is already applied upstream by useRosterProjections/applyAdvancedFilters.
     if (projection) {
@@ -1327,7 +1518,33 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     });
 
     return buildVisualGroupsFromShifts(filteredShifts);
-  }, [projection, externalShifts, rosterStructures, advancedFilters, hasActiveFilters, profileMap]);
+  }, [projection, externalShifts, rosterStructures, advancedFilters, hasActiveFilters, profileMap, summaryData, isDnDModeActive]);
+
+  // ==================== AUTO-COLLAPSE PAST GROUPS ====================
+  // A group is "all-past" when every date in the current view window falls
+  // before today (start of Sydney day). This is memoized on visualGroups +
+  // dates so it only recomputes when the data or date window changes.
+  const pastGroupIds = useMemo((): Set<string> => {
+    if (dates.length === 0) return new Set();
+    const todayStart = startOfDay(new Date());
+    const allPast = dates.every(d => isBefore(d, todayStart));
+    if (!allPast) return new Set(); // At least one future/today date — no auto-collapse
+    // Every date in the window is past: all groups are candidates.
+    return new Set(visualGroups.map(g => g.id));
+  }, [visualGroups, dates]);
+
+  // Merge the persisted explicit collapses with the auto-collapsed past groups.
+  // Groups in userExpandedGroupsRef are excluded from the auto-collapse so the
+  // user can re-open a past group mid-session and have it stay open.
+  const effectiveCollapsed = useMemo((): Set<string> => {
+    const merged = new Set(collapsedGroups);
+    for (const id of pastGroupIds) {
+      if (!userExpandedGroupsRef.current.has(id)) {
+        merged.add(id);
+      }
+    }
+    return merged;
+  }, [collapsedGroups, pastGroupIds]);
 
   // ==================== CONTEXT BUILDER ====================
   const buildShiftContext = (
@@ -1403,10 +1620,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
     const context = buildShiftContext(group, subGroup, date, 'grid', specificRosterId);
     startTransition(() => {
-      setShiftContext(context);
-      setIsEditMode(false);
-      setEditingShift(null);
-      setIsAddShiftOpen(true);
+      openShiftForm({ context });
     });
   };
 
@@ -1448,10 +1662,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     context.employeeId = shift.rawShift.assigned_employee_id || undefined;
 
     startTransition(() => {
-      setShiftContext(context);
-      setIsEditMode(true);
-      setEditingShift(shift.rawShift); // Pass the raw shift for ID reference
-      setIsAddShiftOpen(true);
+      openShiftForm({ context, editMode: true, existingShift: shift.rawShift });
     });
   };
 
@@ -1662,9 +1873,15 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
       setIsAddSubGroupOpen(false);
 
-      // Handle pending shift creation
+      // Handle pending shift creation — navigate to the shift form for the
+      // newly-created subgroup.
       if (pendingShiftCreation) {
-        setIsAddShiftOpen(true);
+        const context = buildShiftContext(
+          pendingShiftCreation.group,
+          { name } as any,
+          pendingShiftCreation.date,
+        );
+        openShiftForm({ context });
       }
 
       // Clear pending
@@ -1673,10 +1890,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     } catch (error) {
       // Error handled by mutation
     }
-  };
-
-  const handleShiftCreated = () => {
-    // Mutation hooks auto-invalidate the cache; no manual refresh needed
   };
 
   // ==================== RENDER SHIFT CARD ====================
@@ -1895,40 +2108,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
           </div>
         )}
 
-        {/* ── Day Timeline View (replaces grid for day view) ── */}
-        {viewType === 'day' && (
-          <DayTimelineView
-            visualGroups={visualGroups as any}
-            selectedDate={selectedDate}
-            canEdit={canEdit}
-            isShiftsLoading={isShiftsLoading}
-            isBulkMode={isBulkMode}
-            isDnDModeActive={isDnDModeActive}
-            selectedV8ShiftIds={new Set(selectedV8ShiftIds)}
-            onBulkToggle={handleToggleShiftSelection}
-            complianceMap={complianceMap}
-            isBucketView={false} // Bucket mode explicitly disabled for Day View
-            zoom={dayZoom as 60}
-            onSlotClick={handleAddShift as any}
-            onShiftEdit={handleEditShift as any}
-            onShiftDelete={handleDeleteShift as any}
-            onShiftPublish={handleRequestPublish as any}
-            onShiftUnpublish={handleRequestUnpublish as any}
-            onShiftClone={handleCloneShift as any}
-
-            onAddSubGroup={(group) => handleAddSubGroup(group as any)}
-            onSubGroupAction={(action, subGroup, group) => {
-              setActiveSubGroup({ id: subGroup.id, name: subGroup.name, groupExternalId: (group as any).type || '' });
-              if (action === 'rename') setIsRenameOpen(true);
-              else if (action === 'clone') setIsCloneOpen(true);
-              else setIsDeleteOpen(true);
-            }}
-          />
-        )}
-
-        {/* Main Content (week / 3-day / month grid) */}
-        {viewType !== 'day' && (
-          <ScrollArea ref={scrollAreaRef} className="flex-1">
+        {/* Main Content (day / 3-day / week / month grid) */}
+        <ScrollArea ref={scrollAreaRef} className="flex-1">
             {/* Shift Card Legend (collapsible) */}
             {showLegend && (
               <div className="px-4 pt-4">
@@ -1951,6 +2132,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                 );
                 const coveragePct = totalShifts > 0 ? Math.min(100, Math.round((assignedShifts / totalShifts) * 100)) : 100;
 
+                const isCollapsed = effectiveCollapsed.has(group.id);
+
                 return (
                   <div
                     key={group.type}
@@ -1960,7 +2143,22 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                     //    shift when rows materialize after shifts load.
                     //  - [contain:layout] scopes any remaining internal reflow
                     //    so children's growth doesn't ripple out.
-                    className={cn('rounded-2xl overflow-hidden min-h-[420px] [contain:layout]', glassStyle.container)}
+                    // Performance: contentVisibility:'auto' tells the browser to
+                    //  skip layout/paint for groups that are fully off-screen.
+                    //  containIntrinsicSize gives the browser a stable size estimate
+                    //  so the scrollbar thumb doesn't jump as groups enter the
+                    //  viewport. Applied only to the outer group wrapper — the
+                    //  inner grid rows are unaffected and gridTemplateColumns
+                    //  alignment is fully preserved.
+                    className={cn(
+                      'rounded-2xl overflow-hidden [contain:layout]',
+                      glassStyle.container,
+                      !isCollapsed && isShiftsLoading && group.subGroups.length === 0 ? 'min-h-[420px]' : ''
+                    )}
+                    style={{
+                      contentVisibility: 'auto' as any,
+                      containIntrinsicSize: isCollapsed ? 'auto 54px' : 'auto 600px',
+                    }}
                   >
                     {/* Group Header with Collapse Toggle + Stats */}
                     <div className={cn('px-5 py-3', glassStyle.header)}>
@@ -1968,11 +2166,11 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                         <div className="flex items-center gap-3">
                           {/* Collapse Toggle Button */}
                           <button
-                            onClick={() => toggleGroupCollapse(group.id)}
+                            onClick={() => handleToggleGroupCollapse(group.id)}
                             className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/20 transition-colors"
-                            aria-label={collapsedGroups.has(group.id) ? 'Expand group' : 'Collapse group'}
+                            aria-label={effectiveCollapsed.has(group.id) ? 'Expand group' : 'Collapse group'}
                           >
-                            {collapsedGroups.has(group.id) ? (
+                            {effectiveCollapsed.has(group.id) ? (
                               <ChevronRight className="h-4 w-4 text-white" />
                             ) : (
                               <ChevronDown className="h-4 w-4 text-white" />
@@ -2018,7 +2216,9 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                   ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/30"
                                   : glassStyle.accent === 'blue'
                                     ? "bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/30"
-                                    : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/30"
+                                    : glassStyle.accent === 'amber'
+                                      ? "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/30"
+                                      : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/30"
                               )}
                             >
                               <Plus className="h-3.5 w-3.5" />
@@ -2030,7 +2230,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                     </div>
 
                     {/* Collapsible Content */}
-                    {!collapsedGroups.has(group.id) && (
+                    {!effectiveCollapsed.has(group.id) && (
                       <div className="overflow-auto">
                         <div role="table" className="relative" style={{ width: 'max-content', minWidth: '100%' }}>
                           <div role="row" className="grid sticky top-0 z-20 bg-muted/30" style={{ gridTemplateColumns: groupGridCols(dates.length) }}>
@@ -2235,6 +2435,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                       ) : (
                                         // Active Cell Content - Shifts and Add button
                                         <DroppableCell
+                                          active={isDnDModeActive}
                                           groupType={group.type}
                                           subGroupName={subGroup.name}
                                           groupId={group.id}
@@ -2244,128 +2445,34 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                           disabled={isBulkMode || !canEdit || cellIsPast || !isDnDModeActive}
                                           className="grid grid-cols-1 gap-1.5 min-h-[60px]"
                                         >
-                                          {isBucketView ? (() => {
-                                            // Single O(n) Map lookup per cell — replaces 5 inline
-                                            // cellShifts.find() chains that were O(n²) overall and
-                                            // accounted for a meaningful slice of the Bucket-view
-                                            // toggle INP (~936ms on a 1.4k-cell grid).
-                                            const cellShiftsById = new Map(cellShifts.map(s => [s.id, s]));
-                                            const bucketInputShifts = cellShifts.map(s => ({
-                                              id: s.id,
-                                              startTime: s.startTime,
-                                              endTime: s.endTime,
-                                              isPublished: s.isPublished,
-                                              isDraft: s.isDraft,
-                                              assignedEmployeeId: s.assignedEmployeeId,
-                                              isLocked: s.isLocked ?? isShiftLocked(s.rawShift.shift_date, s.rawShift.start_time, 'roster_management'),
-                                            }));
-                                            const buckets = groupShiftsIntoBuckets(bucketInputShifts, subGroup.name, dateKey);
-                                            const accentColor = group.color?.startsWith('#')
-                                              ? group.color
-                                              : (group.color === 'blue' ? '#3b82f6' :
-                                                group.color === 'emerald' ? '#10b981' :
-                                                  group.color === 'red' ? '#ef4444' : '#6b7280');
-
-                                            return buckets.map(bucket => {
-                                              const bucketShiftData: BucketShiftData[] = bucket.shiftIds.map(sid => {
-                                                const sd = cellShiftsById.get(sid)!;
-                                                return {
-                                                  id: sd.id,
-                                                  role: sd.role,
-                                                  startTime: sd.startTime,
-                                                  endTime: sd.endTime,
-                                                  employeeName: sd.employeeName,
-                                                  isAssigned: !!sd.assignedEmployeeId,
-                                                  isPublished: sd.isPublished,
-                                                  isDraft: sd.isDraft,
-                                                  isLocked: sd.isLocked ?? isShiftLocked(sd.rawShift.shift_date, sd.rawShift.start_time, 'roster_management'),
-                                                  assignedEmployeeId: sd.assignedEmployeeId,
-                                                };
-                                              });
-
-                                              return (
-                                                <ShiftBucket
-                                                  key={bucket.key}
-                                                  bucket={bucket}
-                                                  shifts={bucketShiftData}
-                                                  canEdit={canEdit}
-                                                  accentColor={accentColor}
-                                                  onEditShift={(shiftId) => {
-                                                    const sd = cellShiftsById.get(shiftId);
-                                                    if (sd) handleEditShift(sd, group, subGroup, date);
-                                                  }}
-                                                  onDeleteShift={(shiftId) => {
-                                                    const sd = cellShiftsById.get(shiftId);
-                                                    if (sd) handleDeleteShift(sd);
-                                                  }}
-                                                  onPublishShift={(shiftId) => {
-                                                    const sd = cellShiftsById.get(shiftId);
-                                                    if (sd) handleRequestPublish(sd);
-                                                  }}
-                                                  onUnpublishShift={(shiftId) => {
-                                                    const sd = cellShiftsById.get(shiftId);
-                                                    if (sd) handleRequestUnpublish(sd);
-                                                  }}
-                                                  onBulkPublish={(shiftIds) => {
-                                                    // Build a flat id→ShiftDisplay map from visualGroups
-                                                    const shiftLookup = new Map<string, ShiftDisplay>();
-                                                    for (const vg of visualGroups) {
-                                                      for (const sg of vg.subGroups) {
-                                                        for (const dayShifts of Object.values(sg.shifts)) {
-                                                          for (const sd of dayShifts) shiftLookup.set(sd.id, sd);
-                                                        }
-                                                      }
-                                                    }
-
-                                                    // Filter out S1+emergent shifts (unassigned, TTS < 4h)
-                                                    const publishable: string[] = [];
-                                                    const skipped: string[] = [];
-                                                    for (const id of shiftIds) {
-                                                      const sd = shiftLookup.get(id);
-                                                      if (sd && !sd.rawShift.assigned_employee_id && sd.rawShift.assignment_status === 'unassigned') {
-                                                        const urg = computeShiftUrgency(sd.rawShift.shift_date ?? '', sd.rawShift.start_time ?? '', sd.rawShift.start_at ?? undefined);
-                                                        if (urg === 'emergent') { skipped.push(id); continue; }
-                                                      }
-                                                      publishable.push(id);
-                                                    }
-
-                                                    if (publishable.length > 0) {
-                                                      bulkPublishMutation.mutate(publishable, {
-                                                        onSuccess: () => {
-                                                          const skipMsg = skipped.length > 0
-                                                            ? ` ${skipped.length} skipped (Emergent Restriction).`
-                                                            : '';
-                                                          toast({
-                                                            title: 'Bulk Publish Complete',
-                                                            description: `${publishable.length} shift${publishable.length !== 1 ? 's' : ''} published.${skipMsg}`,
-                                                          });
-                                                        },
-                                                      });
-                                                    } else if (skipped.length > 0) {
-                                                      toast({
-                                                        title: 'All Shifts Skipped',
-                                                        description: `${skipped.length} shift${skipped.length !== 1 ? 's' : ''} skipped — all are within the 4h emergent window and must be assigned before publishing.`,
-                                                        variant: 'destructive',
-                                                      });
-                                                    }
-                                                  }}
-                                                  onBulkUnpublish={(shiftIds) => {
-                                                    bulkUnpublishMutation.mutate(shiftIds);
-                                                  }}
-                                                  onBulkDelete={(shiftIds) => {
-                                                    bulkDeleteMutation.mutate(shiftIds);
-                                                  }}
-                                                />
-                                              );
-                                            });
-                                          })() : (
-                                            cellShifts.map((shift, shiftIdx) => (
+                                          {/* Bucket View (summary cell + drill-down) is the default
+                                              for all non-day views. DnD Mode swaps to the card grid. */}
+                                          {(!isDnDModeActive && summaryData) ? (
+                                            <div className="w-full h-full flex flex-col items-center justify-center min-h-[60px] p-1">
+                                              <import_GroupSummaryCell.GroupSummaryCell
+                                                date={date}
+                                                groupName={subGroup.name}
+                                                summary={summaryData.get(`${dateKey}::${group.type}::${subGroup.name}`)}
+                                                accent={group.color?.startsWith('#')
+                                                  ? group.color
+                                                  : (group.color === 'blue' ? 'blue' :
+                                                    group.color === 'emerald' ? 'emerald' :
+                                                      group.color === 'red' ? 'red' :
+                                                        group.color === 'amber' ? 'amber' : 'gray')}
+                                                onClick={() => onDrillDown?.(dateKey, group.type, subGroup.name)}
+                                              />
+                                            </div>
+                                          ) : (
+                                            <GroupCellShiftList
+                                              shifts={cellShifts}
+                                              renderItem={(shift, shiftIdx) => (
                                               <div
                                                 key={shift.id}
                                                 style={{ '--i': shiftIdx, animationDelay: `calc(${shiftIdx} * 40ms)` } as React.CSSProperties}
                                                 className="animate-[slideUpFade_0.25s_ease_forwards]"
                                               >
                                                 <DraggableShiftCard
+                                                  active={isDnDModeActive}
                                                   shift={shift}
                                                   groupType={group.type}
                                                   subGroupName={subGroup.name}
@@ -2378,7 +2485,7 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                                     (isDnDModeActive && !shift.isDraft)
                                                   }
                                                 >
-                                                  {(canEdit && !cellIsPast && !isSydneyStarted(format(date, 'yyyy-MM-dd'), shift.startTime) && shift.isDraft) ? (
+                                                  {(isDnDModeActive && canEdit && !cellIsPast && !isSydneyStarted(format(date, 'yyyy-MM-dd'), shift.startTime) && shift.isDraft) ? (
                                                     <DroppableShiftAssign
                                                       shiftId={shift.id}
                                                       shiftRole={shift.role}
@@ -2392,7 +2499,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                                   )}
                                                 </DraggableShiftCard>
                                               </div>
-                                            ))
+                                              )}
+                                            />
                                           )}
 
                                           {/* Unified Add Shift Button — Repositioned to corner if shifts exist */}
@@ -2410,7 +2518,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                                   cellShifts.length > 0
                                                     ? "w-9 h-9 opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:scale-100"
                                                     : "w-9 h-9 opacity-40 scale-90 hover:opacity-100 [@media(hover:none)]:opacity-100",
-                                                  "group/add"
+                                                  "group/add",
+                                                  (!isDnDModeActive && summaryData) ? "hidden" : ""
                                                 )}
                                                 title="Add Shift"
                                               >
@@ -2438,7 +2547,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
               })}
             </div>
           </ScrollArea>
-        )}
 
         {/* Delete Dialog */}
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -2470,20 +2578,6 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
 
 
 
-        {/* Add/Edit Shift Modal */}
-        <EnhancedAddShiftModal
-          isOpen={isAddShiftOpen}
-          onClose={() => {
-            setIsAddShiftOpen(false);
-            setShiftContext(null);
-            setIsEditMode(false);
-            setEditingShift(null);
-          }}
-          onSuccess={handleShiftCreated}
-          context={shiftContext}
-          editMode={isEditMode}
-          existingShift={editingShift}
-        />
 
         {/* Bulk actions toolbar removed - now rendered in RostersPlannerPage */}
       </div>

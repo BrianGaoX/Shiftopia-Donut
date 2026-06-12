@@ -79,7 +79,7 @@ export function buildStats(shifts: Shift[]): ProjectionStats {
     totalShifts:    nonCancelled.length,
     assignedShifts: assignedShifts.length,
     openShifts:     nonCancelled.length - assignedShifts.length,
-    publishedShifts: nonCancelled.filter(s => s.lifecycle_status === 'Published').length,
+    publishedShifts: nonCancelled.filter(s => ['Published', 'InProgress', 'Completed'].includes(s.lifecycle_status)).length,
     totalNetMinutes,
     estimatedCost:  Math.round(estimatedCost * 100) / 100,
     costBreakdown,

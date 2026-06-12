@@ -12,7 +12,7 @@ import {
 import { determineShiftState, getShiftStateDebugString } from '../../domain/shift-state.utils';
 import { Shift } from '../../api/shifts.api';
 import { computeShiftUrgency } from '../../domain/bidding-urgency';
-import { getStatusDotInfo, getProtectionContext, getShiftStatusIcons } from '../../domain/shift-ui';
+import { getProtectionContext, getShiftStatusIcons } from '../../domain/shift-ui';
 
 /* ============================================================
    TYPES
@@ -138,20 +138,6 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
     rawShift.shift_date || shift.shiftDate || '',
     rawShift.start_time || shift.startTime || ''
   );
-
-  const dot = getStatusDotInfo({
-    lifecycle_status:   rawShift.lifecycle_status || shift.lifecycleStatus || 'draft',
-    is_cancelled:       rawShift.is_cancelled ?? shift.isCancelled ?? false,
-    assignment_outcome: rawShift.assignment_outcome ?? shift.assignmentOutcome ?? null,
-    attendance_status:  rawShift.attendance_status ?? null,
-    actual_start:       rawShift.actual_start ?? null,
-    actual_end:         rawShift.actual_end ?? null,
-    start_at:           rawShift.start_at ?? null,
-    end_at:             rawShift.end_at ?? null,
-    shift_date:         rawShift.shift_date || shift.shiftDate || null,
-    start_time:         rawShift.start_time || shift.startTime || null,
-    end_time:           rawShift.end_time || shift.endTime || null,
-  });
   
   const statusIcons = useMemo(() => 
     showStatusIcons ? getShiftStatusIcons(rawShift as any) : [], 
@@ -173,7 +159,7 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
         onClick && 'cursor-pointer hover:shadow-lg',
         isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
         isDragging && 'opacity-50',
-        dot === null && isPast && 'grayscale opacity-30 cursor-not-allowed',
+        isPast && 'grayscale opacity-30 cursor-not-allowed',
         className
       )}
       onClick={isPast ? undefined : onClick}
@@ -206,7 +192,7 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
       </div>
 
       {/* BODY */}
-      <div className={cn("p-3 flex flex-col gap-2 flex-1", isPast && dot !== null && "grayscale opacity-30")}>
+      <div className={cn("p-3 flex flex-col gap-2 flex-1", isPast && "grayscale opacity-30")}>
 
         {/* IDENTITY */}
         <div className="text-center space-y-1">
@@ -233,33 +219,12 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
         <div className="bg-background rounded-lg border border-border p-2 mt-auto">
           <div className="grid grid-cols-3 gap-y-3 gap-x-1">
 
-            {/* 1. ID + status dot (replaces left vertical strip) */}
+            {/* 1. ID */}
             <div className="flex flex-col items-center gap-0.5">
               <div className="w-4 h-4 flex items-center justify-center font-mono font-bold text-[10px] text-muted-foreground border border-border rounded">#</div>
-              {(() => {
-                const urg = computeShiftUrgency(rawShift.shift_date, rawShift.start_time);
-                return (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="flex flex-col items-center gap-0.5 justify-center cursor-help">
-                        <div className="flex items-center gap-1">
-                          {dot && (
-                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 ring-1 ring-black/10" style={{ backgroundColor: dot.color }} />
-                          )}
-                          <span className={cn("text-[9px] font-bold text-center text-blue-600 dark:text-blue-400")}>
-                            {stateId}
-                          </span>
-                        </div>
-                      </div>
-                    </TooltipTrigger>
-                    {dot && (
-                      <TooltipContent className="bg-slate-900 text-white border-none py-1 px-2 text-[10px] font-bold" style={{ backgroundColor: dot.color }}>
-                        {dot.label}
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                );
-              })()}
+              <span className={cn("text-[9px] font-bold text-center text-blue-600 dark:text-blue-400")}>
+                {stateId}
+              </span>
             </div>
 
 

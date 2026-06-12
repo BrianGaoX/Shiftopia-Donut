@@ -1,7 +1,7 @@
 // src/modules/templates/ui/constants.ts
 // Shared constants for the Templates module UI
 
-import { Building2, LayoutGrid, Theater } from 'lucide-react';
+import { Building2, LayoutGrid, Theater, Film } from 'lucide-react';
 import React from 'react';
 
 /**
@@ -12,6 +12,7 @@ export const DEFAULT_GROUPS = [
     { name: 'Convention Centre', color: '#3b82f6', icon: 'building' },
     { name: 'Exhibition Centre', color: '#22c55e', icon: 'layout-grid' },
     { name: 'Theatre', color: '#ef4444', icon: 'theater' },
+    { name: 'The Cutaway', color: '#f59e0b', icon: 'film' },
 ] as const;
 
 /**
@@ -45,6 +46,12 @@ export const GROUP_CONFIG: Record<
         border: 'border-red-500/30',
         badge: 'bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30',
     },
+    'The Cutaway': {
+        icon: React.createElement(Film, { className: 'h-5 w-5' }),
+        gradient: 'from-amber-600/30 via-amber-500/10 to-transparent dark:from-amber-600/20 dark:via-amber-500/10',
+        border: 'border-amber-500/30',
+        badge: 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30',
+    },
 };
 
 /**
@@ -54,6 +61,7 @@ export const GROUP_COLOR_MAP: Record<string, string> = {
     'Convention Centre': 'blue',
     'Exhibition Centre': 'green',
     Theatre: 'red',
+    'The Cutaway': 'amber',
 };
 
 export function getGroupColor(groupName: string): string {

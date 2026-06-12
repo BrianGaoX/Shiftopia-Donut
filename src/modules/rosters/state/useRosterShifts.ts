@@ -232,6 +232,8 @@ export function useEmployees(
   roleId?: string,
   searchTerm?: string,
   limit?: number,
+  skills?: string[],
+  licenses?: string[],
 ) {
   return useQuery({
     queryKey: shiftKeys.lookups.employees(
@@ -241,6 +243,8 @@ export function useEmployees(
       roleId,
       searchTerm,
       limit,
+      skills,
+      licenses,
     ),
     queryFn: () =>
       shiftsQueries.getEmployees(
@@ -250,6 +254,8 @@ export function useEmployees(
         roleId,
         searchTerm,
         limit,
+        skills,
+        licenses,
       ),
     staleTime: 2 * 60_000,
   });

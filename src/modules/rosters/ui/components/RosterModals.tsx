@@ -11,15 +11,11 @@
  */
 
 import React, { useState, forwardRef, useImperativeHandle, Suspense, lazy } from 'react';
+import { useShiftFormNav } from '@/modules/rosters/hooks/useShiftFormNav';
 
 // Heavy modals are lazy-loaded so the Rosters page chunk doesn't pay for
 // them on first paint. Each is ~500-1700 LOC and pulls in its own form
 // stack, compliance engine bindings, and validation logic.
-const EnhancedAddShiftModal = lazy(() =>
-    import('@/modules/rosters/ui/dialogs/EnhancedAddShiftModal').then((m) => ({
-        default: m.EnhancedAddShiftModal,
-    })),
-);
 const BulkAssignmentPanel = lazy(() =>
     import('@/modules/rosters/ui/dialogs/BulkAssignmentPanel').then((m) => ({
         default: m.BulkAssignmentPanel,
@@ -97,27 +93,18 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
     },
     ref,
 ) => {
-    const [isAddOpen, setIsAddOpen] = useState(false);
-    const [addContext, setAddContext] = useState<ShiftContext | null>(null);
-
-    const [isEditOpen, setIsEditOpen] = useState(false);
-    const [editShift, setEditShift] = useState<any>(null);
-    const [editContext, setEditContext] = useState<ShiftContext | null>(null);
-
+    const openShiftForm = useShiftFormNav();
 
     const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
     const [isAutoSchedulerOpen, setIsAutoSchedulerOpen] = useState(false);
 
     useImperativeHandle(ref, () => ({
-        openAddShift: (context) => {
-            setAddContext(context);
-            setIsAddOpen(true);
-        },
-        openEditShift: (shift, context) => {
-            setEditShift(shift);
-            setEditContext(context);
-            setIsEditOpen(true);
-        },
+        // Add/Edit now navigate to the dedicated full-page form route
+        // (no Dialog → no nested-popover pointer-events conflicts). The page's
+        // create/update mutations invalidate the roster queries on success.
+        openAddShift: (context) => openShiftForm({ context }),
+        openEditShift: (shift, context) =>
+            openShiftForm({ context, editMode: true, existingShift: shift }),
 
         openBulkAssign: () => setIsBulkAssignOpen(true),
         openAutoScheduler: () => setIsAutoSchedulerOpen(true),
@@ -125,32 +112,6 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
 
     return (
         <>
-            {/* Add Shift Modal — chunk fetched only on first open */}
-            {isAddOpen && (
-                <Suspense fallback={null}>
-                    <EnhancedAddShiftModal
-                        isOpen={isAddOpen}
-                        onClose={() => setIsAddOpen(false)}
-                        onSuccess={onShiftSaved}
-                        context={addContext}
-                    />
-                </Suspense>
-            )}
-
-            {/* Edit Shift Modal — same lazy chunk as Add */}
-            {isEditOpen && (
-                <Suspense fallback={null}>
-                    <EnhancedAddShiftModal
-                        isOpen={isEditOpen}
-                        onClose={() => setIsEditOpen(false)}
-                        onSuccess={onShiftSaved}
-                        context={editContext}
-                        editMode={true}
-                        existingShift={editShift}
-                    />
-                </Suspense>
-            )}
-
             {/* Auto-Scheduler Modal — 1.7k LOC, deferred */}
             {isAutoSchedulerOpen && (
                 <Suspense fallback={null}>

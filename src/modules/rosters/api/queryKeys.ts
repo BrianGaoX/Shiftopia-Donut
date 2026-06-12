@@ -89,6 +89,13 @@ export const shiftKeys = {
     filters?: ShiftFilters | null,
   ) => ['shifts', 'list', 'byRange', orgId, startDate, endDate, filters ?? null] as const,
 
+  summary: (
+    orgId: string,
+    startDate: string,
+    endDate: string,
+    filters?: ShiftFilters | null,
+  ) => ['shifts', 'summary', orgId, startDate, endDate, filters ?? null] as const,
+
   byEmployee: (empId: string, startDate: string, endDate: string) =>
     ['shifts', 'list', 'byEmployee', empId, startDate, endDate] as const,
 
@@ -129,6 +136,8 @@ export const shiftKeys = {
       roleId?: string,
       searchTerm?: string,
       limit?: number,
+      skills?: string[],
+      licenses?: string[],
     ) =>
       [
         'shifts',
@@ -140,6 +149,8 @@ export const shiftKeys = {
         roleId ?? null,
         searchTerm?.trim() || null,
         limit ?? null,
+        skills ?? null,
+        licenses ?? null,
       ] as const,
     templates: (subDeptId?: string, deptId?: string) =>
       ['shifts', 'lookup', 'templates', subDeptId ?? null, deptId ?? null] as const,

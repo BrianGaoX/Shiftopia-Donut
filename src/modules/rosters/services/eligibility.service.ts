@@ -29,6 +29,8 @@ export interface EligibilityContext {
     departmentId?: string;
     subDepartmentId?: string;
     roleId?: string;
+    skills?: string[];
+    licenses?: string[];
     /** Case-insensitive substring match against first_name OR last_name. */
     searchTerm?: string;
     /** Cap result set size. Default: unbounded (caller should set this for grid views). */
@@ -87,6 +89,15 @@ export const EligibilityService = {
                         contracted_weekly_hours,
                         department:departments(name),
                         sub_department:sub_departments(name)
+                    ),
+                    employee_skills:employee_skills (
+                        skill_id,
+                        status
+                    ),
+                    employee_licenses:employee_licenses (
+                        license_id,
+                        status,
+                        verification_status
                     )
                 `);
 
@@ -142,7 +153,58 @@ export const EligibilityService = {
                 
                 // Get the most relevant contract for display metadata (prefer Active if possible)
                 const contracts = Array.isArray(row.contracts) ? row.contracts : [row.contracts];
-                const displayContract = contracts.find((c: any) => c.status === 'Active') || contracts[0];
+                const activeContracts = contracts.filter((c: any) => c.status === 'Active' || c.status === 'active');
+                if (activeContracts.length === 0) return; // Must have an active contract!
+
+                // Org match verification
+                if (context.organizationId && isValidUuid(context.organizationId)) {
+                    const hasOrg = activeContracts.some((c: any) => c.organization_id === context.organizationId);
+                    if (!hasOrg) return;
+                }
+
+                // Dept match verification
+                if (context.departmentId && isValidUuid(context.departmentId)) {
+                    const hasDept = activeContracts.some((c: any) => c.department_id === context.departmentId);
+                    if (!hasDept) return;
+                }
+
+                // SubDept match verification (must match or contract has null subdept)
+                if (context.subDepartmentId && isValidUuid(context.subDepartmentId)) {
+                    const hasSubDept = activeContracts.some((c: any) => c.sub_department_id === context.subDepartmentId || c.sub_department_id === null);
+                    if (!hasSubDept) return;
+                }
+
+                // Role match verification
+                if (context.roleId && isValidUuid(context.roleId)) {
+                    const hasRole = activeContracts.some((c: any) => c.role_id === context.roleId);
+                    if (!hasRole) return;
+                }
+
+                // Skills match verification
+                if (context.skills && context.skills.length > 0) {
+                    const empSkills = row.employee_skills || [];
+                    const activeSkillIds = empSkills
+                        .filter((es: any) => es.status === 'Active' || es.status === 'active')
+                        .map((es: any) => es.skill_id);
+                    const hasAllSkills = context.skills.every((reqSkillId: string) => activeSkillIds.includes(reqSkillId));
+                    if (!hasAllSkills) return;
+                }
+
+                // Certifications/Licenses match verification
+                if (context.licenses && context.licenses.length > 0) {
+                    const empLicenses = row.employee_licenses || [];
+                    const activeLicenseIds = empLicenses
+                        .filter((el: any) => 
+                            (el.status === 'Active' || el.status === 'active') && 
+                            el.verification_status !== 'Expired' && 
+                            el.verification_status !== 'Failed'
+                        )
+                        .map((el: any) => el.license_id);
+                    const hasAllLicenses = context.licenses.every((reqLicenseId: string) => activeLicenseIds.includes(reqLicenseId));
+                    if (!hasAllLicenses) return;
+                }
+
+                const displayContract = activeContracts[0] || contracts[0];
 
                 profilesMap.set(row.id, {
                     id: row.id,

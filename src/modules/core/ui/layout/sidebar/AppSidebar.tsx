@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
 import { useLocation, NavLink } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { biddingApi, swapsApi } from '@/modules/planning';
+import { prefetchRouteChunk } from '@/router/routePrefetch';
 import {
   Calendar,
   Clock,
@@ -121,7 +122,18 @@ const NavigationItem = memo<NavigationItemProps>(
   ({ to, icon: Icon, iconColor, label, isActive, badge, description, onMouseEnter }) => (
     <NavLink
       to={to}
-      onMouseEnter={onMouseEnter}
+      onMouseEnter={() => {
+        // Warm the route's lazy JS chunk so the click resolves instantly
+        // instead of hitting the network for the Suspense fallback.
+        prefetchRouteChunk(to);
+        // Optional per-route data prefetch (bids/swaps) still runs.
+        onMouseEnter?.();
+      }}
+      onFocus={() => {
+        // Same warm-up for keyboard / tab navigation (no hover event).
+        prefetchRouteChunk(to);
+        onMouseEnter?.();
+      }}
       className={cn(
         'group flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 relative overflow-hidden',
         isActive
@@ -283,10 +295,10 @@ const AppSidebar: React.FC = () => {
       {/* ==================== NAVIGATION ==================== */}
       <div className="flex-1 overflow-y-auto space-y-4 py-4 px-[15px]">
 
-        {/* ---------- My Workspace Section ---------- */}
+        {/* ---------- Work Section ---------- */}
         <CollapsibleSection
           icon={UserCircle2}
-          title={t('nav.overview')}
+          title={t('nav.work', 'Work')}
           color={iconColorMap.sectionMyWorkspace}
           defaultOpen={true}
         >
@@ -316,7 +328,15 @@ const AppSidebar: React.FC = () => {
             isActive={isRouteActive('/my-availabilities')}
             description="Manage your schedule"
           />
+        </CollapsibleSection>
 
+        {/* ---------- Requests Section ---------- */}
+        <CollapsibleSection
+          icon={BadgeCheck}
+          title={t('nav.requests', 'Requests')}
+          color={iconColorMap.myBids}
+          defaultOpen={true}
+        >
           <NavigationItem
             to="/my-bids"
             icon={BadgeCheck}
@@ -336,7 +356,15 @@ const AppSidebar: React.FC = () => {
             description="Manage shift swaps"
             onMouseEnter={() => handlePrefetch('/my-swaps')}
           />
+        </CollapsibleSection>
 
+        {/* ---------- Communication Section ---------- */}
+        <CollapsibleSection
+          icon={BellRing}
+          title={t('nav.communication', 'Communication')}
+          color={iconColorMap.myBroadcasts}
+          defaultOpen={true}
+        >
           <NavigationItem
             to="/my-broadcasts"
             icon={Radio}

@@ -55,6 +55,7 @@ export interface ShiftContext {
     rosterId?: string;
     eventStartTime?: string;
     eventEndTime?: string;
+    eventId?: string;
 }
 
 export interface EnhancedAddShiftModalProps {
@@ -195,6 +196,13 @@ export interface ShiftFormDrawerContentProps {
     isRoleLocked?: boolean;
     isEmployeeLocked?: boolean;
     isScheduleDefined: boolean;
+
+    /** Active wizard step (1 Details · 2 Assignment · 3 Compliance) */
+    currentStep: number;
+    /** Jump to a step (used by the in-drawer stepper rail) */
+    onStepChange?: (step: number) => void;
+    /** Which steps the user has completed (for the stepper checkmarks) */
+    completedSteps?: Set<number>;
 }
 
 export interface ScheduleStepProps extends StepProps {

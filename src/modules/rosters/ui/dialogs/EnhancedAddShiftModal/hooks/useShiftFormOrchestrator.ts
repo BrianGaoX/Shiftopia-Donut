@@ -132,6 +132,8 @@ export function useShiftFormOrchestrator({
         selectedRosterId,
         setSelectedRosterId,
         selectedV8RoleId: watchV8RoleId,
+        selectedSkills: watchSkills,
+        selectedLicenses: watchLicenses,
     });
 
     // ── Context resolution ───────────────────────────────────────────────────
@@ -374,8 +376,8 @@ export function useShiftFormOrchestrator({
                 unpaid_break_minutes: existingShift.unpaid_break_minutes ?? existingShift.unpaidBreakDuration ?? undefined,
                 timezone: existingShift.timezone || SYDNEY_TZ,
                 assigned_employee_id: existingShift.assigned_employee_id || existingShift.assignedEmployeeId || null,
-                required_skills: existingShift.required_skills || existingShift.skills || [],
-                required_licenses: existingShift.required_licenses || existingShift.licenses || [],
+                required_skills: (existingShift.required_skills || existingShift.skills || []).map((s: any) => typeof s === 'object' && s ? s.id : s),
+                required_licenses: (existingShift.required_licenses || existingShift.licenses || []).map((l: any) => typeof l === 'object' && l ? l.id : l),
                 event_ids: existingShift.event_ids || [],
                 notes: existingShift.notes || '',
                 is_training: existingShift.is_training || false,
@@ -1004,6 +1006,7 @@ export function useShiftFormOrchestrator({
         hasRoster,
         hardValidation,
         studentVisaEnforcement,
+        isLoadingShifts,
 
         // Compliance
         complianceResults,

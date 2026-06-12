@@ -65,7 +65,6 @@ export interface TimesheetShiftRow {
     lifecycleStatus: string;
     liveStatus: string;
     timesheetStatus: string | null;
-    statusDot: { color: string; label: string } | null;
     rawStartAt: string | null;
     rawEndAt: string | null;
 
@@ -363,26 +362,6 @@ export async function getShiftsForTimesheet(
                 lifecycleStatus: shift.lifecycle_status || 'scheduled',
                 liveStatus: shift.lifecycle_status || 'Scheduled',
                 timesheetStatus: timesheet?.status || null,
-                statusDot: (() => {
-                    const tsStatus = (timesheet?.status || '').toLowerCase();
-                    if (tsStatus === 'approved') return { color: 'emerald', label: 'Approved' };
-                    if (tsStatus === 'rejected') return { color: 'rose', label: 'Rejected' };
-                    if (tsStatus === 'submitted') return { color: 'sky', label: 'Submitted' };
-                    if (tsStatus === 'no_show') return { color: 'rose', label: 'No Show' };
-                    
-                    if (shift.attendance_status === 'no_show') return { color: 'rose', label: 'No Show' };
-                    
-                    const varMins = (() => {
-                        if (!shift.actual_start) return null;
-                        const scheduledMs = new Date(shift.start_at || `${shift.shift_date}T${shift.start_time}`).getTime();
-                        return Math.round((new Date(shift.actual_start).getTime() - scheduledMs) / 60000);
-                    })();
-                    
-                    if (varMins && varMins > 15) return { color: 'amber', label: 'Late' };
-                    if (shift.lifecycle_status === 'InProgress') return { color: 'sky', label: 'In Progress' };
-                    
-                    return { color: 'muted', label: shift.lifecycle_status || 'Scheduled' };
-                })(),
                 rawStartAt: shift.start_at || null,
                 rawEndAt: shift.end_at || null,
 
@@ -491,7 +470,7 @@ export async function updateTimesheetEntry(
             .maybeSingle();
 
         // 2. Safety Guard: If it's already Approved, Rejected, or No-Show
-        // Block ALL updates to finalized records (data integrity)
+        // Block updates to finalized records, UNLESS manager is editing metrics.
         let currentStatus = (existing?.status || '').toLowerCase();
         
         // If no timesheet record yet, check the shift record for attendance_status
@@ -506,13 +485,37 @@ export async function updateTimesheetEntry(
             }
         }
 
+        const isEditingMetrics = 
+            updates.adjustedStart !== undefined || 
+            updates.adjustedEnd !== undefined || 
+            updates.paidBreak !== undefined || 
+            updates.unpaidBreak !== undefined;
+
         if (['approved', 'rejected', 'no_show'].includes(currentStatus)) {
-            // Allow idempotency if the only change is setting the SAME status
-            const isStatusOnly = Object.keys(updates).length === 1 && updates.status;
-            if (isStatusOnly && updates.status?.toLowerCase() === currentStatus) return true;
-            
-            console.warn(`[updateTimesheetEntry] Blocking update for finalized shift ${shiftId} (Current: ${currentStatus})`);
-            return true; 
+            if (!isEditingMetrics) {
+                // Allow idempotency if the only change is setting the SAME status
+                const isStatusOnly = Object.keys(updates).length === 1 && updates.status;
+                if (isStatusOnly && updates.status?.toLowerCase() === currentStatus) return true;
+                
+                console.warn(`[updateTimesheetEntry] Blocking update for finalized shift ${shiftId} (Current: ${currentStatus})`);
+                return true; 
+            }
+        }
+
+        // If transitioning from a no_show state by editing metrics, clear the shift no_show status
+        if (isEditingMetrics && currentStatus === 'no_show') {
+            const { error: shiftUpdateErr } = await supabase
+                .from('shifts')
+                .update({
+                    attendance_status: null,
+                    attendance_note: 'No-Show overridden by manager',
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', shiftId);
+
+            if (shiftUpdateErr) {
+                console.error('[updateTimesheetEntry] Shift attendance status clearance error:', shiftUpdateErr);
+            }
         }
 
         // 3. Build payload
@@ -541,7 +544,13 @@ export async function updateTimesheetEntry(
         const adjEnd = validTime(updates.adjustedEnd);
         if (adjEnd !== undefined) payload.end_time = adjEnd;
 
-        if (updates.status !== undefined) payload.status = updates.status.toLowerCase();
+        // Reset status to submitted if editing metrics on a finalized timesheet
+        if (isEditingMetrics && ['approved', 'rejected', 'no_show'].includes(currentStatus)) {
+            payload.status = (updates.status || 'submitted').toLowerCase();
+        } else if (updates.status !== undefined) {
+            payload.status = updates.status.toLowerCase();
+        }
+
         if (updates.notes !== undefined) payload.notes = updates.notes;
         if (updates.rejectedReason !== undefined) payload.rejected_reason = updates.rejectedReason;
         
@@ -685,51 +694,3 @@ export async function markShiftAsNoShow(
         return false;
     }
 }
-
-/**
- * Override a No-Show
- */
-export async function overrideNoShow(
-    shiftId: string,
-    userId: string
-): Promise<boolean> {
-    try {
-        // Update shift status: revert attendance_status to unknown
-        const { error: shiftError } = await supabase
-            .from('shifts')
-            .update({
-                attendance_status: 'unknown',
-                attendance_note: 'No-Show overridden by manager',
-                updated_at: new Date().toISOString(),
-                last_modified_by: userId
-            })
-            .eq('id', shiftId);
-
-        if (shiftError) {
-            console.error('[overrideNoShow] Shift error:', shiftError);
-            return false;
-        }
-
-        // We can't use updateTimesheetEntry directly since it blocks updates on 'no_show'.
-        // So we do a direct supabase update here to transition it to 'submitted'.
-        const { error: tsError } = await supabase
-            .from('timesheets')
-            .update({
-                status: 'submitted',
-                notes: 'No-Show overridden by manager',
-                updated_at: new Date().toISOString()
-            })
-            .eq('shift_id', shiftId);
-
-        if (tsError) {
-            console.error('[overrideNoShow] Timesheet error:', tsError);
-            return false;
-        }
-
-        return true;
-    } catch (error) {
-        console.error('[overrideNoShow] Error:', error);
-        return false;
-    }
-}
-

@@ -16,10 +16,8 @@ import {
     TimesheetShiftRow,
     TimesheetFilters,
     markShiftAsNoShow,
-    overrideNoShow,
 } from '../api/timesheets.supabase.api';
 import { useScopeFilter, ScopeMode } from '@/platform/auth/useScopeFilter';
-import { getStatusDotInfo } from '@/modules/rosters/domain/shift-ui';
 import { GoldStandardHeader } from '@/modules/core/ui/components/GoldStandardHeader';
 
 /**
@@ -158,21 +156,6 @@ export const TimesheetPage: React.FC = () => {
         liveStatus: shift.lifecycleStatus || '',
         notes: shift.notes,
         rejectedReason: shift.rejectedReason,
-        statusDot: getStatusDotInfo({
-            lifecycle_status: shift.lifecycleStatus,
-            assignment_outcome: shift.attendanceStatus,
-            attendance_status: shift.attendanceStatus,
-            attendance_note: shift.attendanceNote,
-            actual_start: shift.clockIn,
-            actual_end: shift.clockOut,
-            adjusted_start: shift.adjustedStart,
-            adjusted_end: shift.adjustedEnd,
-            start_at: shift.rawStartAt,
-            end_at: shift.rawEndAt,
-            shift_date: shift.shiftDate,
-            start_time: shift.scheduledStart,
-            end_time: shift.scheduledEnd,
-        }),
     })), [shifts, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -203,11 +186,7 @@ export const TimesheetPage: React.FC = () => {
         if (success) { toast({ title: 'Shift marked as No-Show' }); await loadShifts(); }
     };
 
-    const handleOverrideNoShow = async (shiftId: string) => {
-        if (!canEdit) return;
-        const success = await overrideNoShow(shiftId, user?.id || '');
-        if (success) { toast({ title: 'No-Show overridden' }); await loadShifts(); }
-    };
+
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return (
@@ -293,7 +272,6 @@ export const TimesheetPage: React.FC = () => {
                             onSaveEntry={handleSaveEntry}
                             onBulkAction={handleBulkAction}
                             onMarkNoShow={handleMarkNoShow}
-                            onOverrideNoShow={handleOverrideNoShow}
                             onRefresh={handleRefresh}
                             isRefreshing={loading}
                             hideTopControls

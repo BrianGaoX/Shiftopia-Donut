@@ -13,6 +13,10 @@ import { cn } from '@/modules/core/lib/utils';
 import { Button } from '@/modules/core/ui/primitives/button';
 import { Label } from '@/modules/core/ui/primitives/label';
 import { useToast } from '@/modules/core/hooks/use-toast';
+import {
+    Dialog, DialogContent, DialogHeader, DialogTitle,
+    DialogDescription, DialogFooter,
+} from '@/modules/core/ui/primitives/dialog';
 import { getProtectionContext } from '@/modules/rosters/domain/shift-ui';
 import { TimesheetStatusBadge } from './TimesheetStatusBadge';
 import { getGroupColor } from '@/modules/rosters/model/roster.types';
@@ -27,7 +31,6 @@ interface TimesheetMobileCardProps {
     onToggleSelect: () => void;
     onSave?: (id: string, updates: Partial<TimesheetRow>) => void;
     onMarkNoShow?: (id: string) => void;
-    onOverrideNoShow?: (id: string) => void;
     readOnly?: boolean;
     isManager?: boolean;
     employeeHeader?: React.ReactNode;
@@ -130,7 +133,6 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     onToggleSelect,
     onSave,
     onMarkNoShow,
-    onOverrideNoShow,
     readOnly = false,
     isManager = true,
     employeeHeader,
@@ -144,6 +146,14 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     const [localAdjEnd, setLocalAdjEnd] = useState(entry.adjustedEnd || '');
     const [localPaidBreak, setLocalPaidBreak] = useState(entry.paidBreak || '0');
     const [localUnpaidBreak, setLocalUnpaidBreak] = useState(entry.unpaidBreak || '0');
+
+    const handleStartEditing = () => {
+        setLocalAdjStart(entry.adjustedStart || entry.scheduledStart || '');
+        setLocalAdjEnd(entry.adjustedEnd || entry.scheduledEnd || '');
+        setLocalPaidBreak(entry.paidBreak || '0');
+        setLocalUnpaidBreak(entry.unpaidBreak || '0');
+        setIsEditing(true);
+    };
 
     const { toast } = useToast();
 
@@ -198,7 +208,7 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
 
     const canAction = isManager && isPending && !readOnly && !isFinalized;
     
-    const showNoShowBtn = (!entry.clockIn || entry.clockIn === '-') && (!entry.clockOut || entry.clockOut === '-') && entry.statusDot?.label === 'No Show' && entry.liveStatus === 'Completed' && !readOnly && !!onMarkNoShow && !isFinalized;
+    const showNoShowBtn = isShiftOver && (!entry.clockIn || entry.clockIn === '-') && (!entry.clockOut || entry.clockOut === '-') && entry.attendanceStatus !== 'no_show' && !readOnly && !!onMarkNoShow && !isFinalized;
 
     const displayStatus = useMemo(() => getDisplayStatus(entry), [entry]);
 
@@ -251,7 +261,8 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     };
 
     return (
-        <SharedShiftCard
+        <>
+            <SharedShiftCard
             variant="timecard"
             organization={entry.organization}
             department={entry.department}
@@ -294,6 +305,7 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
                 actual_end: entry.clockOut,
                 adjusted_start: entry.adjustedStart,
                 adjusted_end: entry.adjustedEnd,
+                adjusted_is_manual: entry.isAdjustedManual,
                 shift_date: entry.date,
                 start_time: entry.scheduledStart,
                 end_time: entry.scheduledEnd,
@@ -384,9 +396,8 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
                                 </Button>
                                 <Button
                                     variant="outline"
-                                    onClick={() => setIsEditing(true)}
-                                    disabled={!isShiftOver}
-                                    className="flex-1 h-9 rounded-xl border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 text-[9px] font-black uppercase tracking-widest disabled:opacity-30 transition-all active:scale-95 px-0"
+                                    onClick={handleStartEditing}
+                                    className="flex-1 h-9 rounded-xl border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 px-0"
                                 >
                                     Edit
                                 </Button>
@@ -405,18 +416,20 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
 
                         ) : (
                             <div className="w-full flex flex-col gap-2">
-                                <div className="w-full flex items-center justify-center px-4 py-3 bg-foreground/[0.04] border border-foreground/5 rounded-2xl text-foreground/40 text-[10px] font-black uppercase tracking-widest">
-                                    Finalized Record
+                                <div className="flex gap-2 items-center w-full">
+                                    <div className="flex-1 flex items-center justify-center h-9 bg-foreground/[0.04] border border-foreground/5 rounded-xl text-foreground/40 text-[9px] font-black uppercase tracking-widest">
+                                        Finalized Record
+                                    </div>
+                                    {!readOnly && (
+                                        <Button
+                                            variant="outline"
+                                            onClick={handleStartEditing}
+                                            className="h-9 px-4 rounded-xl border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+                                        >
+                                            Edit
+                                        </Button>
+                                    )}
                                 </div>
-                                {entry.attendanceStatus === 'no_show' && !readOnly && onOverrideNoShow && (
-                                    <Button
-                                        variant="outline"
-                                        onClick={() => onOverrideNoShow(String(entry.id))}
-                                        className="h-11 rounded-xl border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 font-bold tracking-wide transition-all active:scale-95"
-                                    >
-                                        <RotateCcw className="h-4 w-4 mr-2" /> Override No-Show
-                                    </Button>
-                                )}
                             </div>
                         )
                     ) : (
@@ -432,5 +445,6 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
             )}
             ref={ref}
         />
+        </>
     );
 });

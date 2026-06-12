@@ -85,7 +85,7 @@ const VIRT_OVERSCAN = 5;
 const PEOPLE_COL_EMP_W = 200; // px — sticky employee column
 const PEOPLE_COL_DAY_W = 160; // px — per-day column
 const peopleGridCols = (dayCount: number) =>
-  `${PEOPLE_COL_EMP_W}px repeat(${dayCount}, ${PEOPLE_COL_DAY_W}px)`;
+  `${PEOPLE_COL_EMP_W}px repeat(${dayCount}, minmax(${PEOPLE_COL_DAY_W}px, 1fr))`;
 
 // ── canUnpublish — any Published shift can be unpublished (→ S1 or S2) ───────
 function canUnpublish(shift: PeopleModeShift): boolean {
@@ -892,6 +892,7 @@ const EmployeeDateCellImpl: React.FC<EmployeeDateCellProps> = ({
 
   return (
     <DroppableDateCell
+      active={isDnDModeActive}
       employeeId={employee.id}
       dateKey={dateKey}
       className={cellClassName}

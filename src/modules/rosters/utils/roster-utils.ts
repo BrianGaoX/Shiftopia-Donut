@@ -21,9 +21,10 @@ export function resolveGroupType(shift: any): TemplateGroupType | 'default_yello
         if (shift.groupColor === 'emerald' || shift.groupColor === 'green') return 'exhibition_centre';
         if (shift.groupColor === 'blue') return 'convention_centre';
         if (shift.groupColor === 'red') return 'theatre';
-        
+        if (shift.groupColor === 'amber') return 'the_cutaway';
+
         // If it's already a valid group key, use it
-        if (['convention_centre', 'exhibition_centre', 'theatre'].includes(shift.groupColor)) {
+        if (['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'].includes(shift.groupColor)) {
             return shift.groupColor as TemplateGroupType;
         }
     }

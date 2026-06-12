@@ -22,9 +22,9 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/modules/core/ui/primitives/tooltip';
-import { ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
-import { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal/Lazy';
+import { useShiftFormNav } from '@/modules/rosters/hooks/useShiftFormNav';
 import { SmartShiftCard } from '@/modules/rosters/ui/components/SmartShiftCard';
+import * as import_GroupSummaryCell from '@/modules/rosters/ui/components/GroupSummaryCell';
 import { useShiftsByDateRange, useRemunerationLevels, useRoles, useUnpublishShift, useCreateShift } from '@/modules/rosters/state/useRosterShifts';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import { Shift } from '@/modules/rosters/api/shifts.api';
@@ -60,6 +60,15 @@ import {
   AlertDialogTitle,
 } from '@/modules/core/ui/primitives/alert-dialog';
 
+// Per-cell card cap — see GroupModeView. At high shift volume a single
+// (role, date) cell can hold dozens of shifts; we render the first N and
+// collapse the rest behind a "+N more" toggle to bound the DOM-node count.
+const MAX_CARDS_PER_CELL = 4;
+
+// Month view is bounded to the selected month ± this many days (calendar
+// continuity buffer). Matches RostersPlannerPage / GroupModeView.
+const MONTH_BUFFER_DAYS = 3;
+
 interface RolesModeViewProps {
   selectedDate: Date;
   viewType: 'day' | '3day' | 'week' | 'month';
@@ -76,6 +85,10 @@ interface RolesModeViewProps {
   selectedV8ShiftIds?: string[];
   isBulkMode?: boolean;
   onToggleShiftSelection?: (shiftId: string) => void;
+  /** Phase-3: pre-aggregated server-side summary map for month view */
+  summaryData?: Map<string, import('@/modules/rosters/api/rosterSummary.queries').RosterSummaryCellDTO>;
+  /** Callback to open drill-down panel */
+  onDrillDown?: (date: string, groupType: string, subGroupName?: string) => void;
 }
 
 interface FlatRole {
@@ -138,18 +151,48 @@ const DroppableShiftAssign: React.FC<DroppableShiftAssignProps> = ({
   );
 };
 
-const DraggableShiftCard: React.FC<{ 
-  shift: Shift; 
-  isDnDModeActive: boolean; 
-  onEdit: (shift: Shift) => void; 
+interface RoleShiftCardProps {
+  shift: Shift;
+  isDnDModeActive: boolean;
+  onEdit: (shift: Shift) => void;
   isSelected: boolean;
   onToggleSelection: (id: string) => void;
   isBulkMode: boolean;
   onAssignEmployee: (shiftId: string, employeeId: string, employeeName: string) => void;
   headerAction?: React.ReactNode;
   detailedCost?: import('@/modules/rosters/domain/projections/utils/cost/types').ShiftCostBreakdown;
-}> = ({ shift, isDnDModeActive, onEdit, isSelected, onToggleSelection, isBulkMode, onAssignEmployee, headerAction, detailedCost }) => {
+}
+
+// Shared presentational card — identical output whether or not DnD is wired up.
+const RoleShiftCardView: React.FC<RoleShiftCardProps & { isDragging?: boolean }> = ({
+  shift, isDnDModeActive, onEdit, isSelected, onToggleSelection, isBulkMode, headerAction, detailedCost, isDragging,
+}) => {
   const { isPast, isLocked: isManagementLocked } = resolveShiftStatus(shift);
+  const isLocked = isManagementLocked || (isDnDModeActive && shift.lifecycle_status !== 'Published');
+  return (
+    <SmartShiftCard
+      shift={{
+        ...shift,
+        roles: (shift as any).roles || { id: (shift as any).role_id || '', name: (shift as any).role_name || (shift as any).roles?.name || 'Shift' },
+        assigned_profiles: (shift as any).assigned_profiles || (shift as any).profiles,
+      } as any}
+      onClick={() => isBulkMode ? onToggleSelection(shift.id) : onEdit(shift)}
+      isDragging={isDragging}
+      isLocked={isLocked}
+      isPast={isPast}
+      isDnDActive={isDnDModeActive}
+      showStatusIcons={true}
+      groupColor={resolveGroupType(shift)}
+      isSelected={isSelected}
+      headerAction={headerAction}
+      detailedCost={detailedCost}
+    />
+  );
+};
+
+const DraggableShiftCardActive: React.FC<RoleShiftCardProps> = (props) => {
+  const { shift, isDnDModeActive, onAssignEmployee } = props;
+  const { isLocked: isManagementLocked } = resolveShiftStatus(shift);
   const isLocked = isManagementLocked || (isDnDModeActive && shift.lifecycle_status !== 'Published');
 
   const [{ isDragging }, drag] = useDrag({
@@ -170,8 +213,6 @@ const DraggableShiftCard: React.FC<{
     }),
   }, [shift, isDnDModeActive, isManagementLocked]);
 
-  const groupColor = resolveGroupType(shift);
-  
   return (
     <div ref={drag} className={cn(isDragging && 'opacity-50')}>
       <DroppableShiftAssign
@@ -180,37 +221,33 @@ const DraggableShiftCard: React.FC<{
         canAccept={!isLocked && isDnDModeActive}
         onAssign={(id, item) => onAssignEmployee(id, item.employeeId, item.employeeName)}
       >
-        <SmartShiftCard
-          shift={{
-            ...shift,
-            roles: (shift as any).roles || { id: (shift as any).role_id || '', name: (shift as any).role_name || (shift as any).roles?.name || 'Shift' },
-            assigned_profiles: (shift as any).assigned_profiles || (shift as any).profiles,
-          } as any}
-          onClick={() => isBulkMode ? onToggleSelection(shift.id) : onEdit(shift)}
-          isDragging={isDragging}
-          isLocked={isLocked}
-          isPast={isPast}
-          isDnDActive={isDnDModeActive}
-          showStatusIcons={true}
-          groupColor={groupColor}
-          isSelected={isSelected}
-          headerAction={headerAction}
-          detailedCost={detailedCost}
-        />
+        <RoleShiftCardView {...props} isDragging={isDragging} />
       </DroppableShiftAssign>
     </div>
   );
 };
 
-const DroppableRoleCell: React.FC<{ 
-  date: string; 
-  roleId: string; 
-  roleName: string; 
-  onMove: (shiftId: string, targetContext: any) => void; 
-  onAssignUnfilled: (unfilled: UnfilledShift) => void; 
+// Gate: only wire useDrag + the employee drop target when DnD mode is on.
+const DraggableShiftCard: React.FC<RoleShiftCardProps> = (props) => {
+  if (!props.isDnDModeActive) return <RoleShiftCardView {...props} />;
+  return <DraggableShiftCardActive {...props} />;
+};
+
+interface DroppableRoleCellProps {
+  date: string;
+  roleId: string;
+  roleName: string;
+  onMove: (shiftId: string, targetContext: any) => void;
+  onAssignUnfilled: (unfilled: UnfilledShift) => void;
   isDnDModeActive: boolean;
-  children: React.ReactNode; 
-}> = ({ date, roleId, roleName, onMove, onAssignUnfilled, isDnDModeActive, children }) => {
+  children: React.ReactNode;
+}
+
+// Base cell class shared by the active (droppable) and inert variants so the
+// table column widths/borders are identical whether or not DnD is registered.
+const ROLE_CELL_BASE_CLASS = 'min-w-[200px] px-2 py-2 border-l border-b border-border align-top relative group/cell transition-[background-color,box-shadow,transform] duration-300';
+
+const DroppableRoleCellActive: React.FC<DroppableRoleCellProps> = ({ date, roleId, roleName, onMove, onAssignUnfilled, isDnDModeActive, children }) => {
   const [{ isOver, canDrop }, drop] = useDrop({
     accept: [DND_SHIFT_TYPE, DND_UNFILLED_SHIFT],
     canDrop: (item: any) => {
@@ -246,7 +283,7 @@ const DroppableRoleCell: React.FC<{
     <td
       ref={drop}
       className={cn(
-        'min-w-[200px] px-2 py-2 border-l border-b border-border align-top relative group/cell transition-[background-color,box-shadow,transform] duration-300',
+        ROLE_CELL_BASE_CLASS,
         isOver && canDrop && 'bg-emerald-500/10 ring-2 ring-emerald-500/50 ring-inset shadow-[inset_0_0_20px_rgba(16,185,129,0.2)] scale-[1.01] z-10',
         isOver && !canDrop && 'bg-red-500/10 ring-2 ring-red-500/50 ring-inset cursor-no-drop opacity-60'
       )}
@@ -256,22 +293,17 @@ const DroppableRoleCell: React.FC<{
   );
 };
 
-export const RolesModeView: React.FC<RolesModeViewProps> = ({
-  selectedDate,
-  viewType,
-  canEdit,
-  organizationId,
-  departmentIds = [],
-  subDepartmentIds = [],
-  rosterId,
-  shifts: parentShifts,
-  projection,
-  onEditShift,
-  onMoveShift,
-  onAssignShift,
-  selectedV8ShiftIds: propsSelectedV8ShiftIds,
-  isBulkMode,
-  onToggleShiftSelection,
+// Gate: register the useDrop target only when DnD mode is on. Otherwise render
+// an inert <td> — avoids a useDrop per (role, date) cell in week/month tables.
+const DroppableRoleCell: React.FC<DroppableRoleCellProps> = (props) => {
+  if (!props.isDnDModeActive) {
+    return <td className={ROLE_CELL_BASE_CLASS}>{props.children}</td>;
+  }
+  return <DroppableRoleCellActive {...props} />;
+};
+
+export const RolesModeView: React.FC<RolesModeViewProps> = ({ 
+  selectedDate, viewType, canEdit, organizationId, departmentIds = [], subDepartmentIds = [], rosterId, shifts: parentShifts, projection, onEditShift, onMoveShift, onAssignShift, selectedV8ShiftIds: propsSelectedV8ShiftIds, isBulkMode, onToggleShiftSelection, summaryData, onDrillDown 
 }) => {
   const { toast } = useToast();
   const createShiftMutation = useCreateShift();
@@ -279,6 +311,8 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
   const activeSubDeptId = subDepartmentIds[0];
 
   const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
+
+
 
   const selectedV8ShiftIds = propsSelectedV8ShiftIds ?? [];
   // O(1) lookup for per-card selection check
@@ -292,16 +326,18 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
 
   const startDate = useMemo(() => {
     if (viewType === 'week') return format(startOfWeek(selectedDate, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-    if (viewType === 'month') return format(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1), 'yyyy-MM-dd');
+    // Month: first of month minus the buffer (calendar continuity + matches fetch).
+    if (viewType === 'month') return format(addDays(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1), -MONTH_BUFFER_DAYS), 'yyyy-MM-dd');
     return format(selectedDate, 'yyyy-MM-dd');
   }, [selectedDate, viewType]);
 
   const endDate = useMemo(() => {
     if (viewType === 'day') return startDate;
     if (viewType === 'week') return format(addDays(new Date(startDate), 6), 'yyyy-MM-dd');
-    if (viewType === 'month') return format(addDays(addDays(new Date(startDate), 31), -1), 'yyyy-MM-dd');
+    // Month: last of month plus the buffer — bounds columns to ~36 rather than a fixed 31.
+    if (viewType === 'month') return format(addDays(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0), MONTH_BUFFER_DAYS), 'yyyy-MM-dd');
     return format(addDays(new Date(startDate), viewType === '3day' ? 2 : 0), 'yyyy-MM-dd');
-  }, [startDate, viewType]);
+  }, [startDate, selectedDate, viewType]);
 
   const { data: internalShifts = [], isLoading: isLoadingShifts } = useShiftsByDateRange(
     projection ? null : (organizationId || null),
@@ -313,11 +349,21 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
   const activeShifts: Shift[] = parentShifts ?? internalShifts;
   const unpublishMutation = useUnpublishShift();
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalContext, setModalContext] = useState<ShiftContext | null>(null);
+  const openShiftForm = useShiftFormNav();
   const [confirmV8ShiftId, setConfirmV8ShiftId] = useState<string | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [collapsedLevels, setCollapsedLevels] = useState<Set<number>>(new Set());
+
+  // Per-cell "+N more" expansion (session-only), keyed by `roleId::date`.
+  const [expandedCells, setExpandedCells] = useState<Set<string>>(() => new Set());
+  const toggleCellExpanded = React.useCallback((cellKey: string) => {
+    setExpandedCells(prev => {
+      const next = new Set(prev);
+      if (next.has(cellKey)) next.delete(cellKey);
+      else next.add(cellKey);
+      return next;
+    });
+  }, []);
 
   const handleCloneShift = async (shift: Shift) => {
     try {
@@ -407,9 +453,13 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
   );
 
   const dates = useMemo(() => {
-    const numDays = viewType === 'day' ? 1 : viewType === '3day' ? 3 : viewType === 'week' ? 7 : 31;
-    return Array.from({ length: numDays }).map((_, i) => addDays(new Date(startDate), i));
-  }, [startDate, viewType]);
+    // Derive the column count from the actual start/end window (month is now
+    // bounded to month ± buffer, so it's no longer a fixed 31).
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const numDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    return Array.from({ length: numDays }).map((_, i) => addDays(start, i));
+  }, [startDate, endDate]);
 
   const levelGroups = useMemo((): LevelGroup[] => {
     const levelMap = new Map<string, { num: number; label: string }>(levels.map(l => [l.id, { num: l.level_number ?? 0, label: l.level_name || `Level ${l.level_number}` }]));
@@ -474,17 +524,18 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
 
   const handleCellClick = (roleId: string, date: Date) => {
     if (!canEdit) return;
-    setModalContext({
-      mode: 'roles',
-      launchSource: 'grid',
-      date: format(date, 'yyyy-MM-dd'),
-      organizationId,
-      departmentId: activeDeptId,
-      subDepartmentId: activeSubDeptId,
-      roleId: roleId === 'unassigned' ? undefined : roleId,
-      rosterId,
+    openShiftForm({
+      context: {
+        mode: 'roles',
+        launchSource: 'grid',
+        date: format(date, 'yyyy-MM-dd'),
+        organizationId,
+        departmentId: activeDeptId,
+        subDepartmentId: activeSubDeptId,
+        roleId: roleId === 'unassigned' ? undefined : roleId,
+        rosterId,
+      },
     });
-    setIsModalOpen(true);
   };
 
   const isLoading = !projection && (isLoadingLevels || isLoadingRoles || isLoadingShifts);
@@ -576,68 +627,101 @@ export const RolesModeView: React.FC<RolesModeViewProps> = ({
               ))}
             </tr>
           </thead>
-          <tbody>
-            {levelGroups.map((group) => (
-              <React.Fragment key={group.levelNumber}>
-                <tr className="bg-indigo-500/10 border-y border-indigo-500/20">
-                  <td colSpan={dates.length + 1} className="px-4 py-2 sticky left-0 z-30">
-                    <div className="flex items-center gap-2">
-                       <button onClick={() => toggleLevelCollapse(group.levelNumber)} className="p-1 hover:bg-white/10 rounded transition-colors">
-                        {collapsedLevels.has(group.levelNumber) ? <ChevronRight className="w-4 h-4 text-indigo-400" /> : <ChevronDown className="w-4 h-4 text-indigo-400" />}
-                      </button>
-                      <span className="text-xs font-bold uppercase tracking-widest text-indigo-400 font-mono">
-                        {group.levelLabel}
-                      </span>
-                      <Badge variant="outline" className="text-[10px] h-5 bg-indigo-500/5 border-indigo-500/20 text-indigo-300 px-2 font-mono">
-                        {group.roles.length} Roles
-                      </Badge>
-                    </div>
-                  </td>
-                </tr>
+          {levelGroups.map((group) => (
+            <tbody
+              key={group.levelNumber}
+              style={{ contentVisibility: 'auto' as any, containIntrinsicSize: 'auto 500px' }}
+            >
+              <tr className="bg-indigo-500/10 border-y border-indigo-500/20">
+                <td colSpan={dates.length + 1} className="px-4 py-2 sticky left-0 z-30">
+                  <div className="flex items-center gap-2">
+                     <button onClick={() => toggleLevelCollapse(group.levelNumber)} className="p-1 hover:bg-white/10 rounded transition-colors">
+                      {collapsedLevels.has(group.levelNumber) ? <ChevronRight className="w-4 h-4 text-indigo-400" /> : <ChevronDown className="w-4 h-4 text-indigo-400" />}
+                    </button>
+                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-400 font-mono">
+                      {group.levelLabel}
+                    </span>
+                    <Badge variant="outline" className="text-[10px] h-5 bg-indigo-500/5 border-indigo-500/20 text-indigo-300 px-2 font-mono">
+                      {group.roles.length} Roles
+                    </Badge>
+                  </div>
+                </td>
+              </tr>
 
-                {!collapsedLevels.has(group.levelNumber) && group.roles.map((role, idx) => (
-                  <tr key={role.id} className={cn("group transition-[background-color]", idx % 2 === 0 ? "bg-card" : "bg-muted/30", "hover:bg-accent/30")}>
-                    <td className="sticky left-0 z-20 w-64 min-w-[256px] px-4 py-3 align-middle border-r border-b border-border bg-card/80 backdrop-blur-md group-hover:bg-accent/40 transition-[background-color] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.3)]">
-                      <span className="text-[13px] font-semibold text-foreground/80 group-hover:text-foreground transition-[color]">{role.name}</span>
-                    </td>
-                    {dates.map(date => {
-                      const dStr = format(date, 'yyyy-MM-dd');
-                      const cellShifts = role.shiftsByDate[dStr] || [];
-                      return (
-                        <DroppableRoleCell key={`${role.id}-${dStr}`} date={dStr} roleId={role.id} roleName={role.name} onMove={onMoveShift || (() => {})} onAssignUnfilled={() => {}} isDnDModeActive={isDnDModeActive}>
-                          <div className="flex flex-col gap-1 min-h-[52px]">
-                            {cellShifts.map(s => (
-                              <DraggableShiftCard 
-                                key={s.id} 
-                                shift={s} 
-                                isDnDModeActive={isDnDModeActive} 
-                                onEdit={sh => onEditShift?.(sh)} 
-                                isSelected={selectedV8ShiftIdsSet.has(s.id)}
-                                onToggleSelection={onToggleShiftSelection || (() => {})}
-                                isBulkMode={isBulkMode ?? false}
-                                onAssignEmployee={onAssignShift || (() => {})}
-                                headerAction={buildShiftMenu(s)}
-                                detailedCost={(s as any).detailedCost}
+              {!collapsedLevels.has(group.levelNumber) && group.roles.map((role, idx) => (
+                <tr key={role.id} className={cn("group transition-[background-color]", idx % 2 === 0 ? "bg-card" : "bg-muted/30", "hover:bg-accent/30")}>
+                  <td className="sticky left-0 z-20 w-64 min-w-[256px] px-4 py-3 align-middle border-r border-b border-border bg-card/80 backdrop-blur-md group-hover:bg-accent/40 transition-[background-color] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.3)]">
+                    <span className="text-[13px] font-semibold text-foreground/80 group-hover:text-foreground transition-[color]">{role.name}</span>
+                  </td>
+                  {dates.map(date => {
+                    const dStr = format(date, 'yyyy-MM-dd');
+                    const cellShifts = role.shiftsByDate[dStr] || [];
+                    const cellKey = `${role.id}::${dStr}`;
+                    const isExpandedCell = expandedCells.has(cellKey);
+                    const visibleCellShifts = isExpandedCell ? cellShifts : cellShifts.slice(0, MAX_CARDS_PER_CELL);
+                    return (
+                      <DroppableRoleCell key={`${role.id}-${dStr}`} date={dStr} roleId={role.id} roleName={role.name} onMove={onMoveShift || (() => {})} onAssignUnfilled={() => {}} isDnDModeActive={isDnDModeActive}>
+                        <div className="flex flex-col gap-1 min-h-[52px]">
+                          {(!isDnDModeActive && summaryData) ? (
+                            <div className="w-full h-full flex flex-col items-center justify-center min-h-[60px] p-1">
+                              <import_GroupSummaryCell.GroupSummaryCell
+                                date={date}
+                                groupName={role.name}
+                                summary={summaryData.get(`${dStr}::${(cellShifts[0] as any)?.group_type ?? 'role'}::${(cellShifts[0] as any)?.sub_group_name ?? role.name}`)}
+                                accent="gray"
+                                onClick={() => onDrillDown?.(dStr, (cellShifts[0] as any)?.group_type ?? 'role', (cellShifts[0] as any)?.sub_group_name ?? role.name)}
                               />
-                            ))}
-                            {canEdit && !isBulkMode && !isShiftLocked(dStr, '23:59', 'roster_management') && (
-                              <div className={cn("absolute inset-0 flex pointer-events-none z-10", cellShifts.length > 0 ? "items-end justify-end p-2" : "items-center justify-center")}>
-                                <button onClick={() => handleCellClick(role.id, date)} className="flex items-center justify-center rounded-full transition-[transform,background-color,opacity,box-shadow] duration-200 pointer-events-auto bg-primary/30 text-primary border border-primary/40 backdrop-blur-md hover:bg-primary/60 hover:scale-110 w-9 h-9 opacity-40 group-hover/cell:opacity-100"><Plus className="h-5 w-5" /></button>
-                              </div>
-                            )}
-                          </div>
-                        </DroppableRoleCell>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </React.Fragment>
-            ))}
-          </tbody>
+                            </div>
+                          ) : (
+                            <>
+                              {visibleCellShifts.map(s => (
+                                <DraggableShiftCard
+                                  key={s.id}
+                                  shift={s}
+                                  isDnDModeActive={isDnDModeActive}
+                                  onEdit={sh => onEditShift?.(sh)}
+                                  isSelected={selectedV8ShiftIdsSet.has(s.id)}
+                                  onToggleSelection={onToggleShiftSelection || (() => {})}
+                                  isBulkMode={isBulkMode ?? false}
+                                  onAssignEmployee={onAssignShift || (() => {})}
+                                  headerAction={buildShiftMenu(s)}
+                                  detailedCost={(s as any).detailedCost}
+                                />
+                              ))}
+                              {cellShifts.length > MAX_CARDS_PER_CELL && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleCellExpanded(cellKey); }}
+                                  className="relative z-10 w-full text-[11px] font-semibold text-primary/80 hover:text-primary bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-md px-2 py-1 transition-colors"
+                                >
+                                  {isExpandedCell ? 'Show less' : `+${cellShifts.length - MAX_CARDS_PER_CELL} more`}
+                                </button>
+                              )}
+                            </>
+                          )}
+                          {canEdit && !isBulkMode && !isShiftLocked(dStr, '23:59', 'roster_management') && (
+                            <div className={cn("absolute inset-0 flex pointer-events-none z-10", cellShifts.length > 0 ? "items-end justify-end p-2" : "items-center justify-center")}>
+                              <button
+                                onClick={() => handleCellClick(role.id, date)}
+                                className={cn(
+                                  "flex items-center justify-center rounded-full transition-[transform,background-color,opacity,box-shadow] duration-200 pointer-events-auto bg-primary/30 text-primary border border-primary/40 backdrop-blur-md hover:bg-primary/60 hover:scale-110 w-9 h-9 opacity-40 group-hover/cell:opacity-100",
+                                  (!isDnDModeActive && summaryData) ? "hidden" : ""
+                                )}
+                              >
+                                <Plus className="h-5 w-5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </DroppableRoleCell>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          ))}
         </table>
       </div>
 
-      {isModalOpen && <EnhancedAddShiftModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} context={modalContext} onSuccess={() => setIsModalOpen(false)} />}
       <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
         <AlertDialogContent className="bg-background border-border">
           <AlertDialogHeader><AlertDialogTitle>Unpublish Shift</AlertDialogTitle><AlertDialogDescription>This shift will be reverted to Draft.</AlertDialogDescription></AlertDialogHeader>

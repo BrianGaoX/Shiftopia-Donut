@@ -55,7 +55,7 @@ export function shiftToDTO(shift: Shift): WorkerShiftDTO {
     lifecycleStatus: shift.lifecycle_status,
     isCancelled: shift.is_cancelled,
     isLocked: shift.is_locked,
-    isPublished: shift.is_published,
+    isPublished: shift.is_published || ['Published', 'InProgress', 'Completed'].includes(shift.lifecycle_status),
     isDraft: shift.is_draft,
 
     // Bidding / Trading

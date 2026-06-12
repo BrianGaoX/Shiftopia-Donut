@@ -43,18 +43,19 @@ const BADGE_CODES: BadgeCodeItem[] = [
     { type: 'Planning', dot: '#F59E0B', code: 'S3-S5', icon: <Zap className="h-3 w-3" />, label: 'Urgent', description: '< 24h until shift start' },
     { type: 'Planning', dot: '#EF4444', code: 'S3-S6', icon: <Flame className="h-3 w-3" />, label: 'Emergency', description: '< 4h until start (Locks S1 Publication)' },
     
-    // LIVE ATTENDANCE
-    { type: 'Live', dot: '#6366F1', code: 'S11', icon: <Hourglass className="h-3 w-3" />, label: 'Early Start', description: 'Clocked in > 5m before start' },
-    { type: 'Live', dot: '#10B981', code: 'S11', icon: <Hourglass className="h-3 w-3" />, label: 'On Time', description: 'Clocked in within 5m window' },
-    { type: 'Live', dot: '#FBBF24', code: 'S11', icon: <Hourglass className="h-3 w-3" />, label: 'Late Start', description: 'Clocked in > 5m after start' },
+    // LIVE — ARRIVAL BADGE
+    { type: 'Live', dot: '#6366F1', code: 'S11', icon: <Hourglass className="h-3 w-3" />, label: 'Early In', description: 'Clocked in > 5m before start' },
+    { type: 'Live', dot: '#22C55E', code: 'S11', icon: <Hourglass className="h-3 w-3" />, label: 'On Time In', description: 'Clocked in within 5m window' },
+    { type: 'Live', dot: '#F59E0B', code: 'S11', icon: <Hourglass className="h-3 w-3" />, label: 'Late In', description: 'Clocked in > 5m after start' },
     { type: 'Live', dot: '#EAB308', code: 'S11', icon: <Clock className="h-3 w-3" />, label: 'Missing', description: 'Start time passed; no clock-in recorded' },
-    
-    // TERMINAL
-    { type: 'Terminal', dot: '#14B8A6', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'Early Exit', description: 'Clocked out > 5m before scheduled end' },
-    { type: 'Terminal', dot: '#8B5CF6', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'On Time', description: 'Clocked out within 5m window' },
-    { type: 'Terminal', dot: '#6D28D9', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'Overtime', description: 'Clocked out > 5m after scheduled end' },
-    { type: 'Terminal', dot: '#A855F7', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'Auto Out', description: 'System-enforced auto clock-out' },
-    { type: 'Terminal', dot: '#7F1D1D', code: 'S13', icon: <XCircle className="h-3 w-3" />, label: 'No Show', description: 'Employee failed to report for the shift' },
+    { type: 'Terminal', dot: '#7F1D1D', code: 'S13', icon: <XCircle className="h-3 w-3" />, label: 'No Show', description: 'Shift ended; never clocked in' },
+
+    // LIVE — DEPARTURE BADGE
+    { type: 'Terminal', dot: '#14B8A6', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'Early Out', description: 'Clocked out > 5m before scheduled end' },
+    { type: 'Terminal', dot: '#22C55E', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'On Time Out', description: 'Clocked out within 5m window' },
+    { type: 'Terminal', dot: '#8B5CF6', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'Late Out', description: 'Clocked out > 5m after scheduled end' },
+    { type: 'Terminal', dot: '#F97316', code: 'S13', icon: <Clock className="h-3 w-3" />, label: 'Working Overtime', description: 'Still clocked in past scheduled end' },
+    { type: 'Terminal', dot: '#A855F7', code: 'S13', icon: <CheckCircle className="h-3 w-3" />, label: 'Auto Clock-Out', description: 'System-enforced auto clock-out' },
     
     // SYSTEM SIGNALS
     { type: 'System', code: 'S9/S10', icon: <ArrowLeftRight className="h-3 w-3" />, label: 'Trading', description: 'Shift swap or trade request active' },

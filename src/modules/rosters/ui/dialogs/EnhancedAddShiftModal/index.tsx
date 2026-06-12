@@ -1,39 +1,24 @@
 /**
- * EnhancedAddShiftModal — Redesigned 3-Step Flow
- *
- * Step 1: Schedule & Details (Hierarchy, Context, Timings, Breaks, Criteria, Notes)
- * Step 2: Assignment & Compliance (Two-pane: Employee Pool + Compliance Inspector)
- * Step 3: Review Logs
+ * EnhancedAddShiftModal — Card-Based Layout
  *
  * Pure rendering layer — all business logic lives in useShiftFormOrchestrator.
- * Step panels are lazy-loaded for fast initial paint.
+ * Card grid layout in ShiftFormDrawerContent handles all form sections.
  */
 
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/modules/core/ui/primitives/sheet';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/modules/core/ui/primitives/dialog';
 import { Form } from '@/modules/core/ui/primitives/form';
 import { Button } from '@/modules/core/ui/primitives/button';
-import { Loader2, X, Plus, Save, Undo2, Zap, ShieldAlert } from 'lucide-react';
+import { Loader2, X, Plus, Save, Undo2, Zap } from 'lucide-react';
 import { cn } from '@/modules/core/lib/utils';
 import { ShiftFormDrawerContent } from './components/ShiftFormDrawerContent';
 
 import type { EnhancedAddShiftModalProps } from './types';
 import { useShiftFormOrchestrator } from './hooks/useShiftFormOrchestrator';
 
-// ── Always-visible chrome (imported eagerly — zero extra latency) ──────────
-import {
-    CancelConfirmDialog,
-} from './components';
+// ── Always-visible chrome ──────────────────────────────────────────────
+import { CancelConfirmDialog } from './components';
 
-// ── Fallback while a step chunk loads ─────────────────────────────────────
-function StepSkeleton() {
-    return (
-        <div className="flex items-center justify-center h-48">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/30" />
-        </div>
-    );
-}
-
-// ── Component ─────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────
 export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (props) => {
     const { isOpen, onClose } = props;
     const isTemplateMode = props.isTemplateMode ?? false;
@@ -67,10 +52,8 @@ export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (prop
         // Values
         shiftLength,
         netLength,
-        selectedRemLevel,
 
         // Locks
-        isRosterLocked,
         isGroupLocked,
         isSubGroupLocked,
         isRoleLocked,
@@ -82,24 +65,18 @@ export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (prop
         isPublished,
         isReadOnly,
 
-
         // Roster
         selectedRosterId,
         setSelectedRosterId,
 
         // Validation
         canSave,
-        hasDepartment,
-        hasRoster,
         hardValidation,
+        isLoadingShifts,
 
         // Compliance
         compliancePanel,
         runChecks,
-        clearResults,
-
-        // Watched fields
-        watchEmployeeId,
 
         // Emergency state
         isEmergencyAssignment,
@@ -114,35 +91,34 @@ export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (prop
 
     return (
         <>
-            <Sheet open={isOpen} onOpenChange={onClose}>
-                <SheetContent
-                    side="right"
+            <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+                <DialogContent
                     className={cn(
-                        "sm:max-w-[600px] p-0 gap-0 overflow-hidden flex flex-col focus-visible:ring-0 focus:outline-none transition-all duration-500",
-                        isReadOnly 
-                            ? "bg-[#0a0a0c] dark:bg-[#0a0a0c] border-slate-800/60 shadow-none grayscale opacity-90"
+                        "w-[calc(100vw-1rem)] sm:max-w-[900px] h-[85vh] sm:h-[700px] max-h-[85vh] p-0 gap-0 overflow-hidden flex flex-col focus-visible:ring-0 focus:outline-none transition-all duration-300 rounded-xl sm:rounded-2xl shadow-2xl border",
+                        isReadOnly
+                            ? "bg-[#0a0a0c] border-slate-800/50 shadow-none"
                             : isPublished
-                                ? "bg-[#0c0512] dark:bg-[#0c0512] border-purple-900/40 shadow-[0_0_50px_-12px_rgba(168,85,247,0.2)]"
+                                ? "bg-[#0c0512] border-purple-900/30 shadow-[0_0_40px_-12px_rgba(168,85,247,0.15)]"
                                 : isEmergencyAssignment
-                                    ? "bg-[#050505] dark:bg-[#09090b] border-indigo-500/20 shadow-[0_0_50px_-12px_rgba(99,102,241,0.15)]"
-                                    : "bg-card dark:bg-slate-950 border-border"
+                                    ? "bg-[#09090b] border-indigo-500/15 shadow-[0_0_40px_-12px_rgba(99,102,241,0.1)]"
+                                    : "bg-card dark:bg-[#0a0c10] border-border/50"
                     )}
                     aria-describedby={undefined}
                 >
-                    <SheetHeader className="sr-only">
-                        <SheetTitle>
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>
                             {isEmergencyAssignment
                                 ? (editMode ? 'Emergency Update' : 'Emergency Assign')
                                 : (editMode ? 'Update Shift' : 'Create Shift')}
-                        </SheetTitle>
-                    </SheetHeader>
+                        </DialogTitle>
+                    </DialogHeader>
                     <Form {...form}>
                         <form
                             id="shift-form"
                             onSubmit={form.handleSubmit(handleSubmit)}
                             className="flex flex-col h-full overflow-hidden"
                         >
-                            {/* ── Emergency mode banner ───────────────────── */}
+                            {/* ── Card grid ── */}
                             <ShiftFormDrawerContent
                                 form={form}
                                 isReadOnly={isReadOnly}
@@ -162,7 +138,7 @@ export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (prop
                                 rosterStructure={rosterStructure}
                                 activeSubGroups={Object.values(activeSubGroups).flat()}
                                 isLoadingData={isLoadingData}
-                                isLoadingShifts={false}
+                                isLoadingShifts={isLoadingShifts}
                                 resolvedContext={resolvedContext}
                                 selectedRosterId={selectedRosterId}
                                 setSelectedRosterId={setSelectedRosterId}
@@ -180,39 +156,40 @@ export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (prop
                                 isRoleLocked={isRoleLocked}
                                 isEmployeeLocked={isEmployeeLocked}
                                 isScheduleDefined={isScheduleDefined}
+                                currentStep={1}
                             />
 
-                            {/* STICKY FOOTER ACTIONS */}
+                            {/* ── FOOTER ── */}
                             <div className={cn(
-                                "flex-shrink-0 px-6 py-4 border-t backdrop-blur-xl flex items-center justify-between gap-4 z-20 transition-all duration-300",
+                                "flex-shrink-0 px-5 py-3 border-t backdrop-blur-xl flex items-center justify-between gap-3 z-20",
                                 isReadOnly
-                                    ? "border-slate-800/40 bg-slate-950/40 grayscale"
+                                    ? "border-slate-800/40 bg-slate-950/40"
                                     : isPublished
-                                        ? "border-purple-500/20 bg-purple-950/20"
+                                        ? "border-purple-500/15 bg-purple-950/15"
                                         : isEmergencyAssignment
-                                            ? "border-indigo-500/20 bg-indigo-950/20"
-                                            : "border-border bg-card/90 dark:bg-slate-900/80"
+                                            ? "border-indigo-500/15 bg-indigo-950/15"
+                                            : "border-border/50 bg-card/80 dark:bg-[#0a0c10]/80"
                             )}>
                                 <Button
                                     type="button"
                                     variant="ghost"
                                     onClick={handleCancel}
-                                    className="h-11 px-6 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 font-bold transition-all flex items-center gap-2"
+                                    className="h-9 px-4 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/30 font-bold transition-all flex items-center gap-1.5 text-xs"
                                 >
-                                    <X className="h-4 w-4" />
-                                    <span>Cancel</span>
+                                    <X className="h-3.5 w-3.5" />
+                                    Cancel
                                 </Button>
 
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2">
                                     {canUnpublish && (
                                         <Button
                                             type="button"
                                             variant="ghost"
                                             onClick={handleUnpublish}
-                                            className="h-11 px-6 rounded-xl text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 font-bold transition-all flex items-center gap-2 border border-purple-500/20"
+                                            className="h-9 px-4 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 font-bold text-xs flex items-center gap-1.5 border border-purple-500/20"
                                         >
-                                            <Undo2 className="h-4 w-4" />
-                                            <span>Unpublish</span>
+                                            <Undo2 className="h-3.5 w-3.5" />
+                                            Unpublish
                                         </Button>
                                     )}
 
@@ -220,37 +197,35 @@ export const EnhancedAddShiftModal: React.FC<EnhancedAddShiftModalProps> = (prop
                                         type="submit"
                                         disabled={!canSave || isLoading}
                                         className={cn(
-                                            "h-11 px-8 rounded-xl font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-lg",
+                                            "h-9 px-6 rounded-lg font-black uppercase tracking-[0.12em] text-xs transition-all flex items-center gap-1.5 shadow-lg",
                                             canSave
                                                 ? isPublished
-                                                    ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-500/25 border border-purple-400/20"
+                                                    ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-500/20 border border-purple-400/20"
                                                     : isEmergencyAssignment
-                                                        ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/25 border border-indigo-400/20"
-                                                        : "bg-slate-950 hover:bg-slate-900 text-white shadow-indigo-500/20 border border-white/5"
-                                                : "bg-slate-900/50 text-slate-500 cursor-not-allowed border border-white/5"
+                                                        ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20 border border-indigo-400/20"
+                                                        : "bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20 border border-amber-400/20"
+                                                : "bg-slate-800/50 text-slate-500 cursor-not-allowed border border-white/5"
                                         )}
                                     >
                                         {isLoading ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                         ) : isEmergencyAssignment ? (
-                                            <Zap className="h-4 w-4" />
+                                            <Zap className="h-3.5 w-3.5" />
                                         ) : editMode ? (
-                                            <Save className="h-4 w-4" />
+                                            <Save className="h-3.5 w-3.5" />
                                         ) : (
-                                            <Plus className="h-4 w-4" />
+                                            <Plus className="h-3.5 w-3.5" />
                                         )}
-                                        <span>
-                                            {isEmergencyAssignment
-                                                ? (editMode ? 'Emergency Update' : 'Emergency Assign')
-                                                : (editMode ? 'Update Shift' : 'Create Shift')}
-                                        </span>
+                                        {isEmergencyAssignment
+                                            ? (editMode ? 'Emergency Update' : 'Emergency Assign')
+                                            : (editMode ? 'Update Shift' : 'Create Shift')}
                                     </Button>
                                 </div>
                             </div>
                         </form>
                     </Form>
-                </SheetContent>
-            </Sheet>
+                </DialogContent>
+            </Dialog>
 
             <CancelConfirmDialog
                 open={showCancelConfirm}

@@ -20,7 +20,8 @@ import {
     TooltipTrigger,
 } from '@/modules/core/ui/primitives/tooltip';
 import type { ShiftUrgency } from '@/modules/rosters/domain/bidding-urgency';
-import { getStatusDotInfo, getProtectionContext } from '@/modules/rosters/domain/shift-ui';
+import { getProtectionContext } from '@/modules/rosters/domain/shift-ui';
+import { ShiftRuleHeader } from '@/modules/rosters/ui/components/ShiftRuleHeader';
 
 export interface SharedShiftCardProps {
     organization: string;
@@ -182,22 +183,7 @@ export const SharedShiftCard = forwardRef<HTMLDivElement, SharedShiftCardProps>(
         </div>
     );
 
-    const statusDotInfo = shiftData ? getStatusDotInfo(shiftData) : null;
 
-    const statusDot = (() => {
-        if (!statusDotInfo) return null;
-        return (
-            <div className="flex items-center gap-2">
-                <div
-                    className="h-2 w-2 rounded-full shadow-[0_0_8px_rgba(0,0,0,0.3)]"
-                    style={{ backgroundColor: statusDotInfo.color }}
-                />
-                <span className="text-[10px] font-black font-mono text-foreground uppercase tracking-widest">
-                    {statusDotInfo.label}
-                </span>
-            </div>
-        );
-    })();
 
     if (isTimecard) {
         return (
@@ -291,9 +277,10 @@ export const SharedShiftCard = forwardRef<HTMLDivElement, SharedShiftCardProps>(
                             </div>
                         )}
 
-                        {statusDot && (
-                            <div className="mt-1 pt-1 border-t border-foreground/[0.01]">
-                                <DataRow label="Live Status" value={statusDot} />
+
+                        {shiftData && (
+                            <div className="mt-1 pt-1.5 border-t border-foreground/[0.03]">
+                                <ShiftRuleHeader shift={shiftData} variant="detailed" />
                             </div>
                         )}
                     </div>
@@ -360,10 +347,12 @@ export const SharedShiftCard = forwardRef<HTMLDivElement, SharedShiftCardProps>(
                             </p>
                         )}
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        {statusDot}
-                    </div>
+
                 </div>
+
+                {shiftData && (
+                    <ShiftRuleHeader shift={shiftData} variant="compact" className="mb-2" />
+                )}
 
                 {/* TIMING BOXES */}
                 <div className="flex flex-wrap gap-1.5 mb-3">

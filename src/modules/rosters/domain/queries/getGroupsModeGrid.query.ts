@@ -50,6 +50,7 @@ const GROUP_COLORS: Record<TemplateGroupType, string> = {
     convention_centre: 'blue',
     exhibition_centre: 'emerald',
     theatre: 'red',
+    the_cutaway: 'amber',
 };
 
 /* ============================================================
@@ -77,7 +78,7 @@ export function buildGroupsModeGrid(
     const groupMap = new Map<TemplateGroupType, Map<string, Shift[]>>();
 
     // Initialize all group types
-    (['convention_centre', 'exhibition_centre', 'theatre'] as TemplateGroupType[]).forEach(
+    (['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'] as TemplateGroupType[]).forEach(
         (type) => {
             groupMap.set(type, new Map());
         }
@@ -155,7 +156,8 @@ export function buildGroupsModeGrid(
         visualGroups.push({
             id: groupType,
             name: groupType === 'convention_centre' ? 'Convention Centre' :
-                groupType === 'exhibition_centre' ? 'Exhibition Centre' : 'Theatre',
+                groupType === 'exhibition_centre' ? 'Exhibition Centre' :
+                    groupType === 'the_cutaway' ? 'The Cutaway' : 'Theatre',
             type: groupType,
             color: GROUP_COLORS[groupType],
             subGroups,
@@ -169,11 +171,12 @@ export function buildGroupsModeGrid(
  * Get default empty groups structure
  */
 export function getDefaultGroups(): VisualGroup[] {
-    return (['convention_centre', 'exhibition_centre', 'theatre'] as TemplateGroupType[]).map(
+    return (['convention_centre', 'exhibition_centre', 'theatre', 'the_cutaway'] as TemplateGroupType[]).map(
         (type) => ({
             id: type,
             name: type === 'convention_centre' ? 'Convention Centre' :
-                type === 'exhibition_centre' ? 'Exhibition Centre' : 'Theatre',
+                type === 'exhibition_centre' ? 'Exhibition Centre' :
+                    type === 'the_cutaway' ? 'The Cutaway' : 'Theatre',
             type,
             color: GROUP_COLORS[type],
             subGroups: DEFAULT_SUB_GROUPS.map((name) => ({

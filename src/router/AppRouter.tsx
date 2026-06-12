@@ -34,6 +34,7 @@ const MyNotificationsPage = lazy(() => import('@/modules/core/pages/MyNotificati
 // Rostering
 const TemplatesPage = lazy(() => import('@/modules/templates/pages/TemplatesPage'));
 const RostersPlannerPage = lazy(() => import('@/modules/rosters/pages/RostersPlannerPage'));
+const ShiftFormPage = lazy(() => import('@/modules/rosters/pages/ShiftFormPage'));
 const LaborDemandForecastingPage = lazy(() => import('@/modules/rosters/pages/LaborDemandForecastingPage'));
 const TimesheetPage = lazy(() => import('@/modules/timesheets/ui/TimesheetPage'));
 
@@ -70,7 +71,7 @@ const PageLoader: React.FC = () => (
 /* =======================
    ROUTES WHERE MAIN AREA HAS NO PADDING (fullscreen canvas pages)
    ======================= */
-const NO_PADDING_ROUTES = new Set(['/rosters', '/settings']);
+const NO_PADDING_ROUTES = new Set(['/rosters', '/rosters/shift/new', '/settings']);
 
 /* =======================
    PERSISTENT AUTH LAYOUT
@@ -168,6 +169,7 @@ const AppRouter: React.FC = () => {
 
                     <Route element={<FeatureGate feature="rosters" />}>
                         <Route path="/rosters" element={<RostersPlannerPage />} />
+                        <Route path="/rosters/shift/new" element={<ShiftFormPage />} />
                         <Route path="/labor-demand" element={<LaborDemandForecastingPage />} />
                     </Route>
 

@@ -23,6 +23,7 @@ import {
     CopyPlus,
     Shield,
     Sparkles,
+    Gavel,
 } from 'lucide-react';
 import { Badge } from '@/modules/core/ui/primitives/badge';
 import { Avatar, AvatarFallback } from '@/modules/core/ui/primitives/avatar';
@@ -36,12 +37,13 @@ import type { Shift } from '../../domain/shift.entity';
 import { 
     getShiftUIContext, 
     getLockState, 
-    getStatusDotInfo,
     getProtectionContext,
     getShiftStatusIcons
 } from '../../domain/shift-ui';
+import { ShiftRuleHeader } from './ShiftRuleHeader';
 import type { ShiftCostBreakdown } from '../../domain/projections/utils/cost/types';
 import { ZERO_COST_BREAKDOWN } from '../../domain/projections/utils/cost/constants';
+import { estimateDetailedCostFromShift } from '../../domain/projections/utils/cost';
 
 
 // ============================================================================
@@ -88,9 +90,11 @@ const GROUP_COLORS: Record<string, { header: string; accent: string; text: strin
     red: { header: 'bg-red-600 dark:bg-red-600', accent: 'border-red-500/30', text: 'text-white', badge: 'bg-white/20 dark:bg-white/10' },
     orange: { header: 'bg-orange-600 dark:bg-orange-600', accent: 'border-orange-500/30', text: 'text-white', badge: 'bg-white/20 dark:bg-white/10' },
     purple: { header: 'bg-purple-600 dark:bg-purple-600', accent: 'border-purple-500/30', text: 'text-white', badge: 'bg-white/20 dark:bg-white/10' },
+    amber: { header: 'bg-amber-500 dark:bg-amber-500', accent: 'border-amber-500/30', text: 'text-white', badge: 'bg-white/20 dark:bg-white/10' },
     convention_centre: { header: 'bg-blue-600', accent: 'border-blue-500/30', text: 'text-white', badge: 'bg-white/20' },
     exhibition_centre: { header: 'bg-emerald-600', accent: 'border-emerald-500/30', text: 'text-white', badge: 'bg-white/20' },
     theatre: { header: 'bg-red-600', accent: 'border-red-500/30', text: 'text-white', badge: 'bg-white/20' },
+    the_cutaway: { header: 'bg-amber-500', accent: 'border-amber-500/30', text: 'text-white', badge: 'bg-white/20' },
     default_yellow: { header: 'bg-amber-400', accent: 'border-amber-400/30', text: 'text-amber-950', badge: 'bg-black/10' },
 };
 
@@ -225,9 +229,20 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
         is_cancelled:       shift.is_cancelled      ?? false,
         scheduled_start:    shift.scheduled_start   ?? null,
         scheduled_end:      shift.scheduled_end     ?? null,
+        start_at:           shift.start_at          ?? null,
+        end_at:             shift.end_at            ?? null,
         actual_start:       shift.actual_start      ?? null,
         emergency_source:   (shift as any).emergency_source ?? null,
-    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.actual_start, (shift as any).emergency_source]);
+    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.start_at, shift.end_at, shift.actual_start, (shift as any).emergency_source]);
+
+    const isBiddingActive = !!(shift.bidding_status && shift.bidding_status !== 'not_on_bidding');
+    const isBiddingClosedNoWinner = shift.bidding_status === 'bidding_closed_no_winner';
+    const biddingUrgency = useMemo(() => {
+        if (!isBiddingActive) return null;
+        if (isBiddingClosedNoWinner) return 'closed';
+        if (shift.bidding_status === 'on_bidding_urgent' || ctx.urgency === 'urgent' || ctx.urgency === 'emergent') return 'urgent';
+        return 'standard';
+    }, [shift.bidding_status, ctx.urgency, isBiddingActive, isBiddingClosedNoWinner]);
 
     const stateId = ctx.state;
     const fsmLock = getLockState(ctx.state);
@@ -240,46 +255,31 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
     
     const statusStr = getNormalizedStatus(shift);
 
-    const dot = getStatusDotInfo({
-        lifecycle_status:   shift.lifecycle_status,
-        is_cancelled:       shift.is_cancelled,
-        assignment_outcome: shift.assignment_outcome,
-        attendance_status:  shift.attendance_status,
-        actual_start:       shift.actual_start,
-        actual_end:         shift.actual_end,
-        start_at:           shift.start_at,
-        end_at:             shift.end_at,
-        shift_date:         shift.shift_date,
-        start_time:         shift.start_time,
-        end_time:           shift.end_time,
-    });
-
     const isDraft = statusStr === 'draft';
     const isPublished = statusStr === 'published';
 
-    const statusIcons = useMemo(() => 
-        showStatusIcons ? getShiftStatusIcons(shift) : [], 
+    const statusIcons = useMemo(() =>
+        showStatusIcons ? getShiftStatusIcons(shift) : [],
     [shift, showStatusIcons]);
 
-    const costBreakdown = detailedCost ?? ZERO_COST_BREAKDOWN;
+    const costBreakdown = useMemo(() => {
+        if (detailedCost && detailedCost.totalCost > 0) return detailedCost;
+        return estimateDetailedCostFromShift(shift);
+    }, [detailedCost, shift]);
 
     return (
         <CardShell
             className={cn(
                 'relative group/card cursor-pointer rounded-lg overflow-hidden bg-card',
-                'border transition-[border-color,box-shadow,transform,background-color] duration-300',
+                'transition-[border-color,box-shadow,transform,background-color] duration-300',
                 // CSS containment: scope style + paint to this subtree so popovers
                 // opening elsewhere in the grid don't force a global recalc.
                 '[contain:layout_paint_style]',
                 onClick && (!isFullyLocked || isSelected) && 'cursor-pointer hover:shadow-md',
-                isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background border-primary/50 bg-primary/5 dark:bg-primary/20',
+                isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background bg-primary/5 dark:bg-primary/20',
                 isDragging && 'opacity-50 scale-95',
                 isDragOver && 'ring-2 ring-blue-400 ring-offset-1',
-                // Balanced visibility for inactive states
-                dot === null && isPast && 'grayscale opacity-60 cursor-not-allowed',
-                dot === null && isFullyLocked && !isPast && shift.bidding_status !== 'bidding_closed_no_winner' && 'opacity-80 grayscale-[0.1] cursor-not-allowed border-dashed',
-                isDraft && !isPast && shift.bidding_status !== 'bidding_closed_no_winner' && 'border-dashed',
-                !isDraft && !isFullyLocked && !isPast && 'border-solid',
+                (isDraft && isPast) && 'grayscale opacity-60 cursor-not-allowed',
                 className
             )}
             onClick={isFullyLocked || isPast ? undefined : onClick}
@@ -291,28 +291,14 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                     shift.bidding_status === 'bidding_closed_no_winner' ? 'bg-orange-500/20 text-orange-900 dark:text-orange-100' : colors.header,
                     isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-40 backdrop-blur-[2px]',
                     !isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-100',
-                    shift.bidding_status !== 'bidding_closed_no_winner' && colors.text,
-                    isFullyLocked && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100')}>
+                    shift.bidding_status !== 'bidding_closed_no_winner' && colors.text)}>
                     <div className="flex items-center gap-1.5 min-w-0">
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <div className="flex items-center gap-1.5 cursor-help">
-                                    {dot && (
-                                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 ring-1 ring-black/10" style={{ backgroundColor: dot.color }} />
-                                    )}
-                                    <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded", isFullyLocked ? "bg-black/20 dark:bg-black/50 opacity-70" : colors.badge)}>
-                                        {ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
-                                        : ctx.state === 'S5' && ctx.urgency === 'emergent' ? 'S5*'
-                                        : stateId}
-                                    </span>
-                                </div>
-                            </TooltipTrigger>
-                            {dot && (
-                                <TooltipContent className="bg-slate-900 text-white border-none py-1 px-2 text-[10px] font-bold" style={{ backgroundColor: dot.color }}>
-                                    {dot.label}
-                                </TooltipContent>
-                            )}
-                        </Tooltip>
+                        <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded", isFullyLocked ? "bg-black/20 dark:bg-black/50 opacity-70" : colors.badge)}>
+                            {isBiddingClosedNoWinner ? 'S8'
+                            : ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
+                            : ctx.state === 'S5' && ctx.urgency === 'emergent' ? 'S5*'
+                            : stateId}
+                        </span>
                         <span className="text-[10px] font-bold uppercase tracking-widest truncate opacity-80">
                             {shift.roster_subgroup?.name || shift.sub_group_name || roleName}
                         </span>
@@ -353,22 +339,21 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                                 {/* Native title — Radix Tooltip per status icon costs
                                     ~5k extra portal wirings across a 1.4k-card grid. */}
                                 {statusIcons.map((si, i) => (
-                                    <si.icon
-                                        key={i}
-                                        className={cn("h-3 w-3", si.color)}
-                                        aria-label={si.tooltip}
-                                    >
-                                        <title>{si.tooltip}</title>
-                                    </si.icon>
+                                    <span key={i} title={si.tooltip} className="inline-flex items-center">
+                                        <si.icon
+                                            className={cn("h-3 w-3", si.color)}
+                                            aria-label={si.tooltip}
+                                        />
+                                    </span>
                                 ))}
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* Body — greyscaled for past shifts while header (dot) stays crisp */}
-                <div className={cn("px-3 py-1.5 flex flex-col gap-1 flex-1 relative z-[20]",
-                    isPast && dot !== null && "grayscale opacity-80")}>
+                {/* Body */}
+                <div className={cn("px-3 py-1.5 flex flex-col gap-1 flex-1 relative z-[20]")}>
+                    <ShiftRuleHeader shift={shift} variant="compact" className="mb-0.5" />
                     <div className="flex flex-col items-center justify-center min-h-[24px] gap-0.5">
                         <div className="text-[11px] font-bold text-foreground truncate text-center leading-none">{employeeName || 'Unassigned'}</div>
                         <div className="text-[9px] text-foreground/60 font-medium uppercase tracking-tight truncate">{roleName}</div>
@@ -380,19 +365,42 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                         </div>
                     </div>
                     
-                    {/* Committed Cost Badge — only shown for assigned shifts */}
-                    {employeeName && costBreakdown.totalCost > 0 && (
+                    {/* Cost Badge — shown for all shifts */}
+                    {costBreakdown.totalCost > 0 && (
                         <div className="flex justify-center mt-auto">
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 cursor-help">
                                         <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                            ${costBreakdown.totalCost.toFixed(2)}
+                                            {employeeName ? '=' : '≈'} ${costBreakdown.totalCost.toFixed(2)}
                                         </span>
                                     </div>
                                 </TooltipTrigger>
                                 <TooltipContent className="bg-slate-900 text-white border-white/10 shadow-xl">
                                     <CostBreakdownTooltip breakdown={costBreakdown} />
+                                </TooltipContent>
+                            </Tooltip>
+                        </div>
+                    )}
+
+                    {/* Bidding Icon — floating in bottom right */}
+                    {isBiddingActive && biddingUrgency && (
+                        <div className="absolute bottom-1.5 right-1.5 z-30">
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div className={cn(
+                                        "p-1.5 rounded-lg border flex items-center justify-center shadow-sm cursor-help hover:scale-105 transition-all duration-300",
+                                        biddingUrgency === 'urgent' && "bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400",
+                                        biddingUrgency === 'closed' && "bg-slate-500/10 border-slate-500/20 text-slate-500 dark:text-slate-400 opacity-60 hover:opacity-100",
+                                        biddingUrgency === 'standard' && "bg-blue-500/15 border-blue-500/30 text-blue-600 dark:text-blue-400"
+                                    )}>
+                                        <Gavel className="h-4.5 w-4.5" />
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent className="bg-slate-900 text-white border-none py-1.5 px-3 text-[10px] font-bold">
+                                    {biddingUrgency === 'urgent' && 'Urgent Bidding Active'}
+                                    {biddingUrgency === 'closed' && 'Bidding Closed (No Winner)'}
+                                    {biddingUrgency === 'standard' && 'Bidding Active'}
                                 </TooltipContent>
                             </Tooltip>
                         </div>
@@ -449,9 +457,20 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
         is_cancelled:       shift.is_cancelled      ?? false,
         scheduled_start:    shift.scheduled_start   ?? null,
         scheduled_end:      shift.scheduled_end     ?? null,
+        start_at:           shift.start_at          ?? null,
+        end_at:             shift.end_at            ?? null,
         actual_start:       shift.actual_start      ?? null,
         emergency_source:   (shift as any).emergency_source ?? null,
-    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.actual_start, (shift as any).emergency_source]);
+    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.start_at, shift.end_at, shift.actual_start, (shift as any).emergency_source]);
+
+    const isBiddingActive = !!(shift.bidding_status && shift.bidding_status !== 'not_on_bidding');
+    const isBiddingClosedNoWinner = shift.bidding_status === 'bidding_closed_no_winner';
+    const biddingUrgency = useMemo(() => {
+        if (!isBiddingActive) return null;
+        if (isBiddingClosedNoWinner) return 'closed';
+        if (shift.bidding_status === 'on_bidding_urgent' || ctx.urgency === 'urgent' || ctx.urgency === 'emergent') return 'urgent';
+        return 'standard';
+    }, [shift.bidding_status, ctx.urgency, isBiddingActive, isBiddingClosedNoWinner]);
     
     const fsmLock = getLockState(ctx.state);
     const isFullyLocked = isLocked || fsmLock.fullyLocked;
@@ -466,24 +485,18 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
         showStatusIcons ? getShiftStatusIcons(shift) : [], 
     [shift, showStatusIcons]);
 
-    const costBreakdown = detailedCost ?? ZERO_COST_BREAKDOWN;
-
-    const dot = getStatusDotInfo({
-        lifecycle_status:   shift.lifecycle_status,
-        is_cancelled:       shift.is_cancelled,
-        assignment_outcome: shift.assignment_outcome,
-        attendance_status:  shift.attendance_status,
-        actual_start:       shift.actual_start,
-        actual_end:         shift.actual_end,
-        start_at:           shift.start_at,
-        end_at:             shift.end_at,
-        shift_date:         shift.shift_date,
-        start_time:         shift.start_time,
-        end_time:           shift.end_time,
-    });
+    const costBreakdown = useMemo(() => {
+        if (detailedCost && detailedCost.totalCost > 0) return detailedCost;
+        return estimateDetailedCostFromShift(shift);
+    }, [detailedCost, shift]);
 
     const stateLabel =
-        ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
+        // Display-only decoration: a closed-no-winner shift is FSM state S5
+        // (Published + unassigned), shown as S8 to distinguish it from active
+        // bidding. The FSM (shift-fsm.ts) and DB still derive S5 — this is a
+        // card-level decoration, like the '*' emergent suffix below.
+        isBiddingClosedNoWinner ? 'S8'
+        : ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
         : ctx.state === 'S5' && ctx.urgency === 'emergent' ? 'S5*'
         : ctx.state;
 
@@ -491,18 +504,15 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
         <CardShell
             className={cn(
                 'relative group/card cursor-pointer rounded-xl overflow-hidden bg-card',
-                'border transition-[border-color,box-shadow,transform,background-color] duration-300',
+                'transition-[border-color,box-shadow,transform,background-color] duration-300',
                 // CSS containment: scope style + paint so opening a popover/dropdown
                 // in a sibling card doesn't trigger a grid-wide recalc.
                 '[contain:layout_paint_style]',
                 onClick && !isFullyLocked && 'cursor-pointer hover:shadow-lg',
-                isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-background border-primary/50 bg-primary/5 dark:bg-primary/20',
+                isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-background bg-primary/5 dark:bg-primary/20',
                 isDragging && 'opacity-50 scale-95',
                 isDragOver && 'ring-2 ring-blue-400 ring-offset-2',
-                dot === null && isPast && 'grayscale opacity-70 cursor-not-allowed',
-                dot === null && isFullyLocked && !isPast && shift.bidding_status !== 'bidding_closed_no_winner' && 'opacity-85 grayscale-[0.2] cursor-not-allowed border-dashed',
-                isDraft && !isPast && shift.bidding_status !== 'bidding_closed_no_winner' && 'border-dashed opacity-100',
-                !isDraft && !isFullyLocked && !isPast && 'border-solid',
+                (isDraft && isPast) && 'grayscale opacity-70 cursor-not-allowed',
                 className
             )}
             onClick={isFullyLocked || isPast ? undefined : onClick}
@@ -514,28 +524,13 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                     shift.bidding_status === 'bidding_closed_no_winner' ? 'bg-orange-500/20 text-orange-900 dark:text-orange-100' : colors.header,
                     isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-40 backdrop-blur-[2px]',
                     !isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-100',
-                    shift.bidding_status !== 'bidding_closed_no_winner' && colors.text,
-                    isFullyLocked && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-muted dark:bg-slate-700 text-muted-foreground')}>
+                    shift.bidding_status !== 'bidding_closed_no_winner' && colors.text)}>
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                         <GripVertical className={cn("h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-40 transition-opacity", isFullyLocked ? "cursor-not-allowed" : "cursor-grab")} />
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <div className="flex items-center gap-2 flex-shrink-0 cursor-help">
-                                    {dot && (
-                                        <span className="w-2.5 h-2.5 rounded-full ring-1 ring-black/10" style={{ backgroundColor: dot.color }} />
-                                    )}
-                                    <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded",
-                                        isFullyLocked ? "bg-black/20 dark:bg-black/50 opacity-70" : colors.badge)}>
-                                        {stateLabel}
-                                    </span>
-                                </div>
-                            </TooltipTrigger>
-                            {dot && (
-                                <TooltipContent className="bg-slate-900 text-white border-none py-1.5 px-3 text-[11px] font-bold" style={{ backgroundColor: dot.color }}>
-                                    {dot.label}
-                                </TooltipContent>
-                            )}
-                        </Tooltip>
+                        <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded",
+                            isFullyLocked ? "bg-black/20 dark:bg-black/50 opacity-70" : colors.badge)}>
+                            {stateLabel}
+                        </span>
                         <span className="text-[11px] font-bold uppercase tracking-widest truncate opacity-80">
                             {shift.roster_subgroup?.name || shift.sub_group_name || 'Shift'}
                         </span>
@@ -556,22 +551,21 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                             <div className="flex items-center gap-1.5 ml-1">
                                 {/* Native title — see CompactCard comment */}
                                 {statusIcons.map((si, i) => (
-                                    <si.icon
-                                        key={i}
-                                        className={cn("h-3.5 w-3.5", si.color)}
-                                        aria-label={si.tooltip}
-                                    >
-                                        <title>{si.tooltip}</title>
-                                    </si.icon>
+                                    <span key={i} title={si.tooltip} className="inline-flex items-center">
+                                        <si.icon
+                                            className={cn("h-3.5 w-3.5", si.color)}
+                                            aria-label={si.tooltip}
+                                        />
+                                    </span>
                                 ))}
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* Body — greyscaled for past shifts while header (dot) stays crisp */}
-                <div className={cn("p-4 space-y-3 relative z-[20]",
-                    isPast && dot !== null && "grayscale opacity-80")}>
+                {/* Body */}
+                <div className={cn("p-4 space-y-3 relative z-[20]")}>
+                    <ShiftRuleHeader shift={shift} variant="detailed" />
                     <div className="flex items-center gap-3">
                         <Avatar className="h-9 w-9 border border-border">
                             <AvatarFallback className={cn('text-xs font-bold', employeeName ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground')}>
@@ -591,21 +585,21 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                         </div>
                         <div className="flex flex-col items-end gap-1">
                             {totalHours && <Badge variant="secondary" className="text-xs">{totalHours}h net</Badge>}
-                            {/* Committed Cost Badge — only shown for assigned shifts */}
-                            {employeeName && costBreakdown.totalCost > 0 && (
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 cursor-help hover:bg-emerald-500/20 transition-colors">
-                                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                                                ${costBreakdown.totalCost.toFixed(2)}
-                                            </span>
-                                        </div>
-                                    </TooltipTrigger>
-                                    <TooltipContent className="bg-slate-900 text-white border-white/10 shadow-2xl" side="right">
-                                        <CostBreakdownTooltip breakdown={costBreakdown} />
-                                    </TooltipContent>
-                                </Tooltip>
-                            )}
+                             {/* Cost Badge — shown for all shifts */}
+                             {costBreakdown.totalCost > 0 && (
+                                 <Tooltip>
+                                     <TooltipTrigger asChild>
+                                         <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 cursor-help hover:bg-emerald-500/20 transition-colors">
+                                             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                                 {employeeName ? '=' : '≈'} ${costBreakdown.totalCost.toFixed(2)}
+                                             </span>
+                                         </div>
+                                     </TooltipTrigger>
+                                     <TooltipContent className="bg-slate-900 text-white border-white/10 shadow-2xl" side="right">
+                                         <CostBreakdownTooltip breakdown={costBreakdown} />
+                                     </TooltipContent>
+                                 </Tooltip>
+                             )}
                         </div>
                     </div>
 
@@ -627,6 +621,29 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                     ) : shift.notes ? (
                         <p className="text-xs text-muted-foreground italic truncate">{shift.notes}</p>
                     ) : null}
+
+                    {/* Bidding Icon — floating in bottom right */}
+                    {biddingUrgency && (
+                        <div className="absolute bottom-2 right-2 z-30">
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div className={cn(
+                                        "p-1.5 rounded-lg border flex items-center justify-center shadow-sm cursor-help hover:scale-105 transition-all duration-300",
+                                        biddingUrgency === 'urgent' && "bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400",
+                                        biddingUrgency === 'closed' && "bg-slate-500/10 border-slate-500/20 text-slate-500 dark:text-slate-400 opacity-60 hover:opacity-100",
+                                        biddingUrgency === 'standard' && "bg-blue-500/15 border-blue-500/30 text-blue-600 dark:text-blue-400"
+                                    )}>
+                                        <Gavel className="h-4.5 w-4.5" />
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent className="bg-slate-900 text-white border-none py-1.5 px-3 text-[10px] font-bold">
+                                    {biddingUrgency === 'urgent' && 'Urgent Bidding Active'}
+                                    {biddingUrgency === 'closed' && 'Bidding Closed (No Winner)'}
+                                    {biddingUrgency === 'standard' && 'Bidding Active'}
+                                </TooltipContent>
+                            </Tooltip>
+                        </div>
+                    )}
                 </div>
             </div>
 

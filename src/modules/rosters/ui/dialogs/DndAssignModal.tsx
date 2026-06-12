@@ -51,8 +51,8 @@ export interface DndAssignModalProps {
   // Display data
   shiftRole: string;
   shiftDate: string;      // YYYY-MM-DD
-  shiftStartTime: string; // HH:mm
-  shiftEndTime: string;   // HH:mm
+  shiftStartTime?: string | null; // HH:mm
+  shiftEndTime?: string | null;   // HH:mm
 }
 
 // =============================================================================
@@ -69,8 +69,8 @@ export const DndAssignModal: React.FC<DndAssignModalProps> = ({
   employeeName,
   shiftRole,
   shiftDate,
-  shiftStartTime,
-  shiftEndTime,
+  shiftStartTime = '',
+  shiftEndTime = '',
 }) => {
   const autoRanRef = useRef(false);
 
@@ -104,8 +104,8 @@ export const DndAssignModal: React.FC<DndAssignModalProps> = ({
     const candidateShift: V8OrchestratorShift = {
       id:                      shift?.id ?? shiftId,
       date:                    shift?.shift_date ?? shiftDate,
-      start_time:              shift?.start_time ?? shiftStartTime,
-      end_time:                shift?.end_time ?? shiftEndTime,
+      start_time:              shift?.start_time ?? shiftStartTime ?? '',
+      end_time:                shift?.end_time ?? shiftEndTime ?? '',
       role_id:                 shift?.role_id ?? '',
       required_qualifications: [
         ...(((shift?.required_skills as any) ?? []) as string[]),
@@ -161,16 +161,53 @@ export const DndAssignModal: React.FC<DndAssignModalProps> = ({
   }, [open]); // intentionally excluding panel.run to avoid re-trigger loops
 
   // Format display values
-  const formatTime = (t: string) => {
-    const [h, m] = t.split(':');
-    const hour = parseInt(h, 10);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${m} ${ampm}`;
+  const formatTime = (t: string | undefined | null) => {
+    if (!t) return '--:--';
+    
+    let timePart = t;
+    if (t.includes('T')) {
+      const tSplit = t.split('T');
+      if (tSplit[1]) {
+        timePart = tSplit[1].split(/[+-Z]/)[0];
+      }
+    }
+    
+    const parts = timePart.split(':');
+    if (parts.length >= 2) {
+      const hourVal = parseInt(parts[0], 10);
+      const minVal = parts[1];
+      if (!isNaN(hourVal) && minVal) {
+        const ampm = hourVal >= 12 ? 'PM' : 'AM';
+        const displayHour = hourVal % 12 || 12;
+        const displayMin = minVal.substring(0, 2);
+        return `${displayHour}:${displayMin} ${ampm}`;
+      }
+    }
+    
+    try {
+      const d = new Date(t);
+      if (!isNaN(d.getTime())) {
+        const hourVal = d.getHours();
+        const minVal = d.getMinutes().toString().padStart(2, '0');
+        const ampm = hourVal >= 12 ? 'PM' : 'AM';
+        const displayHour = hourVal % 12 || 12;
+        return `${displayHour}:${minVal} ${ampm}`;
+      }
+    } catch {
+      // ignore
+    }
+    
+    return t;
   };
 
-  const formatDate = (d: string) => {
-    const date = new Date(d + 'T00:00:00');
+  const formatDate = (d: string | undefined | null) => {
+    if (!d) return '---';
+    let dateStr = d;
+    if (d.includes('T')) {
+      dateStr = d.split('T')[0];
+    }
+    const date = new Date(dateStr + 'T00:00:00');
+    if (isNaN(date.getTime())) return d;
     return date.toLocaleDateString('en-AU', {
       weekday: 'short',
       day: 'numeric',

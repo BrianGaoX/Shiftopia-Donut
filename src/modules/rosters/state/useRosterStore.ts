@@ -70,7 +70,6 @@ interface RosterState {
   selectedDepartmentIds: string[];
   selectedSubDepartmentIds: string[];
   advancedFilters: AdvancedFilters;
-  isBucketView: boolean;
   bulkModeActive: boolean;
   selectedV8ShiftIds: Set<string>;
   // ── Session state (not persisted — resets each tab/reload) ────────────────
@@ -102,7 +101,6 @@ interface RosterState {
   setSelectedSubDepartmentId: (id: string | null) => void;
   setAdvancedFilters: (partial: Partial<AdvancedFilters>) => void;
   resetAdvancedFilters: () => void;
-  setIsBucketView: (value: boolean) => void;
   setBulkModeActive: (active: boolean) => void;
   setSelectedV8ShiftIds: (ids: Set<string>) => void;
   toggleShiftSelection: (id: string) => void;
@@ -139,7 +137,6 @@ export const useRosterStore = create<RosterState>()(
       selectedDepartmentIds: [],
       selectedSubDepartmentIds: [],
       advancedFilters: DEFAULT_ADVANCED_FILTERS,
-      isBucketView: false,
       bulkModeActive: false,
       selectedV8ShiftIds: new Set(),
 
@@ -153,15 +150,10 @@ export const useRosterStore = create<RosterState>()(
       // ── Actions ────────────────────────────────────────────────────────────
       setViewType: (view) => set({ viewType: view }),
       setActiveMode: (mode) => set({ activeMode: mode, selectedV8ShiftIds: new Set(), bulkModeActive: false }),
-      setIsBucketView: (v) => set({ 
-        isBucketView: v,
-        ...(v ? { bulkModeActive: false, isDnDModeActive: false, selectedV8ShiftIds: new Set() } : {})
-      }),
-
       setBulkModeActive: (active) => set((s) => ({
         bulkModeActive: active,
         selectedV8ShiftIds: active ? s.selectedV8ShiftIds : new Set(),
-        ...(active ? { isBucketView: false, isDnDModeActive: false } : {})
+        ...(active ? { isDnDModeActive: false } : {})
       })),
 
       setSelectedV8ShiftIds: (ids) => set({ selectedV8ShiftIds: ids }),
@@ -184,7 +176,7 @@ export const useRosterStore = create<RosterState>()(
       setIsDnDModeActive: (active) => set((s) => ({
         isDnDModeActive: active,
         showUnfilledPanel: active ? true : s.showUnfilledPanel,
-        ...(active ? { isBucketView: false, bulkModeActive: false, selectedV8ShiftIds: new Set() } : {})
+        ...(active ? { bulkModeActive: false, selectedV8ShiftIds: new Set() } : {})
       })),
       setShowUnfilledPanel: (show) => set((s) => ({
         showUnfilledPanel: show,
@@ -265,16 +257,25 @@ export const useRosterStore = create<RosterState>()(
     {
       name: 'roster-ui-v2',     // 'v2' avoids collisions with old localStorage keys
       storage: rosterStorage,
-      // Only persist preferences — selectedDate is a session-only concept
+      // Only persist preferences — selectedDate is a session-only concept.
+      // viewType is intentionally NOT persisted: it starts each session at the
+      // lean default ('day') so the planner never auto-loads a heavy month grid.
+      // (Month/Week remain selectable; the choice just doesn't carry across reloads.)
       partialize: (s) => ({
-        viewType: s.viewType,
         activeMode: s.activeMode,
         selectedOrganizationId: s.selectedOrganizationId,
         selectedDepartmentIds: s.selectedDepartmentIds,
         selectedSubDepartmentIds: s.selectedSubDepartmentIds,
         advancedFilters: s.advancedFilters,
-        isBucketView: s.isBucketView,
       }),
+      // Drop any stale `viewType` that older builds persisted, so hydration
+      // never restores a heavy month grid from localStorage. (partialize alone
+      // only stops future writes; existing blobs are still merged on read.)
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Record<string, unknown>;
+        if ('viewType' in p) delete p.viewType;
+        return { ...current, ...p };
+      },
     },
   ),
 );

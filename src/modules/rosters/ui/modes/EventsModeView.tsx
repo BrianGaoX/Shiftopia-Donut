@@ -5,7 +5,7 @@ import { Badge } from '@/modules/core/ui/primitives/badge';
 import { Card } from '@/modules/core/ui/primitives/card';
 import { Button } from '@/modules/core/ui/primitives/button';
 import { format, parseISO } from 'date-fns';
-import { LazyEnhancedAddShiftModal as EnhancedAddShiftModal } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal/Lazy';
+import { useShiftFormNav } from '@/modules/rosters/hooks/useShiftFormNav';
 import { Shift } from '@/modules/rosters/api/shifts.api';
 import { useEvents, useUnpublishShift, useCreateShift } from '@/modules/rosters/state/useRosterShifts';
 import { SmartShiftCard, ComplianceInfo } from '@/modules/rosters/ui/components/SmartShiftCard';
@@ -40,6 +40,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/modules/core/ui/primitives/alert-dialog';
+
+// Per-event card cap — bounds DOM nodes when an event has many shifts.
+// Renders the first N and collapses the rest behind a "+N more" toggle.
+// Higher than the grid-mode cap because event cards span the full width
+// (3 columns), so ~12 cards is roughly 4 rows before truncating.
+const MAX_CARDS_PER_EVENT = 12;
 
 interface EventsModeViewProps {
   selectedDate: Date;
@@ -121,9 +127,19 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
 }) => {
   const { toast } = useToast();
   const createShiftMutation = useCreateShift();
-  const [isAddShiftOpen, setIsAddShiftOpen] = useState(false);
-  const [shiftContext, setShiftContext] = useState<any>({});
+  const openShiftForm = useShiftFormNav();
   const [collapsedEvents, setCollapsedEvents] = useState<Set<string>>(new Set());
+
+  // Per-event "+N more" expansion (session-only), keyed by eventId.
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(() => new Set());
+  const toggleEventExpanded = React.useCallback((eventId: string) => {
+    setExpandedEvents(prev => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  }, []);
 
   // ── Roster Store ────────────────────────────────────────────────────────────
   const isDnDModeActive = useRosterStore(s => s.isDnDModeActive);
@@ -369,14 +385,15 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
   };
 
   const handleAddShiftClick = (group: EventGroup) => {
-    setShiftContext({
-      mode: 'events',
-      date: group.eventDate ? format(group.eventDate, 'yyyy-MM-dd') : format(selectedDate, 'yyyy-MM-dd'),
-      eventStartTime: group.startTime,
-      eventEndTime: group.endTime,
-      eventId: group.eventId !== '_no_event_' ? group.eventId : undefined,
+    openShiftForm({
+      context: {
+        mode: 'events',
+        date: group.eventDate ? format(group.eventDate, 'yyyy-MM-dd') : format(selectedDate, 'yyyy-MM-dd'),
+        eventStartTime: group.startTime,
+        eventEndTime: group.endTime,
+        eventId: group.eventId !== '_no_event_' ? group.eventId : undefined,
+      },
     });
-    setIsAddShiftOpen(true);
   };
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -462,10 +479,13 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
             const badgeVariant = getBadgeVariant(group);
             const badgeLabel = getBadgeLabel(group);
             const coveragePct = getCoveragePct(group);
+            const eventExpanded = expandedEvents.has(group.eventId);
+            const visibleShifts = eventExpanded ? group.shifts : group.shifts.slice(0, MAX_CARDS_PER_EVENT);
 
             return (
               <Card
                 key={group.eventId}
+                style={{ contentVisibility: 'auto' as any, containIntrinsicSize: 'auto 400px' }}
                 className={cn(
                   'overflow-hidden border border-border bg-card',
                   group.eventId === '_no_event_' && 'border-dashed border-border/50'
@@ -539,7 +559,7 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
                     )}
 
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {group.shifts.map((shift, shiftIdx) => {
+                      {visibleShifts.map((shift, shiftIdx) => {
                         const { isPast, isLocked: isManagementLocked } = resolveShiftStatus(shift);
                         const isLocked = isManagementLocked || (isDnDModeActive && shift.lifecycle_status !== 'Published');
 
@@ -566,6 +586,15 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
                         );
                       })}
                     </div>
+
+                    {group.shifts.length > MAX_CARDS_PER_EVENT && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleEventExpanded(group.eventId); }}
+                        className="relative z-10 mt-3 text-[11px] font-semibold text-primary/80 hover:text-primary bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-md px-3 py-1.5 transition-colors"
+                      >
+                        {eventExpanded ? 'Show fewer shifts' : `+${group.shifts.length - MAX_CARDS_PER_EVENT} more shift${group.shifts.length - MAX_CARDS_PER_EVENT !== 1 ? 's' : ''}`}
+                      </button>
+                    )}
 
                     {/* Unified Add Shift Button — Repositioned to corner if shifts exist */}
                     <div className={cn(
@@ -604,12 +633,6 @@ export const EventsModeView: React.FC<EventsModeViewProps> = ({
           )}
         </div>
       </ScrollArea>
-
-      <EnhancedAddShiftModal
-        isOpen={isAddShiftOpen}
-        onClose={() => setIsAddShiftOpen(false)}
-        context={shiftContext}
-      />
 
       <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
         <AlertDialogContent className="bg-popover border-border">

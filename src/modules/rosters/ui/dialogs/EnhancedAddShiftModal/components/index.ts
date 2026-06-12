@@ -10,3 +10,4 @@ export * from './ComplianceStep';
 export * from './AssignmentStep';
 export * from './StepIndicator';
 export * from './MultiSelect';
+export * from './SearchSelect';

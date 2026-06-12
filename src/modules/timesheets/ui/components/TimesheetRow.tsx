@@ -15,7 +15,6 @@ import {
     ShieldCheck,
     RotateCcw,
 } from "lucide-react";
-import { ShiftStatusBadge } from "./ShiftStatusBadge";
 import { TimesheetStatusBadge } from "./TimesheetStatusBadge";
 
 
@@ -36,7 +35,7 @@ import { Textarea } from '@/modules/core/ui/primitives/textarea';
 import { Label } from '@/modules/core/ui/primitives/label';
 import type { TimesheetRow as TimesheetRowType } from "../../model/timesheet.types";
 import { calculateHoursBetween, formatHours, formatDifferential, isShiftFinished } from "./TimesheetTable.utils";
-import { getProtectionContext } from "@/modules/rosters/domain/shift-ui";
+import { getProtectionContext, getTimeRule, getLiveRuleBadges } from "@/modules/rosters/domain/shift-ui";
 import { estimateDetailedCostFromShift } from '@/modules/rosters/domain/projections/utils/cost';
 import { ZERO_COST_BREAKDOWN } from '@/modules/rosters/domain/projections/utils/cost/constants';
 
@@ -47,7 +46,6 @@ interface TimesheetRowProps {
     onToggleSelect?: () => void;
     onSave?: (id: string, updates: Partial<TimesheetRowType>) => void;
     onMarkNoShow?: (id: string) => void;
-    onOverrideNoShow?: (id: string) => void;
     showDate?: boolean;
 }
 
@@ -58,7 +56,6 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     onToggleSelect,
     onSave,
     onMarkNoShow,
-    onOverrideNoShow,
     showDate = false,
 }) => {
     /* -- state -------------------------------------------------- */
@@ -110,6 +107,25 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
         { lifecycle_status: entry.liveStatus as any },
         isPast
     ), [entry.liveStatus, isPast]);
+
+    const shiftInput = useMemo(() => ({
+        lifecycle_status: entry.liveStatus,
+        attendance_status: entry.attendanceStatus,
+        attendance_note: entry.attendanceNote,
+        actual_start: entry.rawActualStart ?? entry.clockIn,
+        actual_end: entry.rawActualEnd ?? entry.clockOut,
+        adjusted_start: entry.adjustedStart,
+        adjusted_end: entry.adjustedEnd,
+        adjusted_is_manual: entry.isAdjustedManual,
+        start_at: entry.rawStartAt,
+        end_at: entry.rawEndAt,
+        shift_date: typeof entry.date === 'string' ? entry.date : undefined,
+        start_time: entry.scheduledStart,
+        end_time: entry.scheduledEnd,
+    }), [entry]);
+
+    const timeRuleBadge = useMemo(() => getTimeRule(shiftInput), [shiftInput]);
+    const liveRuleBadges = useMemo(() => getLiveRuleBadges(shiftInput), [shiftInput]);
 
     // Attendance warnings — drives the approval modal
     const warnings = useMemo(() => {
@@ -310,7 +326,13 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     };
 
     const handleAdjustedCellClick = () => {
-        if (!readOnly && !isEditingAdjusted && !isFinalized && !isInProgress && entry.liveStatus !== 'Cancelled') {
+        if (!readOnly && !isEditingAdjusted && entry.liveStatus !== 'Cancelled') {
+            setEditedAdjusted({
+                adjustedStart: entry.adjustedStart || entry.scheduledStart || "",
+                adjustedEnd: entry.adjustedEnd || entry.scheduledEnd || "",
+                paidBreak: entry.paidBreak || "0",
+                unpaidBreak: entry.unpaidBreak || "0",
+            });
             setIsEditingAdjusted(true);
         }
     };
@@ -483,7 +505,6 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                     </>
                 ) : (
                     <>
-                        {/* Adjusted Start — color coded by source; locked while shift is ongoing */}
                         <td className={cn(
                             editableCellClass,
                             (!entry.adjustedStart || entry.adjustedStart === '-') && "bg-muted/5"
@@ -493,7 +514,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                     <TooltipTrigger asChild>
                                         <div className="flex flex-col">
                                             <div className="flex items-center gap-1">
-                                                {isInProgress && <Lock className="h-2.5 w-2.5 text-muted-foreground/30 shrink-0" />}
+                                                {readOnly && <Lock className="h-2.5 w-2.5 text-muted-foreground/30 shrink-0" />}
                                                 <span className={cn(
                                                     "font-bold",
                                                     entry.adjustedStartSource === 'manual' ? "text-indigo-600 dark:text-indigo-400" :
@@ -510,13 +531,15 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                             )}
                                         </div>
                                     </TooltipTrigger>
-                                    {isInProgress && (
-                                        <TooltipContent>Shift ongoing — editable after scheduled end</TooltipContent>
-                                    )}
+                                    <TooltipContent>
+                                        {readOnly ? 'Read-only timesheet' : 
+                                         entry.liveStatus === 'Cancelled' ? 'Cancelled shift — cannot edit billable times' : 
+                                         'Click to edit billable times'}
+                                    </TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                         </td>
-                        {/* Adjusted End — color coded by source; locked while shift is ongoing */}
+                        {/* Adjusted End — color coded by source */}
                         <td className={cn(
                             editableCellClass,
                             (!entry.adjustedEnd || entry.adjustedEnd === '-') && "bg-muted/5"
@@ -526,7 +549,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                     <TooltipTrigger asChild>
                                         <div className="flex flex-col">
                                             <div className="flex items-center gap-1">
-                                                {isInProgress && <Lock className="h-2.5 w-2.5 text-muted-foreground/30 shrink-0" />}
+                                                {readOnly && <Lock className="h-2.5 w-2.5 text-muted-foreground/30 shrink-0" />}
                                                 <span className={cn(
                                                     "font-bold",
                                                     entry.adjustedEndSource === 'manual' ? "text-indigo-600 dark:text-indigo-400" :
@@ -543,9 +566,11 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                             )}
                                         </div>
                                     </TooltipTrigger>
-                                    {isInProgress && (
-                                        <TooltipContent>Shift ongoing — editable after scheduled end</TooltipContent>
-                                    )}
+                                    <TooltipContent>
+                                        {readOnly ? 'Read-only timesheet' : 
+                                         entry.liveStatus === 'Cancelled' ? 'Cancelled shift — cannot edit billable times' : 
+                                         'Click to edit billable times'}
+                                    </TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                         </td>
@@ -576,44 +601,44 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                     </div>
                 </td>
 
-                {/* Statuses — dot badge + lifecycle + timesheet only */}
-                {/* Dot badge */}
-                <td className={`${cellClass} text-center`}>
-                    {entry.statusDot ? (
-                        <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <span
-                                        className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-background cursor-default"
-                                        style={{ backgroundColor: entry.statusDot.color }}
-                                    />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p className="text-xs font-black">{entry.statusDot.label}</p>
-                                </TooltipContent>
-                            </Tooltip>
-                        </TooltipProvider>
-                    ) : (
-                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-muted-foreground/20" />
+
+                {/* Time Rules */}
+                <td className={cellClass}>
+                    {timeRuleBadge && (
+                        <span 
+                            className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black font-mono tracking-tight uppercase border w-fit whitespace-nowrap"
+                            style={{
+                                color: timeRuleBadge.color,
+                                backgroundColor: `${timeRuleBadge.color}10`,
+                                borderColor: `${timeRuleBadge.color}20`,
+                            }}
+                        >
+                            {timeRuleBadge.label}
+                        </span>
                     )}
                 </td>
-                {/* Lifecycle */}
-                <td className={cellClass}>
-                    <div className="flex items-center gap-2">
-                        <ShiftStatusBadge status={entry.liveStatus as any} />
-
-                    </div>
-                </td>
-                {/* Timesheet status */}
+                {/* Live Rules */}
                 <td className={`${cellClass} border-r border-border/30`}>
-                    <div className="flex flex-col gap-1">
-                        <TimesheetStatusBadge status={entry.attendanceStatus === 'no_show' ? 'no_show' : entry.timesheetStatus} />
+                    <div className="flex flex-col gap-1 items-start">
+                        {[liveRuleBadges.arrival, liveRuleBadges.departure].map((badge, i) => badge && (
+                            <span
+                                key={i}
+                                className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black font-mono tracking-tight uppercase border w-fit whitespace-nowrap"
+                                style={{
+                                    color: badge.color,
+                                    backgroundColor: `${badge.color}10`,
+                                    borderColor: `${badge.color}20`,
+                                }}
+                            >
+                                {badge.label}
+                            </span>
+                        ))}
                         {/* Show action note (override/rejection reason) */}
                         {actionNote && (
                             <TooltipProvider>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
-                                        <span className="inline-flex items-center gap-1 text-[8px] text-muted-foreground/60 cursor-default">
+                                        <span className="inline-flex items-center gap-1 text-[8px] text-muted-foreground/60 cursor-default mt-0.5">
                                             <MessageSquare className="h-2.5 w-2.5 shrink-0" />
                                             <span className="truncate max-w-[80px]">{actionNote}</span>
                                         </span>
@@ -719,7 +744,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                 )}
 
                                 {/* Mark as No-Show — only available when shift is over + no clocks recorded */}
-                                {(!entry.clockIn || entry.clockIn === '-') && (!entry.clockOut || entry.clockOut === '-') && entry.statusDot?.label === 'No Show' && isShiftOver && entry.attendanceStatus !== 'no_show' && !readOnly && onMarkNoShow && (
+                                {(!entry.clockIn || entry.clockIn === '-') && (!entry.clockOut || entry.clockOut === '-') && isShiftOver && entry.attendanceStatus !== 'no_show' && !readOnly && onMarkNoShow && (
                                     <TooltipProvider>
                                         <Tooltip>
                                             <TooltipTrigger asChild>
@@ -733,25 +758,6 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                                 </Button>
                                             </TooltipTrigger>
                                             <TooltipContent>Mark as No-Show</TooltipContent>
-                                        </Tooltip>
-                                    </TooltipProvider>
-                                )}
-
-                                {/* Override No-Show */}
-                                {entry.attendanceStatus === 'no_show' && !readOnly && onOverrideNoShow && (
-                                    <TooltipProvider>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={() => onOverrideNoShow(String(entry.id))}
-                                                    className="h-8 w-8 rounded-xl text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
-                                                >
-                                                    <RotateCcw size={16} />
-                                                </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>Override No-Show</TooltipContent>
                                         </Tooltip>
                                     </TooltipProvider>
                                 )}

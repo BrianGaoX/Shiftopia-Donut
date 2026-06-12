@@ -1,6 +1,7 @@
 import React from 'react';
 import { cn } from '@/modules/core/lib/utils';
 import { Shift } from '@/modules/rosters';
+import { ShiftRuleHeader } from '@/modules/rosters/ui/components/ShiftRuleHeader';
 
 interface ShiftPillProps {
   shift: Shift;
@@ -105,7 +106,9 @@ const ShiftPill: React.FC<ShiftPillProps> = ({
           <span className={cn("text-[13px] font-black leading-tight break-words uppercase tracking-tight", theme.text)}>
             {shift.roles?.name || 'Shift'}
           </span>
-          
+
+          <ShiftRuleHeader shift={shift} variant="compact" className="mt-1" />
+
           {/* Only show more info if there is enough height */}
           {parseInt(style?.height as string) > 70 && (
             <div className="mt-auto pt-3 flex flex-col gap-1">

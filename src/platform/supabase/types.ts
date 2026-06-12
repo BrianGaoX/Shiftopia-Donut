@@ -8425,7 +8425,7 @@ export type Database = {
         | "pending_employee"
         | "pending_manager"
       system_role: "admin" | "manager" | "team_lead" | "team_member"
-      template_group_type: "convention_centre" | "exhibition_centre" | "theatre"
+      template_group_type: "convention_centre" | "exhibition_centre" | "theatre" | "the_cutaway"
       template_status: "draft" | "published" | "archived"
       timesheet_status:
         | "draft"
@@ -8733,6 +8733,7 @@ export const Constants = {
         "convention_centre",
         "exhibition_centre",
         "theatre",
+        "the_cutaway",
       ],
       template_status: ["draft", "published", "archived"],
       timesheet_status: [

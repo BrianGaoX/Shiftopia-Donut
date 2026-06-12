@@ -32,7 +32,6 @@ interface TimesheetTableProps {
     onSaveEntry?: (id: string, updates: Partial<TimesheetRow>) => void;
     onBulkAction?: (ids: string[], action: "approve" | "reject") => void;
     onMarkNoShow?: (id: string) => void;
-    onOverrideNoShow?: (id: string) => void;
     onDateChange?: (date: Date) => void;
     onRefresh?: () => void;
     isRefreshing?: boolean;
@@ -53,7 +52,6 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
     onSaveEntry,
     onBulkAction,
     onMarkNoShow,
-    onOverrideNoShow,
     onDateChange,
     onRefresh,
     isRefreshing,
@@ -205,7 +203,6 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                     onSaveEntry={onSaveEntry}
                     onBulkAction={onBulkAction}
                     onMarkNoShow={onMarkNoShow}
-                    onOverrideNoShow={onOverrideNoShow}
                     onDateChange={onDateChange}
                     onRefresh={onRefresh}
                     isRefreshing={isRefreshing}
@@ -256,7 +253,6 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                         totalSelectable={selectableIds.length}
                         onSaveEntry={onSaveEntry}
                         onMarkNoShow={onMarkNoShow}
-                        onOverrideNoShow={onOverrideNoShow}
                         readOnly={readOnly}
                         onClearFilters={() => setAppliedFilters(EMPTY_FILTERS)}
                     />
@@ -290,7 +286,7 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                                         <th colSpan={2} className="p-3 text-[10px] font-black uppercase tracking-widest text-muted-foreground text-center border-b-2 border-border/50 border-r border-border/30">
                                             Payroll & Diff
                                         </th>
-                                        <th colSpan={3} className="p-3 text-[10px] font-black uppercase tracking-widest text-muted-foreground text-center border-b-2 border-border/50 border-r border-border/30">
+                                        <th colSpan={2} className="p-3 text-[10px] font-black uppercase tracking-widest text-muted-foreground text-center border-b-2 border-border/50 border-r border-border/30">
                                             Statuses
                                         </th>
                                         <th className="p-3 border-b-2 border-border/50"></th>
@@ -331,9 +327,8 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                                         <SortableHeader field="approximatePay" label="Pay" />
                                         <SortableHeader field="differential" label="Diff" className="border-r border-border/30" />
                                         {/* Statuses */}
-                                        <th className="p-3 text-center border-b border-border/50">Dot</th>
-                                        <SortableHeader field="liveStatus" label="Lifecycle" />
-                                        <SortableHeader field="timesheetStatus" label="Timesheet" className="border-r border-border/30" />
+                                        <SortableHeader field="liveStatus" label="Time Rules" />
+                                        <SortableHeader field="timesheetStatus" label="Live Rules" className="border-r border-border/30" />
                                         {/* Actions */}
                                         <th className="p-3 text-[10px] font-black uppercase tracking-widest text-foreground/70 text-center border-b border-border/50">
                                             Actions
@@ -343,7 +338,7 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                                 <tbody>
                                     {sortedEntries.length === 0 ? (
                                         <tr>
-                                            <td colSpan={showDate ? 25 : 24} className="p-20 text-center text-muted-foreground">
+                                            <td colSpan={showDate ? 24 : 23} className="p-20 text-center text-muted-foreground">
                                                 <div className="flex flex-col items-center gap-4">
                                                     <div className="h-16 w-16 rounded-full bg-muted/20 flex items-center justify-center">
                                                         <XCircle className="h-8 w-8 text-muted-foreground/40" />
@@ -365,7 +360,6 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                                                 onToggleSelect={() => handleToggleSelect(String(entry.id))}
                                                 onSave={onSaveEntry}
                                                 onMarkNoShow={onMarkNoShow}
-                                                onOverrideNoShow={onOverrideNoShow}
                                                 showDate={showDate}
                                             />
                                         ))

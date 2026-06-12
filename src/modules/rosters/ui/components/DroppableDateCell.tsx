@@ -27,6 +27,10 @@ interface DroppableDateCellProps {
   children?: React.ReactNode;
   onAssign: (shift: UnfilledShift, employeeId: string, dateKey: string) => void;
   onMove?: (shiftId: string, targetEmployeeId: string, targetDate: string) => void;
+  /** When false, no react-dnd drop target is registered — renders a plain cell.
+   *  Gated on DnD mode so the grid doesn't mount a useDrop per visible cell
+   *  (visibleRows × dates) when dragging isn't even possible. */
+  active?: boolean;
 }
 
 const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
@@ -121,5 +125,22 @@ const DroppableDateCellImpl: React.FC<DroppableDateCellProps> = ({
   );
 };
 
-export const DroppableDateCell = React.memo(DroppableDateCellImpl);
+const DroppableDateCellActive = React.memo(DroppableDateCellImpl);
+
+// Inert variant: a plain cell with no react-dnd registration. Used when DnD
+// mode is off (the default), so the grid pays nothing for drop targets.
+const DroppableDateCellInert: React.FC<DroppableDateCellProps> = ({ className, onClick, children }) => (
+  <div
+    role="cell"
+    className={cn(className, 'relative overflow-hidden')}
+    onClick={onClick}
+  >
+    {children}
+  </div>
+);
+
+export const DroppableDateCell: React.FC<DroppableDateCellProps> = ({ active = true, ...props }) => {
+  if (!active) return <DroppableDateCellInert {...props} />;
+  return <DroppableDateCellActive {...props} />;
+};
 export default DroppableDateCell;

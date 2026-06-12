@@ -23,6 +23,7 @@ import { TimesheetFilterDrawer } from './TimesheetFilterDrawer';
 import type { TimesheetRow } from '../../model/timesheet.types';
 import type { ActiveFilters } from './TimesheetFilterDrawer';
 import { applyTimesheetFilters } from './TimesheetFilterDrawer';
+import { getLiveRule } from '@/modules/rosters/domain/shift-ui';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -39,7 +40,6 @@ interface TimesheetMobileViewProps {
     onSaveEntry?: (id: string, updates: Partial<TimesheetRow>) => void;
     onBulkAction?: (ids: string[], action: 'approve' | 'reject') => void;
     onMarkNoShow?: (id: string) => void;
-    onOverrideNoShow?: (id: string) => void;
     onDateChange?: (date: Date) => void;
     onRefresh?: () => void;
     isRefreshing?: boolean;
@@ -68,7 +68,6 @@ export const TimesheetMobileView: React.FC<TimesheetMobileViewProps> = ({
     onSaveEntry,
     onBulkAction,
     onMarkNoShow,
-    onOverrideNoShow,
     onDateChange,
     onRefresh,
     isRefreshing,
@@ -251,13 +250,41 @@ export const TimesheetMobileView: React.FC<TimesheetMobileViewProps> = ({
             <div className="mt-4">
                 {(() => {
                     const lateCount    = displayEntries.filter(e => e.attendanceStatus === 'late').length;
-                    const noShowCount  = displayEntries.filter(e => e.attendanceStatus === 'no_show').length;
+
+                    // Use getLiveRule to detect overridden No-Shows — they'll have *-suffixed labels
+                    let noShowCount = 0;
+                    const overrideCounts: Record<string, number> = {};
+                    displayEntries.forEach(e => {
+                        if (e.attendanceStatus === 'no_show') {
+                            const rule = getLiveRule({
+                                shift_date: String(e.date),
+                                start_time: e.scheduledStart,
+                                end_time: e.scheduledEnd,
+                                actual_start: e.clockIn,
+                                actual_end: e.clockOut,
+                                adjusted_start: e.adjustedStart,
+                                adjusted_end: e.adjustedEnd,
+                                adjusted_is_manual: e.isAdjustedManual,
+                                attendance_status: e.attendanceStatus,
+                                attendance_note: e.attendanceNote,
+                            });
+                            const label = rule?.label || 'No Show';
+                            if (label.endsWith('*')) {
+                                overrideCounts[label] = (overrideCounts[label] || 0) + 1;
+                            } else {
+                                noShowCount++;
+                            }
+                        }
+                    });
+
                     const missingCount = displayEntries.filter(e => {
                         const active = e.liveStatus === 'InProgress' || e.liveStatus === 'Completed';
                         const noIn   = !e.clockIn || e.clockIn === '-';
                         return active && noIn && e.attendanceStatus !== 'no_show';
                     }).length;
-                    if (!lateCount && !noShowCount && !missingCount) return null;
+
+                    const overrideLabels = Object.entries(overrideCounts);
+                    if (!lateCount && !noShowCount && !missingCount && overrideLabels.length === 0) return null;
                     return (
                         <div className="mb-4 flex items-center gap-2 px-3 py-2.5 rounded-2xl bg-amber-500/[0.04] border border-amber-500/15 flex-wrap">
                             <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
@@ -272,6 +299,11 @@ export const TimesheetMobileView: React.FC<TimesheetMobileViewProps> = ({
                                     {noShowCount} No-Show
                                 </span>
                             )}
+                            {overrideLabels.map(([label, count]) => (
+                                <span key={label} className="text-[9px] font-black px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/10">
+                                    {count} {label}
+                                </span>
+                            ))}
                             {missingCount > 0 && (
                                 <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/10">
                                     {missingCount} Missing Clock-In
@@ -326,7 +358,6 @@ export const TimesheetMobileView: React.FC<TimesheetMobileViewProps> = ({
                                 onToggleSelect={() => handleToggleSelect(String(entry.id))}
                                 onSave={onSaveEntry}
                                 onMarkNoShow={onMarkNoShow}
-                                onOverrideNoShow={onOverrideNoShow}
                                 readOnly={readOnly}
                             />
                         ))}

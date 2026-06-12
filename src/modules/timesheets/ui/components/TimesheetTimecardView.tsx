@@ -15,7 +15,6 @@ interface TimesheetTimecardViewProps {
     totalSelectable?: number;
     onSaveEntry?: (id: string, updates: Partial<TimesheetRow>) => void;
     onMarkNoShow?: (id: string) => void;
-    onOverrideNoShow?: (id: string) => void;
     readOnly?: boolean;
     onClearFilters?: () => void;
 }
@@ -30,7 +29,6 @@ export const TimesheetTimecardView: React.FC<TimesheetTimecardViewProps> = ({
     totalSelectable = 0,
     onSaveEntry,
     onMarkNoShow,
-    onOverrideNoShow,
     readOnly = false,
     onClearFilters,
 }) => {
@@ -109,7 +107,6 @@ export const TimesheetTimecardView: React.FC<TimesheetTimecardViewProps> = ({
                             onToggleSelect={() => onToggleSelect(String(entry.id))}
                             onSave={onSaveEntry}
                             onMarkNoShow={onMarkNoShow}
-                            onOverrideNoShow={onOverrideNoShow}
                             readOnly={readOnly}
                         />
                 ))}

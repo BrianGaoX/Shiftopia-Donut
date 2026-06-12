@@ -42,6 +42,15 @@ export const GROUP_COLORS: Record<TemplateGroupType, GroupColorSet> = {
     glassContainer: 'bg-red-500/5 backdrop-blur-xl border border-red-500/20 shadow-[0_8px_32px_rgba(239,68,68,0.15)]',
     glassHeader:    'bg-gradient-to-r from-red-600/90 to-red-500/80 backdrop-blur-md border-b border-red-400/30',
   },
+  the_cutaway: {                              // ← "Warmest white" — warm amber/cream
+    card:           'bg-amber-500/10 hover:bg-amber-500/15',
+    cardBorder:     'border-l-amber-500',
+    badge:          'bg-amber-100 text-amber-700 border-amber-200',
+    accent:         'amber',
+    dndHighlight:   'ring-amber-400',
+    glassContainer: 'bg-amber-500/5 backdrop-blur-xl border border-amber-500/20 shadow-[0_8px_32px_rgba(245,158,11,0.15)]',
+    glassHeader:    'bg-gradient-to-r from-amber-600/90 to-amber-500/80 backdrop-blur-md border-b border-amber-400/30',
+  },
 };
 
 /** Colour set for shifts/groups that have no group_type (orphan/unassigned) */
@@ -61,6 +70,7 @@ export const GROUP_DISPLAY_NAMES: Record<TemplateGroupType | 'unassigned', strin
   convention_centre: 'Convention Centre',
   exhibition_centre: 'Exhibition Centre',
   theatre:           'Theatre',
+  the_cutaway:       'The Cutaway',
   unassigned:        'Unassigned',
 };
 
@@ -68,6 +78,7 @@ export const ALL_GROUP_TYPES: TemplateGroupType[] = [
   'convention_centre',
   'exhibition_centre',
   'theatre',
+  'the_cutaway',
 ];
 
 // ── Level colour mapping ───────────────────────────────────────────────────────

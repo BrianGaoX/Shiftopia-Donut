@@ -11,7 +11,7 @@ export type ShiftStatus =
 
 export type AttendanceStatus = 'unknown' | 'checked_in' | 'no_show' | 'late' | 'excused' | 'auto_clock_out';
 
-export type TemplateGroupType = 'convention_centre' | 'exhibition_centre' | 'theatre';
+export type TemplateGroupType = 'convention_centre' | 'exhibition_centre' | 'theatre' | 'the_cutaway';
 
 export type AssignmentStatusText =
     | 'unassigned'
@@ -145,6 +145,16 @@ export interface Shift {
     timesheet_rejected_reason?: string | null;
     timesheet_start_time?: string | null;
     timesheet_end_time?: string | null;
+    /**
+     * Billable (adjusted) clock times, mirrored from the joined timesheet so
+     * Live Rules derive identically on roster and timesheet surfaces.
+     * Present ONLY when a manager manually committed an override (the timesheet
+     * stores nothing here for auto/snapped billable times).
+     */
+    adjusted_start?: string | null;
+    adjusted_end?: string | null;
+    /** True when the billable times above were manually set by a manager. */
+    adjusted_is_manual?: boolean;
     
     is_recurring: boolean;
     recurrence_rule: string | null;

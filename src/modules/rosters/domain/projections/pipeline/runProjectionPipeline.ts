@@ -169,7 +169,7 @@ function buildStats(shifts: WorkerShiftDTO[]): ProjectionStatsResult {
     totalShifts: nonCancelled.length,
     assignedShifts: nonCancelled.filter(s => !!s.assignedEmployeeId).length,
     openShifts: nonCancelled.filter(s => !s.assignedEmployeeId).length,
-    publishedShifts: nonCancelled.filter(s => s.lifecycleStatus === 'Published').length,
+    publishedShifts: nonCancelled.filter(s => ['Published', 'InProgress', 'Completed'].includes(s.lifecycleStatus)).length,
     totalNetMinutes,
     estimatedCost: Math.round(estimatedCost * 100) / 100,
     costBreakdown: cb,

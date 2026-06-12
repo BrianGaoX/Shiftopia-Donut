@@ -23,6 +23,7 @@ import UnfilledShiftsPanel, {
 import { GroupModeView } from '@/modules/rosters/ui/modes/GroupModeView';
 import { EventsModeView } from '@/modules/rosters/ui/modes/EventsModeView';
 import { RolesModeView } from '@/modules/rosters/ui/modes/RolesModeView';
+import { DrillDownPanel } from '@/modules/rosters/ui/components/DrillDownPanel';
 import type { ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
 import { BulkActionsToolbar, type BulkActionResult, type BulkPublishValidationResult } from '@/modules/rosters/ui/components/BulkActionsToolbar';
 import { RosterModals, type RosterModalsHandle } from '@/modules/rosters/ui/components/RosterModals';
@@ -30,6 +31,7 @@ import { useRosterStore } from '@/modules/rosters/state/useRosterStore';
 import { useShallow } from 'zustand/react/shallow';
 import { DndAssignModal } from '@/modules/rosters/ui/dialogs/DndAssignModal';
 import { UNASSIGNED_BUCKET_ID } from '@/modules/rosters/domain/projections/constants';
+import { prefetchRouteChunk } from '@/router/routePrefetch';
 
 // Hooks & Services - Enterprise TanStack Query hooks
 import { useAuth } from '@/platform/auth/useAuth';
@@ -55,7 +57,14 @@ import {
   useUnpublishShift,
   useShiftDeltaSync,
 } from '@/modules/rosters/state/useRosterShifts';
+import { useRosterSummary } from '@/modules/rosters/state/useRosterSummary';
 import { EligibilityService } from '@/modules/rosters/services/eligibility.service';
+import {
+  TemplateGroupType,
+} from '@/modules/rosters/domain/shift.entity';
+import {
+  GROUP_DISPLAY_NAMES,
+} from '@/modules/rosters/domain/projections/constants';
 import { useRosterUI, RosterMode, CalendarView } from '@/modules/rosters/contexts/RosterUIContext';
 import {
   Shift,
@@ -93,6 +102,15 @@ import {
 // scope so the BFF prefetch hook can reuse it as part of the cache key
 // (the seeded key must match the read key, which includes this limit).
 const EMPLOYEE_PAGE_SIZE = 200;
+
+// Month view is bounded to the selected month ± this many days (calendar
+// continuity buffer). Keep in sync with GroupModeView / RolesModeView, which
+// compute their own month windows for rendering.
+const MONTH_BUFFER_DAYS = 3;
+
+// Maximum shifts to render before showing a performance advisory banner.
+// Exceeding this threshold does not block rendering — it is informational only.
+const SHIFT_RENDER_BUDGET = 3000;
 
 /* ============================================================
    MAIN COMPONENT
@@ -133,12 +151,25 @@ const NewRostersPage: React.FC = () => {
     selectMultiple,
   } = useRosterUI();
 
+  // ==================== GROUP BUCKET VIEW (scalability) ====================
+  // Group-mode default summary grid: 3-Day / Week / Month, NOT in DnD mode,
+  // and NOT bulk mode. In this state the grid renders aggregate summary cells only.
+  const isGroupBucketView =
+    activeMode === 'group' &&
+    !isDnDModeActive &&
+    !bulkModeActive;
+
   // Sync Unfilled/Contracted Panel with DnD Mode
   React.useEffect(() => {
     if (isDnDModeActive && (activeMode === 'people' || activeMode === 'roles')) {
       setShowUnfilledPanel(true);
     }
   }, [isDnDModeActive, activeMode, setShowUnfilledPanel]);
+
+  // Warm up the ShiftFormPage bundle chunk immediately on Roster Planner load
+  React.useEffect(() => {
+    prefetchRouteChunk('/rosters/shift/new');
+  }, []);
   
   // Pending DnD Assignment (Compliance-gated)
   const [pendingDndAssign, setPendingDndAssign] = useState<{
@@ -148,6 +179,14 @@ const NewRostersPage: React.FC = () => {
     dateKey: string;
   } | null>(null);
   const [isExecutingDnd, setIsExecutingDnd] = useState(false);
+
+  // Drill-down panel state
+  const [drillDownState, setDrillDownState] = useState<{
+    isOpen: boolean;
+    date: string;
+    groupType: string;
+    subGroupName?: string;
+  }>({ isOpen: false, date: '', groupType: '' });
 
   const selectedCount = selectedV8ShiftIds.size;
 
@@ -206,9 +245,15 @@ const NewRostersPage: React.FC = () => {
         const year = selectedDate.getFullYear();
         const month = selectedDate.getMonth();
         const firstOfMonth = new Date(year, month, 1);
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        for (let i = 0; i < daysInMonth; i++) {
-          arr.push(addDays(firstOfMonth, i));
+        const lastOfMonth = new Date(year, month + 1, 0);
+        // Bound the month window to the selected month ± a small buffer for
+        // calendar continuity. This caps the fetched + rendered column count
+        // (~36 instead of a template-driven slide across multiple months) —
+        // column count drives both payload size and DOM-node count.
+        const windowStart = addDays(firstOfMonth, -MONTH_BUFFER_DAYS);
+        const windowEnd = addDays(lastOfMonth, MONTH_BUFFER_DAYS);
+        for (let cur = windowStart; cur <= windowEnd; cur = addDays(cur, 1)) {
+          arr.push(cur);
         }
         break;
       }
@@ -280,7 +325,11 @@ const NewRostersPage: React.FC = () => {
     isFetching: isRefreshing,
     refetch,
   } = useShiftsByDateRange(
-    selectedOrganizationId,
+    // Group Bucket View renders aggregate summary cells only — skip the heavy
+    // per-shift fetch by gating the query off (null orgId → enabled = false).
+    // React Query auto-refetches when this flips back to a real org id on
+    // switching into DnD / Collapse / Bulk / Day view.
+    isGroupBucketView ? null : selectedOrganizationId,
     startDate,
     endDate,
     queryFilters
@@ -297,6 +346,18 @@ const NewRostersPage: React.FC = () => {
   const bulkUnassign = useBulkUnassignShifts();
   const bulkUnpublishByHook = useBulkUnpublishShifts();
   const updateShiftMutation = useUpdateShift();
+
+  // Bucket View summary fetching — powers the default summary cells for the
+  // 3-Day / Week / Month grids. Day view uses the timeline, so it's excluded.
+  const {
+    summaryMap,
+    isLoading: isSummaryLoading,
+  } = useRosterSummary(
+    selectedOrganizationId,
+    startDate,
+    endDate,
+    queryFilters
+  );
 
 
   // Employee search + pagination cap (server-side).
@@ -508,7 +569,7 @@ const NewRostersPage: React.FC = () => {
       if (s.assigned_employee_id) counts.assignedCount++;
       else counts.unassignedCount++;
 
-      if (s.lifecycle_status === 'Published') counts.publishedCount++;
+      if (['Published', 'InProgress', 'Completed'].includes(s.lifecycle_status)) counts.publishedCount++;
       else counts.draftCount++;
     });
 
@@ -980,6 +1041,13 @@ const NewRostersPage: React.FC = () => {
         </div>
       )}
 
+      {/* Over-budget Banner — informational sky bar shown when the loaded shift count is large */}
+      {shifts.length >= SHIFT_RENDER_BUDGET && (
+        <div className="flex-shrink-0 bg-sky-500/10 border-y border-sky-500/30 px-6 py-2 flex items-center text-sky-700 dark:text-sky-300 text-sm">
+          Showing {shifts.length} shifts — performance may degrade. Narrow the date range or department filter for best results.
+        </div>
+      )}
+
       {/* ── Main Content Area ─────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <div className="h-full rounded-[32px] overflow-hidden transition-all border flex flex-col bg-white/95 border-white shadow-xl shadow-slate-200/50 dark:bg-[#1c2333] dark:border-white/5 dark:shadow-2xl dark:shadow-black/20">
@@ -1097,6 +1165,9 @@ const NewRostersPage: React.FC = () => {
               projection={projection.group ?? undefined}
               // Centralized DnD assignment (employee → shift card)
               onAssignShift={handleDndAssignToShift}
+              // Bucket View summary + drill-down — default for Day / 3-Day / Week / Month
+              summaryData={summaryMap}
+              onDrillDown={(date, groupType, subGroupName) => setDrillDownState({ isOpen: true, date, groupType, subGroupName })}
             />
           )}
 
@@ -1130,6 +1201,8 @@ const NewRostersPage: React.FC = () => {
               selectedV8ShiftIds={selectedV8ShiftIdsArray}
               isBulkMode={bulkModeActive}
               onToggleShiftSelection={handleToggleShiftSelection}
+              summaryData={viewType !== 'day' ? summaryMap : undefined}
+              onDrillDown={(date, groupType, subGroupName) => setDrillDownState({ isOpen: true, date, groupType, subGroupName })}
             />
           )}
         </div>
@@ -1159,7 +1232,7 @@ const NewRostersPage: React.FC = () => {
       </div>
 
       {/* Bulk Toolbar */}
-      {bulkModeActive && selectedV8ShiftIds.size > 0 && (
+      {bulkModeActive && selectedV8ShiftIds.size > 0 && viewType !== 'month' && (
         <BulkActionsToolbar
           selectedCount={selectedCount}
           selectedV8ShiftIds={selectedV8ShiftIdsArray}
@@ -1225,10 +1298,24 @@ const NewRostersPage: React.FC = () => {
           employeeName={pendingDndAssign.employeeName}
           shiftRole={(pendingDndAssign.shift as any).role || (pendingDndAssign.shift as any).roleName || 'Shift'}
           shiftDate={pendingDndAssign.dateKey}
-          shiftStartTime={(pendingDndAssign.shift as any).startTime || (pendingDndAssign.shift as any).start_time}
-          shiftEndTime={(pendingDndAssign.shift as any).endTime || (pendingDndAssign.shift as any).end_time}
+          shiftStartTime={(pendingDndAssign.shift as any).startTime || (pendingDndAssign.shift as any).start_time || (pendingDndAssign.shift as any).start}
+          shiftEndTime={(pendingDndAssign.shift as any).endTime || (pendingDndAssign.shift as any).end_time || (pendingDndAssign.shift as any).end}
         />
       )}
+
+      {/* Drill-Down Panel (Phase 4 of Millions-of-Shifts endgame) */}
+      <DrillDownPanel
+        isOpen={drillDownState.isOpen}
+        onClose={() => setDrillDownState({ ...drillDownState, isOpen: false })}
+        date={drillDownState.date}
+        groupType={drillDownState.groupType}
+        subGroupName={drillDownState.subGroupName}
+        organizationId={selectedOrganizationId || undefined}
+        departmentId={selectedDepartmentIds[0] || undefined}
+        subDepartmentId={selectedSubDepartmentIds[0] || undefined}
+        groupName={GROUP_DISPLAY_NAMES[drillDownState.groupType as TemplateGroupType | 'unassigned'] || drillDownState.groupType}
+        rosterId={selectedRosterId || undefined}
+      />
 
       {/* Footer Summary */}
       <div className="border-t border-slate-200 dark:border-white/5 bg-white dark:bg-black/20 backdrop-blur-md px-6 py-3 flex-shrink-0">

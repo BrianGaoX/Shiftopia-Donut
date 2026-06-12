@@ -22,7 +22,6 @@ import { cn } from '@/modules/core/lib/utils';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { determineShiftState } from '@/modules/rosters/domain/shift-state.utils';
-import { getStatusDotInfo } from '@/modules/rosters/domain/shift-ui';
 import { calculateTimeRemaining, formatTimeRemaining } from '../views/OpenBidsView/utils';
 
 import { BidComplianceModal } from '../components/BidComplianceModal';
@@ -160,7 +159,7 @@ export const EmployeeBidsPage: React.FC = () => {
     // ========================================================================
     const eligibilityQueryKey = rawAvailableShifts.map(s => s.id).join('|');
 
-    const { data: eligibilityMap = new Map<string, { eligible: boolean; reasons: string[] }>(), isFetching: eligibilityLoading } = useQuery({
+    const { data: eligibilityMap = new Map<string, { eligible: boolean; reasons: string[] }>(), isPending: eligibilityPending, isFetching: eligibilityLoading } = useQuery({
         queryKey: ['bidEligibilityScan', eligibilityQueryKey, user?.id],
         queryFn: async (): Promise<Map<string, { eligible: boolean; reasons: string[] }>> => {
             const newMap = new Map<string, { eligible: boolean; reasons: string[] }>();
@@ -862,7 +861,12 @@ export const EmployeeBidsPage: React.FC = () => {
                         ? "bg-[#1c2333]/40 border-white/5 shadow-2xl shadow-black/20" 
                         : "bg-white/70 backdrop-blur-md border-white shadow-xl shadow-slate-200/50"
                 )}>
-                {viewMode === 'card' ? (
+                {isScopeLoading || (eligibilityPending && rawAvailableShifts.length > 0) ? (
+                    <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                        <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                        <p className="text-xs text-muted-foreground/60 uppercase tracking-widest font-black animate-pulse">Scanning Compliance...</p>
+                    </div>
+                ) : viewMode === 'card' ? (
                 <div className="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-none">
                     <AnimatePresence mode="wait">
                         <motion.div

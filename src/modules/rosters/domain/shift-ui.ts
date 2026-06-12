@@ -53,9 +53,12 @@ export type RingColor = 'purple' | 'emerald' | 'yellow' | 'red' | 'orange' | 'bl
 
 export interface ShiftUIContextInput extends ShiftFSMInput {
     /** UTC timestamp of the shift start — used for TTS calculation */
-    scheduled_start: string | Date | null | undefined;
+    scheduled_start?: string | Date | null | undefined;
     /** UTC timestamp of the shift end — used to detect No Show */
-    scheduled_end: string | Date | null | undefined;
+    scheduled_end?: string | Date | null | undefined;
+    /** New UTC-at-Rest fields */
+    start_at?: string | Date | null | undefined;
+    end_at?: string | Date | null | undefined;
     /** Actual clock-in time — used to detect "Late" (past start, not clocked in) */
     actual_start?: string | null | undefined;
     /** Written by backend assignment APIs — never set from UI */
@@ -129,8 +132,10 @@ export function getShiftUIContext(shift: ShiftUIContextInput): ShiftUIContext {
     const state = getShiftFSMState(shift);
 
     const now  = Date.now();
-    const start = shift.scheduled_start
-        ? new Date(shift.scheduled_start).getTime()
+    const startStr = shift.start_at ?? shift.scheduled_start;
+    const endStr = shift.end_at ?? shift.scheduled_end;
+    const start = startStr
+        ? new Date(startStr).getTime()
         : 0;
     const ttsSec = start > 0 ? Math.max(0, Math.floor((start - now) / 1000)) : 0;
 
@@ -151,7 +156,7 @@ export function getShiftUIContext(shift: ShiftUIContextInput): ShiftUIContext {
     // ── Ring color — priority ordered ─────────────────────────────────────────
     // Purple  > Emerald > Yellow > Red > Orange > Blue
     const isPastStart = start > 0 && now > start;
-    const isPastEnd = shift.scheduled_end ? now > new Date(shift.scheduled_end).getTime() : false;
+    const isPastEnd = endStr ? now > new Date(endStr).getTime() : false;
 
     const ringColor: RingColor = (() => {
         // Special case: Draft shifts past start_time should have NO strip
@@ -378,28 +383,29 @@ export function getShiftStatusIcons(shift: Partial<Shift>): ShiftStatusIcon[] {
     return icons;
 }
 
-// ─── Status dot ──────────────────────────────────────────────────────────────
-
+// ─── Time Rules & Live Rules ───────────────────────────────────────────────────
+//
 export interface ShiftDotInput {
-    lifecycle_status:   string;
-    is_cancelled?:      boolean | null;
-    assignment_outcome?: string | null;
-    attendance_status?: string | null;
-    actual_start?:      string | null;
-    actual_end?:        string | null;
-    start_at?:          string | null;
-    end_at?:            string | null;
     shift_date?:        string | null;
     start_time?:        string | null;
     end_time?:          string | null;
     attendance_note?:   string | null;
     adjusted_start?:    string | null;
     adjusted_end?:      string | null;
-}
-
-export interface StatusBadge {
-    color: string;
-    label: string;
+    actual_start?:      string | null;
+    actual_end?:        string | null;
+    start_at?:          string | Date | null;
+    end_at?:            string | Date | null;
+    attendance_status?: string | null;
+    lifecycle_status?:  string | null;
+    is_cancelled?:      boolean | null;
+    /**
+     * True when `adjusted_start`/`adjusted_end` were manually committed by a
+     * manager override (vs. auto/snapped billable times). This is the single
+     * canonical signal that drives the `*` suffix, so it must be plumbed
+     * identically on every surface (roster, my-roster, timesheets).
+     */
+    adjusted_is_manual?: boolean;
 }
 
 /**
@@ -408,6 +414,9 @@ export interface StatusBadge {
  */
 function parseToMs(dateStr: string | Date | null | undefined, shiftDate?: string | null): number | null {
     if (!dateStr || dateStr === '-') return null;
+    if (dateStr instanceof Date) {
+        return isNaN(dateStr.getTime()) ? null : dateStr.getTime();
+    }
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) return d.getTime();
     
@@ -438,101 +447,189 @@ function parseToMs(dateStr: string | Date | null | undefined, shiftDate?: string
     return null;
 }
 
+// Two NEW, independent nomenclatures shown together on every shift card
+// (Rosters / My Roster / Timesheets). They are derived purely from the shift's
+// schedule + attendance records.
+//
+//  • Time Rules → 5-state lifecycle from the clock vs scheduled start/end.
+//  • Live Rules → 13-state attendance lifecycle from clock-in/clock-out + time.
+//
+// Several "impossible" attendance states (missing/invalid/multiple clock-ins,
+// etc.) are intentionally NOT modelled — the platform's clock-in window,
+// single clock-in/out, and 12.5h auto clock-out constraints prevent them.
+
+const GRACE_MS = 5 * 60 * 1000;             // on-time tolerance (spec default)
+const CLOCKIN_WINDOW_MS = 60 * 60 * 1000;   // clock-in opens 1h before start
+const AUTO_CLOCKOUT_MS = 12.5 * 60 * 60 * 1000;
+
+export type TimeRule = 'Standard' | 'Urgent' | 'Emergent' | 'Live' | 'Closed';
+
+/** Arrival half of the two-badge Live Rules model. */
+export type ArrivalRule =
+    | 'Scheduled' | 'Awaiting Check-In' | 'Missing' | 'No Show'
+    | 'Early In' | 'On Time In' | 'Late In';
+
+/** Departure half of the two-badge Live Rules model. */
+export type DepartureRule =
+    | 'Early Out' | 'On Time Out' | 'Late Out'
+    | 'Working Overtime' | 'Auto Clock-Out';
+
+export type LiveRule = ArrivalRule | DepartureRule;
+
+export interface ShiftRuleBadge {
+    label: TimeRule | LiveRule | string;
+    color: string;
+}
+
 /**
- * Returns the status badge info (color + label) for the status dot and text
- * that replaces the left vertical strip on shift cards.
- *
- * One dot, one label, one color — same signal, clearer communication.
+ * The two-badge Live Rules result. `arrival` is present in every live state;
+ * `departure` only appears once the employee has left, run into overtime, or
+ * been auto-clocked-out. A genuine No Show carries an arrival badge and no
+ * departure.
  */
-export function getStatusDotInfo(shift: ShiftDotInput): StatusBadge | null {
-    const lc = (shift.lifecycle_status || '').toLowerCase();
-    const isCancelled = lc === 'cancelled' || shift.is_cancelled;
+export interface LiveRuleBadges {
+    arrival: ShiftRuleBadge | null;
+    departure: ShiftRuleBadge | null;
+}
 
-    // ── Check Override No-Show ───────────────────────────────────────────────
-    const isOverridden = shift.attendance_note === 'No-Show overridden by manager' || 
-                        (shift.attendance_status === 'unknown' && shift.attendance_note?.toLowerCase().includes('override'));
+// ─── Live Rule palette ─────────────────────────────────────────────────────────
+const LR = {
+    scheduled: '#3B82F6', // blue     — upcoming, clock-in window not yet open
+    awaiting:  '#0EA5E9', // sky      — clock-in window open, not checked in
+    missing:   '#EAB308', // yellow   — started, no clock-in, not yet ended
+    noShow:    '#7F1D1D', // dark red — ended, never clocked in
+    earlyIn:   '#6366F1', // indigo
+    onTimeIn:  '#22C55E', // green
+    lateIn:    '#F59E0B', // amber
+    earlyOut:  '#14B8A6', // teal
+    onTimeOut: '#22C55E', // green
+    lateOut:   '#8B5CF6', // violet
+    overtime:  '#F97316', // orange
+    autoOut:   '#A855F7', // purple
+} as const;
 
-    if (isOverridden) {
-        const schedEndMs = shift.end_at ? parseToMs(shift.end_at) : parseToMs(shift.end_time, shift.shift_date);
-        const adjustedEndMs = parseToMs(shift.adjusted_end, shift.shift_date);
-        const effectiveEndMs = adjustedEndMs ?? schedEndMs;
-        if (effectiveEndMs !== null && schedEndMs !== null) {
-            const diff = effectiveEndMs - schedEndMs;
-            if (diff < 0) return { color: '#14B8A6', label: 'Overridden (Early-Out)' };
-            if (diff > 0) return { color: '#6D28D9', label: 'Overridden (OverTime)' };
-            return { color: '#8B5CF6', label: 'Overridden (OnTime)' };
-        }
-        return { color: '#8B5CF6', label: 'Overridden (OnTime)' };
-    }
+/** Classify a clock-in time against scheduled start. `suffix` marks overrides. */
+function classifyArrival(ci: number, start: number, suffix = ''): ShiftRuleBadge {
+    if (ci < start - GRACE_MS) return { label: `Early In${suffix}`,   color: LR.earlyIn };
+    if (ci > start + GRACE_MS) return { label: `Late In${suffix}`,    color: LR.lateIn };
+    return { label: `On Time In${suffix}`, color: LR.onTimeIn };
+}
 
-    // 1. No Show — checked first, can coexist with any lifecycle
-    if (shift.assignment_outcome === 'no_show') {
-        return { color: '#7F1D1D', label: 'No Show' };
-    }
+/** Classify a clock-out time against scheduled end. `suffix` marks overrides. */
+function classifyDeparture(co: number, end: number, suffix = ''): ShiftRuleBadge {
+    if (co < end - GRACE_MS) return { label: `Early Out${suffix}`,   color: LR.earlyOut };
+    if (co > end + GRACE_MS) return { label: `Late Out${suffix}`,    color: LR.lateOut };
+    return { label: `On Time Out${suffix}`, color: LR.onTimeOut };
+}
 
-    // 2. Auto clock-out — system-enforced completion, overrides generic Completed
-    if (shift.attendance_status === 'auto_clock_out') {
-        return { color: '#A855F7', label: 'Completed - Auto Clock-Out' };
-    }
+/**
+ * Time Rules — 5-state lifecycle derived purely from the clock vs the
+ * scheduled start/end. Independent of attendance. Returns null when the start
+ * time can't be parsed.
+ */
+export function getTimeRule(shift: ShiftDotInput): ShiftRuleBadge | null {
+    const start = shift.start_at ? parseToMs(shift.start_at) : parseToMs(shift.start_time, shift.shift_date);
+    const end = shift.end_at ? parseToMs(shift.end_at) : parseToMs(shift.end_time, shift.shift_date);
+    if (start === null) return null;
 
-    // 3. Cancelled → no dot
-    if (isCancelled) return null;
-
-    // ── Pre-calculate times ───────────────────────────────────────────────────
-    const schedStartMs = shift.start_at ? parseToMs(shift.start_at) : parseToMs(shift.start_time, shift.shift_date);
-    const schedEndMs = shift.end_at ? parseToMs(shift.end_at) : parseToMs(shift.end_time, shift.shift_date);
-
-    const actualStartMs = parseToMs(shift.actual_start, shift.shift_date);
-    const actualEndMs = parseToMs(shift.actual_end, shift.shift_date);
     const now = Date.now();
 
-    // 3. Completed (has actual_end)
-    // We check actual times REGARDLESS of lifecycle_status to fix UI lag
-    if (actualEndMs !== null) {
-        if (schedEndMs !== null) {
-            const diff = actualEndMs - schedEndMs;
-            if (diff < -5 * 60 * 1000) return { color: '#14B8A6', label: 'Completed (Early Exit)' };
-            if (diff >  5 * 60 * 1000) return { color: '#6D28D9', label: 'Completed (Overtime)' };
-            return { color: '#8B5CF6', label: 'Completed (On Time)' };
-        }
-        return { color: '#8B5CF6', label: 'Completed (On Time)' };
+    if (now >= start) {
+        // After start: Live until end, Closed once ended. If end is unparseable,
+        // fall back to the auto clock-out horizon so the card never sticks on Live.
+        const effectiveEnd = end ?? start + AUTO_CLOCKOUT_MS;
+        return now < effectiveEnd
+            ? { label: 'Live', color: '#10B981' }    // emerald
+            : { label: 'Closed', color: '#64748B' }; // slate
     }
 
-    // 4. In Progress (has actual_start but no actual_end)
-    if (actualStartMs !== null) {
-        if (schedStartMs !== null) {
-            const diff = actualStartMs - schedStartMs;
-            if (diff < -5 * 60 * 1000) return { color: '#6366F1', label: 'In Progress (Early)' };
-            if (diff >  5 * 60 * 1000) return { color: '#FBBF24', label: 'In Progress (Late)' };
+    const tts = start - now;
+    if (tts <= 4 * 60 * 60 * 1000)  return { label: 'Emergent', color: '#EF4444' }; // red
+    if (tts <= 24 * 60 * 60 * 1000) return { label: 'Urgent',   color: '#F59E0B' }; // amber
+    return { label: 'Standard', color: '#3B82F6' };                                 // blue
+}
+
+/**
+ * Live Rules — two-badge attendance model, fully independent of Time Rules.
+ *
+ * Returns an {@link LiveRuleBadges} pair so the card can tell the whole story
+ * without collapsing information:
+ *
+ *   • `arrival`   — quality of the clock-in (or the pre-/post-shift stand-in:
+ *                   Scheduled / Awaiting Check-In / Missing / No Show).
+ *   • `departure` — quality of the clock-out, or Working Overtime / Auto
+ *                   Clock-Out. Stays null while the employee is still clocked
+ *                   in mid-shift and on a genuine No Show.
+ *
+ * e.g. a late arrival who leaves early reads `Late In` + `Early Out` instead
+ * of the old single-badge model that only surfaced `Early Clock-Out`.
+ *
+ * Returns `{ arrival: null, departure: null }` when the start time can't be
+ * parsed.
+ */
+export function getLiveRuleBadges(shift: ShiftDotInput): LiveRuleBadges {
+    const empty: LiveRuleBadges = { arrival: null, departure: null };
+    const start = shift.start_at ? parseToMs(shift.start_at) : parseToMs(shift.start_time, shift.shift_date);
+    const end = shift.end_at ? parseToMs(shift.end_at) : parseToMs(shift.end_time, shift.shift_date);
+    if (start === null) return empty;
+
+    const now = Date.now();
+    const effectiveEnd = end ?? start + AUTO_CLOCKOUT_MS;
+
+    // ── Manager override ──────────────────────────────────────────────────────
+    // When a manager has manually committed billable times (the only case where
+    // `adjusted_is_manual` is set), those times are the source of truth. Both
+    // halves are re-derived from them and marked with `*`. This is the single
+    // canonical override signal — identical on every surface — so the `*` only
+    // ever reflects a finalized manual override, never auto/snapped billable.
+    if (shift.adjusted_is_manual && shift.adjusted_start && shift.adjusted_end) {
+        const adjIn = parseToMs(shift.adjusted_start, shift.shift_date);
+        const adjOut = parseToMs(shift.adjusted_end, shift.shift_date);
+        if (adjIn !== null && adjOut !== null) {
+            return {
+                arrival: classifyArrival(adjIn, start, '*'),
+                departure: end !== null ? classifyDeparture(adjOut, end, '*') : null,
+            };
         }
-        return { color: '#10B981', label: 'In Progress (On Time)' };
     }
 
-    // 5. Past start, no clock-in
-    if (schedStartMs !== null && now > schedStartMs) {
-        // Drafts past start get no dot
-        if (lc === 'draft') return null;
+    const ci = parseToMs(shift.actual_start, shift.shift_date);   // clock-in
+    const co = parseToMs(shift.actual_end, shift.shift_date);     // clock-out
 
-        // If the shift has already ended and no clock-in was recorded, it's a No Show
-        if (schedEndMs !== null && now > schedEndMs) {
-            return { color: '#7F1D1D', label: 'No Show' };
-        }
-        
-        // Any other shift that has passed its start time without clock-in is Late
-        return { color: '#EAB308', label: 'Late (Missing)' };
+    // ── Never clocked in — arrival stand-in only ──────────────────────────────
+    if (ci === null) {
+        if (now > effectiveEnd) return { arrival: { label: 'No Show', color: LR.noShow }, departure: null };
+        if (now > start)        return { arrival: { label: 'Missing', color: LR.missing }, departure: null };
+        if (now >= start - CLOCKIN_WINDOW_MS) return { arrival: { label: 'Awaiting Check-In', color: LR.awaiting }, departure: null };
+        return { arrival: { label: 'Scheduled', color: LR.scheduled }, departure: null };
     }
 
-    // 6. Future/Current — TTS-based
-    if (schedStartMs === null) return { color: '#3B82F6', label: 'Normal' };
+    // ── Clocked in — arrival quality is fixed for the rest of the shift ───────
+    const arrival = classifyArrival(ci, start);
 
-    const ttsMs = schedStartMs - now;
-    
-    // Only apply urgency labels to future shifts
-    if (ttsMs > 0 && ttsMs <= 4  * 60 * 60 * 1000) return { color: '#EF4444', label: 'Emergency' };
-    if (ttsMs > 0 && ttsMs <= 24 * 60 * 60 * 1000) return { color: '#F59E0B', label: 'Urgent'    };
-    
-    // For anything further out, or any unhandled past edge cases
-    return { color: '#3B82F6', label: 'Normal' };
+    // ── Departure half ────────────────────────────────────────────────────────
+    let departure: ShiftRuleBadge | null = null;
+    if (shift.attendance_status === 'auto_clock_out') {
+        departure = { label: 'Auto Clock-Out', color: LR.autoOut };
+    } else if (co !== null) {
+        departure = end !== null ? classifyDeparture(co, end) : { label: 'On Time Out', color: LR.onTimeOut };
+    } else if (now > effectiveEnd && now < start + AUTO_CLOCKOUT_MS) {
+        departure = { label: 'Working Overtime', color: LR.overtime };
+    }
+    // else: still clocked in mid-shift → no departure badge yet
+
+    return { arrival, departure };
+}
+
+/**
+ * Single-badge Live Rule — backward-compatible adapter over
+ * {@link getLiveRuleBadges}. Surfaces the most significant half (departure
+ * quality wins over arrival), preserving the `*` override suffix for callers
+ * that detect overridden No-Shows by it. Prefer `getLiveRuleBadges` in UI.
+ */
+export function getLiveRule(shift: ShiftDotInput): ShiftRuleBadge | null {
+    const { arrival, departure } = getLiveRuleBadges(shift);
+    return departure ?? arrival;
 }
 
 /**

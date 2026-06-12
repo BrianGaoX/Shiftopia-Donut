@@ -40,7 +40,7 @@ const SHIFT_DETAIL_SELECT = `
   remuneration_levels(id, level_number, level_name, hourly_rate_min, hourly_rate_max),
   assigned_profiles:profiles!assigned_employee_id(first_name, last_name),
   roster_subgroup:roster_subgroups(name, roster_group:roster_groups(name)),
-  timesheets(status)
+  timesheets(status, start_time, end_time)
 ` as const;
 
 /**
@@ -108,6 +108,9 @@ const SHIFT_SELECT = `
   trade_requested_at,
   trading_status,
   attendance_status,
+  attendance_note,
+  actual_start,
+  actual_end,
   offer_expires_at,
   event_ids,
   tags,
@@ -127,7 +130,7 @@ const SHIFT_SELECT = `
   remuneration_levels(id, level_number, level_name, hourly_rate_min, hourly_rate_max),
   assigned_profiles:profiles!assigned_employee_id(first_name, last_name),
   roster_subgroup:roster_subgroups(name, roster_group:roster_groups(name)),
-  timesheets(status)
+  timesheets(status, start_time, end_time)
 ` as const;
 
 // ── Pagination ────────────────────────────────────────────────────────────────
@@ -137,7 +140,17 @@ const SHIFT_SELECT = `
 // estimates can be off by ~10–20%, so we keep paginating until a page is
 // shorter than PAGE_SIZE rather than trusting the estimate strictly.
 const PAGE_SIZE = 1000;
-const MAX_PAGES = 100;
+// Lowered from 100 → 25: the hard page-count ceiling (25 × 1000 = 25k rows).
+// INTERACTIVE_ROW_CAP is the primary interactive guardrail; MAX_PAGES is the
+// absolute backstop for pathological queries that somehow slip past the cap.
+const MAX_PAGES = 25;
+// Bounds the working set loaded into the interactive roster grid.
+// Loading >20k shifts at once causes measurable jank / memory pressure in the
+// virtualised grid. The root fix is a narrower default date window (handled in
+// the query layer / UI defaults); this cap prevents a full melt-down in the
+// interim. Rows beyond the cap are silently truncated — a console.warn is
+// emitted so it is visible during development and in Sentry breadcrumbs.
+const INTERACTIVE_ROW_CAP = 20_000;
 
 /** Normalise a raw supabase row into our Shift interface shape */
 export function normalizeShiftRow(row: Record<string, any>): Shift {
@@ -147,9 +160,22 @@ export function normalizeShiftRow(row: Record<string, any>): Shift {
             !!row['trade_requested_at'] || row['trading_status'] === 'TradeRequested',
     } as unknown as Shift;
 
+    // Canonical timesheet → shift mapping. Every query that joins `timesheets`
+    // flows through here so Live Rules derive identically on all surfaces.
     const ts = Array.isArray(row.timesheets) ? row.timesheets[0] : (row.timesheets || null);
     if (ts && typeof ts === 'object') {
         shift.timesheet_status = ts.status;
+        if ('notes' in ts) shift.timesheet_notes = ts.notes;
+        if ('rejected_reason' in ts) shift.timesheet_rejected_reason = ts.rejected_reason;
+        if ('start_time' in ts || 'end_time' in ts) {
+            shift.timesheet_start_time = ts.start_time ?? null;
+            shift.timesheet_end_time = ts.end_time ?? null;
+            // Billable times only live on the timesheet when a manager committed
+            // a manual override — auto/snapped billable is never persisted there.
+            shift.adjusted_start = ts.start_time ?? null;
+            shift.adjusted_end = ts.end_time ?? null;
+            shift.adjusted_is_manual = !!(ts.start_time || ts.end_time);
+        }
     }
 
     // Ensure attendance_status and assignment_outcome are preserved if they come from joined fields
@@ -175,6 +201,15 @@ async function fetchWithPagination(buildQuery: () => any): Promise<any[]> {
     const all: any[] = [];
     let page = 0;
     while (page < MAX_PAGES) {
+        // Primary interactive guardrail: stop paging once the working set
+        // reaches INTERACTIVE_ROW_CAP. Returns what was collected so far;
+        // does NOT throw so callers receive a valid (if truncated) Shift[].
+        if (all.length >= INTERACTIVE_ROW_CAP) {
+            console.warn(
+                `[shiftsQueries] Row cap reached (${INTERACTIVE_ROW_CAP}) — results truncated; narrow the date range or filters.`
+            );
+            break;
+        }
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
         const { data, error } = await buildQuery().range(from, to);
@@ -324,9 +359,19 @@ export const shiftsQueries = {
             // page length, not the count, as the stop condition.
             const all: any[] = [];
             let page = 0;
-            // Safety cap (MAX_PAGES) at module scope: 100 × 1000 = 100k shifts,
-            // well above any realistic week/month window.
+            // Primary stop: INTERACTIVE_ROW_CAP (see module-scope constant).
+            // Secondary stop: MAX_PAGES (absolute backstop for pathological queries).
             while (page < MAX_PAGES) {
+                // Interactive guardrail: truncate before fetching the next page
+                // once the working set is already at/above the cap. Emits a
+                // console.warn so the truncation is visible during development
+                // and in Sentry breadcrumbs. Does NOT throw.
+                if (all.length >= INTERACTIVE_ROW_CAP) {
+                    console.warn(
+                        `[shiftsQueries] Row cap reached (${INTERACTIVE_ROW_CAP}) — results truncated; narrow the date range or filters.`
+                    );
+                    break;
+                }
                 const from = page * PAGE_SIZE;
                 const to = from + PAGE_SIZE - 1;
                 const { data, error } = await buildQuery().range(from, to);
@@ -371,7 +416,8 @@ export const shiftsQueries = {
                   roles(id, name),
                   remuneration_levels(id, level_number, level_name, hourly_rate_min, hourly_rate_max),
                   assigned_profiles:profiles!assigned_employee_id(first_name, last_name),
-                  roster_subgroup:roster_subgroups(name, roster_group:roster_groups(name, external_id))
+                  roster_subgroup:roster_subgroups(name, roster_group:roster_groups(name, external_id)),
+                  timesheets(status, start_time, end_time)
                 `)
                 .eq('assigned_employee_id', employeeId)
                 .in('lifecycle_status', ['Published', 'InProgress', 'Completed'])
@@ -434,18 +480,9 @@ export const shiftsQueries = {
                 return [];
             }
 
-            return (data || []).map((row: any) => {
-                const shift = normalizeShiftRow(row as Record<string, unknown>);
-                const ts = Array.isArray(row.timesheets) ? row.timesheets[0] : row.timesheets;
-                if (ts) {
-                    shift.timesheet_status = ts.status;
-                    shift.timesheet_notes = ts.notes;
-                    shift.timesheet_rejected_reason = ts.rejected_reason;
-                    shift.timesheet_start_time = ts.start_time;
-                    shift.timesheet_end_time = ts.end_time;
-                }
-                return shift;
-            });
+            // Timesheet fields (status/notes/billable + adjusted override) are
+            // mapped centrally in normalizeShiftRow.
+            return (data || []).map(row => normalizeShiftRow(row as Record<string, unknown>));
         } catch (error) {
             console.error('Exception in getEmployeeShiftsForAttendance:', error);
             return [];
@@ -664,6 +701,8 @@ export const shiftsQueries = {
         roleId?: string,
         searchTerm?: string,
         limit?: number,
+        skills?: string[],
+        licenses?: string[],
     ): Promise<ProfileSummary[]> {
         const { EligibilityService } = await import('../services/eligibility.service');
         return EligibilityService.getEligibleEmployees({
@@ -673,6 +712,8 @@ export const shiftsQueries = {
             roleId,
             searchTerm,
             limit,
+            skills,
+            licenses,
         });
     },
 

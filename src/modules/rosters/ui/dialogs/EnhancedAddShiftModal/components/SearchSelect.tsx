@@ -1,57 +1,48 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-    Popover,
-    PopoverContent,
-    PopoverTrigger,
-} from '@/modules/core/ui/primitives/popover';
+import { Popover, PopoverTrigger, PopoverContent } from '@/modules/core/ui/primitives/popover';
 import {
     Command,
+    CommandInput,
+    CommandList,
     CommandEmpty,
     CommandGroup,
-    CommandInput,
     CommandItem,
-    CommandList,
     CommandShortcut,
 } from '@/modules/core/ui/primitives/command';
 import { cn } from '@/modules/core/lib/utils';
-import { Check, ChevronDown } from 'lucide-react';
+import { ChevronDown, Lock, Check } from 'lucide-react';
 
-interface MultiSelectProps {
-    label?: string;
-    options: Array<{ id: string; name: string }>;
-    selected: string[];
-    onChange: (selected: string[]) => void;
-    placeholder?: string;
-    isLoading?: boolean;
+interface SearchSelectProps {
+    label: string;
+    icon?: React.ReactNode;
+    options: { id: string; name: string }[];
+    selected: string | undefined | null;
+    onChange: (id: string) => void;
+    locked?: boolean;
     disabled?: boolean;
+    placeholder?: string;
     className?: string;
-    compact?: boolean;
 }
 
-export const MultiSelect: React.FC<MultiSelectProps> = ({
-    label = 'Select',
+export const SearchSelect: React.FC<SearchSelectProps> = ({
+    label,
+    icon,
     options,
     selected,
     onChange,
-    placeholder = 'None',
-    isLoading,
-    disabled,
+    locked = false,
+    disabled = false,
+    placeholder = 'Select...',
     className,
-    compact
 }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const isDisabled = disabled;
+    const isDisabled = locked || disabled;
 
-    const selectedItems = useMemo(() => {
-        return options.filter((opt) => selected.includes(opt.id));
+    const selectedItem = useMemo(() => {
+        return options.find(opt => opt.id === selected);
     }, [options, selected]);
 
-    const displayText = useMemo(() => {
-        if (isLoading) return 'Loading...';
-        if (selectedItems.length === 0) return placeholder;
-        if (selectedItems.length === 1) return selectedItems[0].name;
-        return `${selectedItems.length} selected`;
-    }, [selectedItems, isLoading, placeholder]);
+    const displayText = selectedItem ? selectedItem.name : placeholder;
 
     // Close on Escape key
     useEffect(() => {
@@ -65,16 +56,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isOpen]);
 
-    const toggleOption = (optionId: string) => {
-        if (selected.includes(optionId)) {
-            onChange(selected.filter((s) => s !== optionId));
-        } else {
-            onChange([...selected, optionId]);
-        }
-    };
-
     return (
-        <Popover open={isOpen && !isDisabled} onOpenChange={setIsOpen} modal={false}>
+        <Popover open={isOpen} onOpenChange={setIsOpen} modal={false}>
             <PopoverTrigger asChild>
                 <button
                     className={cn(
@@ -84,8 +67,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                         isOpen ? "ring-2 ring-indigo-500 bg-indigo-500/5 shadow-indigo-500/20 border-indigo-400/80" : "",
                         isDisabled
                             ? "bg-indigo-50/20 dark:bg-white/[0.02] text-slate-400 dark:text-white/40 cursor-not-allowed opacity-50"
-                            : "bg-white dark:bg-[#1c2333] text-slate-700 dark:text-white/80 hover:bg-indigo-50/50 dark:hover:bg-[#252d40] cursor-pointer shadow-lg shadow-black/5",
-                        className
+                            : "bg-white dark:bg-[#1c2333] text-slate-700 dark:text-white/80 hover:bg-indigo-50/50 dark:hover:bg-[#252d40] cursor-pointer shadow-lg shadow-black/5"
                     )}
                     disabled={isDisabled}
                     type="button"
@@ -98,10 +80,14 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                             {displayText}
                         </span>
                     </div>
-                    <ChevronDown className={cn(
-                        "w-3.5 h-3.5 text-slate-400 dark:text-white/40 flex-shrink-0 transition-transform duration-200",
-                        isOpen && "rotate-180"
-                    )} />
+                    {locked ? (
+                        <Lock className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400/60 flex-shrink-0" />
+                    ) : (
+                        <ChevronDown className={cn(
+                            "w-3.5 h-3.5 text-slate-400 dark:text-white/40 flex-shrink-0 transition-transform duration-200",
+                            isOpen && "rotate-180"
+                        )} />
+                    )}
                 </button>
             </PopoverTrigger>
 
@@ -123,7 +109,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                         {/* Search Bar Container */}
                         <div className="bg-white dark:bg-[#1a2333] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-slate-200 dark:border-white/10 overflow-hidden [&_[cmdk-input-wrapper]]:border-b-0">
                             <CommandInput 
-                                placeholder={`Search ${label.toLowerCase()}...`} 
+                                placeholder={`Search ${label}...`} 
                                 className="h-14 text-base border-none ring-0 focus:ring-0 focus-visible:ring-0 outline-none focus:outline-none focus-visible:outline-none shadow-none w-full bg-transparent"
                                 autoFocus
                             />
@@ -138,13 +124,19 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                                 
                                 <CommandGroup heading={label} className="px-1">
                                     {options.map((opt) => {
-                                        const isSelected = selected.includes(opt.id);
+                                        const isSelected = selected === opt.id;
                                         return (
                                             <CommandItem
                                                 key={opt.id}
-                                                value={`${opt.name} ${opt.id}`.toLowerCase()}
+                                                value={opt.name}
                                                 onSelect={() => {
-                                                    toggleOption(opt.id);
+                                                    onChange(opt.id);
+                                                    setIsOpen(false);
+                                                }}
+                                                onPointerDown={(e) => {
+                                                    e.preventDefault();
+                                                    onChange(opt.id);
+                                                    setIsOpen(false);
                                                 }}
                                                 className={cn(
                                                     "flex items-center justify-between gap-3 px-4 py-3 rounded-xl mb-1 cursor-pointer transition-all",
@@ -152,7 +144,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                                                 )}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    {/* Circular checkmark selection indicator */}
+                                                    {/* Circular selection indicator */}
                                                     <div className={cn(
                                                         "w-5 h-5 rounded-full border flex items-center justify-center transition-all",
                                                         isSelected 

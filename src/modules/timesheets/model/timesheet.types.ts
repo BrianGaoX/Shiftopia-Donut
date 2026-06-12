@@ -93,8 +93,7 @@ export interface TimesheetRow {
     // Manager notes
     notes?: string | null;
     rejectedReason?: string | null;
-    // Status Dot (Badge)
-    statusDot?: { color: string; label: string } | null;
+
     // Raw fields for internal UI logic (indicators)
     rawActualStart?: string | null;
     rawActualEnd?: string | null;
