@@ -752,3 +752,105 @@ def test_b4_alternatives_computed_when_requested():
     assert "cheapest" in keys
     cheapest = next(a for a in out.alternatives if a["key"] == "cheapest")
     assert cheapest["pillars"]["cost"]["total"] <= out.pillars["cost"]["total"] + 0.01
+
+
+# ---------------------------------------------------------------------------
+# SC-7 — Wellbeing/fatigue is windowed per ISO calendar week, not horizon-wide.
+#
+# Bug: `_compute_pillars` and the objective fatigue term summed each employee's
+# effective minutes across the ENTIRE optimization horizon (often a month) and
+# banded against the 1200/1800 effective-minute SC-7 *weekly* caps. Over a month
+# almost everyone exceeded 30h → ~everyone flagged "critical" → wellbeing score
+# pinned at 0. Fix: bucket effective minutes per ISO week (Mon-Sun) and band on
+# each employee's worst (peak) week, then normalize by headcount.
+# ---------------------------------------------------------------------------
+
+def test_fatigue_windowed_per_week_not_pinned_to_zero():
+    """A light workload spread over four ISO weeks (~2 short shifts/employee/week,
+    well under the weekly cap) must yield a HIGH wellbeing score — NOT 0.
+
+    Pre-fix, the horizon-wide sum of effective minutes over a month tipped most
+    people past 1800 (30h) effective minutes and pinned fatigue.score at 0."""
+    # Mondays/Tuesdays of four consecutive ISO weeks in 2026 (wk 19-22).
+    dates = [
+        "2026-05-04", "2026-05-05",  # ISO week 19
+        "2026-05-11", "2026-05-12",  # ISO week 20
+        "2026-05-18", "2026-05-19",  # ISO week 21
+        "2026-05-25", "2026-05-26",  # ISO week 22
+    ]
+    # 4h day shifts (low circadian weight) — nobody gets near the weekly cap.
+    shifts = [make_shift(f"s{i}", d, "09:00", "13:00") for i, d in enumerate(dates)]
+    employees = [make_employee(f"e{i}") for i in range(8)]
+    out = solve(shifts, employees)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert out.pillars["coverage"]["score"] == 100.0
+    fat = out.pillars["fatigue"]
+    # The whole point of the fix: a reasonable multi-week roster is NOT pinned at 0.
+    assert fat["score"] >= 90, (
+        f"Light multi-week workload should score high on wellbeing, got {fat}"
+    )
+    assert fat["critical"] == 0
+    assert fat["amber"] == 0
+
+
+def test_fatigue_single_week_overload_trips_critical():
+    """An employee genuinely overloaded WITHIN one ISO week (>30 effective hours)
+    must still trip the critical band — the windowing must not hide real weekly
+    overwork."""
+    # Seven overnight shifts (22:00-06:00) in a single ISO week (2026 wk 23).
+    # Each carries heavy circadian weight (~660 effective minutes), so even a
+    # few in one week blow past the 1800 (30h effective) critical threshold.
+    week = ["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04",
+            "2026-06-05", "2026-06-06", "2026-06-07"]
+    shifts = [make_shift(f"b{i}", d, "22:00", "06:00") for i, d in enumerate(week)]
+    # Single eligible employee with a generous weekly cap so the solver can pile
+    # the assignable (non-overlapping, rest-gap-respecting) shifts on them.
+    employees = [make_employee("solo", max_weekly_minutes=10000)]
+    out = solve(shifts, employees)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    fat = out.pillars["fatigue"]
+    assert fat["critical"] == 1, (
+        f">30h effective in one week must trip critical, got {fat}"
+    )
+    assert fat["score"] == 0  # only one person used, and they are critical
+
+
+def test_fatigue_mixed_roster_produces_gradient():
+    """With one overloaded employee in a single week and several light employees,
+    the headcount-normalized wellbeing score is a gradient — neither pinned at 0
+    nor a perfect 100."""
+    # One heavy ISO week (wk 23) of overnight shifts that only `heavy` can take,
+    # plus four light day shifts in a different week that the others share.
+    heavy_week = ["2026-06-01", "2026-06-02", "2026-06-03",
+                  "2026-06-04", "2026-06-05"]
+    heavy_shifts = [
+        make_shift(f"h{i}", d, "22:00", "06:00", role_id="role-night")
+        for i, d in enumerate(heavy_week)
+    ]
+    light_dates = ["2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18"]
+    light_shifts = [
+        make_shift(f"l{i}", d, "09:00", "13:00", role_id="role-day")
+        for i, d in enumerate(light_dates)
+    ]
+    heavy = make_employee("heavy", contracted_role_ids=["role-night"],
+                          max_weekly_minutes=10000)
+    light_emps = [
+        make_employee(f"light{i}", contracted_role_ids=["role-day"])
+        for i in range(4)
+    ]
+    # Enforce role matching so only `heavy` can take the night shifts (else
+    # fairness spreads them and nobody trips critical).
+    out = solve(
+        heavy_shifts + light_shifts, [heavy] + light_emps,
+        constraints=OptimizerConstraints(
+            min_rest_minutes=600, enforce_role_match=True,
+            enforce_skill_match=False, allow_partial=True, relax_constraints=False,
+        ),
+    )
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    fat = out.pillars["fatigue"]
+    # heavy trips critical; the four light employees do not → score is a gradient.
+    assert fat["critical"] >= 1
+    assert 0 < fat["score"] < 100, (
+        f"Mixed roster should give a graded wellbeing score, got {fat}"
+    )

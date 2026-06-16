@@ -38,6 +38,7 @@ Preprocessing pipeline:
 """
 
 from __future__ import annotations
+import datetime
 import logging
 import time
 from dataclasses import dataclass, field, replace
@@ -369,8 +370,22 @@ def _calculate_effective_minutes(s) -> int:
     if unpaid > 0:
         ratio = weighted_mins / total_mins
         weighted_mins -= unpaid * ratio
-        
+
     return int(round(weighted_mins))
+
+
+def _iso_week_key(shift_date: str) -> tuple[int, int]:
+    """Bucket a shift into its ISO calendar week (Mon-Sun).
+
+    SC-7 fatigue caps (1200/1800 effective minutes) are *weekly* limits, so
+    effective minutes must be windowed per ISO week instead of summed across
+    the whole optimization horizon (which over a month flagged ~everyone as
+    'critical' and pinned the wellbeing score at 0).
+
+    `shift_date` is an ISO `YYYY-MM-DD` string (see ShiftInput / shift_window).
+    Returns `(iso_year, iso_week)`.
+    """
+    return datetime.date.fromisoformat(shift_date).isocalendar()[:2]
 
 
 # =============================================================================
@@ -650,20 +665,42 @@ class ScheduleModelBuilder:
             fairness_score, spread = 100, 0
 
         # Fatigue = how many people pushed into the amber/critical effective-hours
-        # bands (mirrors SC-7 thresholds: 1200 / 1800 effective minutes).
+        # bands. SC-7 thresholds (1200/1800 effective minutes) are *weekly* caps,
+        # so we window each employee's effective minutes per ISO calendar week
+        # (Mon-Sun) and band on their WORST (peak) week — not a horizon-wide sum,
+        # which over a month flagged ~everyone 'critical' and pinned the score
+        # at 0.
         eff = {s.id: _calculate_effective_minutes(s) for s in shifts}
+        week_of = {s.id: _iso_week_key(s.shift_date) for s in shifts}
         init = {e.id: e.initial_fatigue_score * 60 for e in self.data.employees}
-        eff_by_emp: dict[str, float] = {}
+
+        # Per-employee → {iso_week: effective_minutes}.
+        eff_by_emp_week: dict[str, dict[tuple[int, int], float]] = {}
         for a in assignments:
-            eff_by_emp[a.employee_id] = eff_by_emp.get(a.employee_id, 0) + eff.get(a.shift_id, 0)
+            wk = week_of.get(a.shift_id)
+            if wk is None:
+                continue
+            wmap = eff_by_emp_week.setdefault(a.employee_id, {})
+            wmap[wk] = wmap.get(wk, 0) + eff.get(a.shift_id, 0)
+
         amber = critical = 0
-        for emp_id, em in eff_by_emp.items():
-            te = em + init.get(emp_id, 0)
-            if te > 1800:
+        for emp_id, wmap in eff_by_emp_week.items():
+            if not wmap:
+                continue
+            # Prior fatigue belongs to "the previous week" → fold it into the
+            # earliest assigned week bucket only (not every week).
+            earliest = min(wmap)
+            wmap[earliest] += init.get(emp_id, 0)
+            peak = max(wmap.values())
+            if peak > 1800:
                 critical += 1
-            elif te > 1200:
+            elif peak > 1200:
                 amber += 1
-        fatigue_score = max(0, round(100 - (amber * 15 + critical * 40)))
+
+        # Normalize by headcount so the score is a gradient, not a raw count
+        # (amber = half a critical; all used-people critical → 0; none → 100).
+        frac = (amber * 0.5 + critical * 1.0) / max(1, used)
+        fatigue_score = max(0, round(100 * (1 - min(1.0, frac))))
 
         return {
             'coverage': {'score': coverage_score, 'covered': covered, 'total': total},
@@ -1483,52 +1520,73 @@ class ScheduleModelBuilder:
         # -- SC-7: Safety Penalty (Non-linear Fatigue) ------------------------
         # Uses piecewise linear approximation to simulate the exponential drain
         # of high effective working hours (weighted by circadian factors).
+        #
+        # SC-7 caps (1200/1800 effective minutes) are *weekly* limits, so we
+        # window effective minutes per ISO calendar week (Mon-Sun) and penalise
+        # each (employee, week) bucket independently. Summing across the whole
+        # horizon (e.g. a month) saturated the penalty for ~everyone and made
+        # fatigue ~97% of the objective — an artifact of the windowing, not real
+        # weekly overload.
+        #
+        # Fatigue Weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
+        fatigue_mult = _strategy_mult(self.data.strategy.fatigue_weight)
+
         for emp in self.data.employees:
-            # We already have self._emp_workload_vars[emp.id] which is duration_minutes.
-            # We need a new var for effective_minutes.
-            eff_terms = [
-                _calculate_effective_minutes(s) * self._x[emp.id, s.id]
-                for s in self.data.shifts
-                if (emp.id, s.id) in self._x
-            ]
-            if not eff_terms:
+            # Group this employee's effective-minute terms by ISO week.
+            eff_terms_by_week: dict[tuple[int, int], list] = {}
+            for s in self.data.shifts:
+                if (emp.id, s.id) not in self._x:
+                    continue
+                wk = _iso_week_key(s.shift_date)
+                eff_terms_by_week.setdefault(wk, []).append(
+                    _calculate_effective_minutes(s) * self._x[emp.id, s.id]
+                )
+            if not eff_terms_by_week:
                 continue
 
-            # Initial fatigue (from previous week) converted to "effective minutes"
-            # Calibration: 1 fatigue unit ~= 60 effective minutes in the simplified linear band.
-            # This constant maps severity-based fatigue scores from the timekeeping layer
-            # into the optimizer's circadian penalty space.
+            # Initial fatigue (from previous week) converted to "effective minutes".
+            # Calibration: 1 fatigue unit ~= 60 effective minutes in the simplified
+            # linear band. This constant maps severity-based fatigue scores from the
+            # timekeeping layer into the optimizer's circadian penalty space. It is
+            # prior-week load, so it is added to the EARLIEST week bucket only.
             init_eff_mins = int(emp.initial_fatigue_score * 60)
+            earliest_week = min(eff_terms_by_week)
 
-            # Domain includes init_eff_mins so a high prior-fatigue baseline can
-            # never make this `==` constraint infeasible (the bug that silently
-            # forced the entire model INFEASIBLE → greedy fallback — audit C4).
-            eff_total = self.model.NewIntVar(0, self._eff_ub + init_eff_mins, f'eff_{emp.id[:6]}')
-            self.model.Add(eff_total == cp_model.LinearExpr.Sum(eff_terms) + init_eff_mins)
+            for wk, eff_terms in eff_terms_by_week.items():
+                week_init = init_eff_mins if wk == earliest_week else 0
+                tag = f'{emp.id[:6]}_{wk[0] % 100:02d}{wk[1]:02d}'
 
-            # Non-linear penalty bands (in cents):
-            # 0-1200 mins (20h): $0/min
-            # 1200-1800 mins (30h): $5/min surcharge (Amber)
-            # 1800+ mins (30h+): $50/min surcharge (Critical/Red)
-            # This simulates the -76*log curve's rapid ascent.
+                # Per-week effective minutes. Domain includes week_init so a high
+                # prior-fatigue baseline can never make this `==` constraint
+                # infeasible (the bug that silently forced the model INFEASIBLE →
+                # greedy fallback — audit C4). Per-week totals are <= horizon
+                # totals so self._eff_ub remains a valid upper bound.
+                eff_total_week = self.model.NewIntVar(
+                    0, self._eff_ub + week_init, f'eff_{tag}'
+                )
+                self.model.Add(
+                    eff_total_week == cp_model.LinearExpr.Sum(eff_terms) + week_init
+                )
 
-            # Helper: AddPiecewiseLinearConstraint is available in newer OR-Tools.
-            # If not, we can use 3 linear variables and max constraints.
+                # Non-linear penalty bands (in cents), per ISO week:
+                # 0-1200 mins (20h): $0/min
+                # 1200-1800 mins (30h): $5/min surcharge (Amber)
+                # 1800+ mins (30h+): $50/min surcharge (Critical/Red)
+                # This simulates the -76*log curve's rapid ascent.
+                amber_mins = self.model.NewIntVar(
+                    0, self._eff_ub + week_init, f'amber_{tag}'
+                )
+                critical_mins = self.model.NewIntVar(
+                    0, self._eff_ub + week_init, f'crit_{tag}'
+                )
+                # amber_mins = max(0, eff_total_week - 1200)
+                self.model.AddMaxEquality(amber_mins, [eff_total_week - 1200, 0])
+                # critical_mins = max(0, eff_total_week - 1800)
+                self.model.AddMaxEquality(critical_mins, [eff_total_week - 1800, 0])
 
-            amber_mins = self.model.NewIntVar(0, self._eff_ub + init_eff_mins, f'amber_{emp.id[:6]}')
-            critical_mins = self.model.NewIntVar(0, self._eff_ub + init_eff_mins, f'crit_{emp.id[:6]}')
-
-            # amber_mins = max(0, eff_total - 1200)
-            self.model.AddMaxEquality(amber_mins, [eff_total - 1200, 0])
-            # critical_mins = max(0, eff_total - 1800)
-            self.model.AddMaxEquality(critical_mins, [eff_total - 1800, 0])
-
-            # Fatigue Weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
-            fatigue_mult = _strategy_mult(self.data.strategy.fatigue_weight)
-
-            # Penalties:
-            _t(int(500 * fatigue_mult) * amber_mins, 'fatigue')       # $5.00 per minute base
-            _t(int(4500 * fatigue_mult) * critical_mins, 'fatigue')   # Extra $45.00
+                # Penalties:
+                _t(int(500 * fatigue_mult) * amber_mins, 'fatigue')      # $5.00 per minute base
+                _t(int(4500 * fatigue_mult) * critical_mins, 'fatigue')  # Extra $45.00
 
         # -- SC-6: Shift Continuity - reward keeping same employee on adjacent
         # For each pair of adjacent (contiguous, non-overlapping) shifts,

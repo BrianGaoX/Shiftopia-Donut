@@ -721,8 +721,21 @@ export class AutoSchedulerController {
                 const emp = employeeMap.get(p.employeeId);
                 const shift = input.shifts.find(s => s.id === p.shiftId);
                 
-                // 1. Calculate Production Cost
-                if (shift && emp) {
+                // 1. Cost (dollars, AUD)
+                // On the optimizer path the solver already returned the
+                // per-assignment cost it actually optimized — it is threaded
+                // here as `p.optimizerCost` (set from `proposal.cost` in
+                // `_validateProposals`, which originates in solution-parser).
+                // That solver value IS the single source of truth and is what
+                // the pillar "Labour cost" (`pillars.cost.total`) sums, so the
+                // grid "Total Cost" reconciles with the pillar only if we leave
+                // it untouched. Re-estimating client-side via `estimateShiftCost`
+                // here is a different cost engine that diverges by ~15%.
+                //
+                // The greedy fallback never calls the optimizer, so no solver
+                // cost exists — in that case we DO re-estimate. Both engines
+                // return dollars, so no unit conversion is needed.
+                if (usedFallback && shift && emp) {
                     const mins = durationMinutes(shift.start_time, shift.end_time);
                     p.optimizerCost = estimateShiftCost(
                         mins,
@@ -744,7 +757,7 @@ export class AutoSchedulerController {
                         undefined, undefined, undefined, undefined, // Trainee params
                         undefined, undefined, undefined, undefined, // Trainee params
                         undefined, undefined, undefined, undefined, // SWS params
-                        undefined, 
+                        undefined,
                         extractLevel(shift.roleName) // 19th arg: classificationLevel
                     );
                 }

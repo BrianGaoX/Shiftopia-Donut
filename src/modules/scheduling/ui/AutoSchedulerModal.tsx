@@ -132,8 +132,6 @@ export function AutoSchedulerModal({
     const runAbortRef = useRef<AbortController | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-    const ESTIMATED_TOTAL_SECONDS = 30; // Matches solver timeout
-
     // Timer for "Estimated Time Left"
     useEffect(() => {
         if (phase === 'optimizing') {
@@ -202,6 +200,13 @@ export function AutoSchedulerModal({
                 unpaid_break_minutes: s.unpaid_break_minutes ?? 0,
             } as ShiftMeta));
     }, [rawShifts, startDate, endDate, validationError]);
+
+    const ESTIMATED_TOTAL_SECONDS = useMemo(() => {
+        const rawPairs = filteredShifts.length * employees.length;
+        if (rawPairs > 30000) return 90;
+        if (rawPairs > 10000) return 60;
+        return 30;
+    }, [filteredShifts.length, employees.length]);
 
     const preRunCapacity = useMemo(() => {
         if (filteredShifts.length === 0 || employees.length === 0) return null;
@@ -595,10 +600,24 @@ export function AutoSchedulerModal({
                                     <span className="text-lg font-black text-red-600 dark:text-red-400">{result.failing}</span>
                                 </div>
                             </div>
+                            {/* Bug 1 fix: source Fairness from the SAME pillar score as the
+                                AutoSchedulerInsights card (workload-evenness, 0-100), so the two
+                                surfaces always agree. On the greedy fallback path pillars may be
+                                absent — there we show the average-utilization value but RELABEL it
+                                honestly ("Avg Utilization") so it is never mislabeled as Fairness. */}
                             <div className="p-3 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
                                 <div className="flex flex-col">
-                                    <span className="text-[8px] font-black text-primary/60 uppercase">Fairness</span>
-                                    <span className="text-lg font-black text-primary">{totals.fairness.toFixed(0)}%</span>
+                                    <span className="text-[8px] font-black text-primary/60 uppercase">
+                                        {result.pillars ? 'Fairness' : 'Avg Utilization'}
+                                    </span>
+                                    {result.pillars ? (
+                                        <span className="text-lg font-black text-primary">
+                                            {result.pillars.fairness.score.toFixed(0)}
+                                            <span className="text-[10px] font-bold text-primary/50">/100</span>
+                                        </span>
+                                    ) : (
+                                        <span className="text-lg font-black text-primary">{totals.fairness.toFixed(0)}%</span>
+                                    )}
                                 </div>
                                 <Zap className="h-5 w-5 text-primary/30" />
                             </div>
@@ -785,9 +804,18 @@ export function AutoSchedulerModal({
                                             const sorted = [...entries].sort(([, a], [, b]) => Math.abs(b) - Math.abs(a));
                                             return (
                                                 <div className="p-5 rounded-[2rem] bg-card/40 dark:bg-card/20 border border-border/40 shadow-xl flex flex-col gap-4">
-                                                    <div className="flex items-baseline justify-between">
-                                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Objective Breakdown</span>
-                                                        <span className="text-[10px] font-bold text-muted-foreground/40 tracking-wide">Total: {Math.round(total).toLocaleString()}</span>
+                                                    <div className="flex flex-col gap-1">
+                                                        <div className="flex items-baseline justify-between">
+                                                            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Objective Breakdown</span>
+                                                            <span className="text-[10px] font-bold text-muted-foreground/40 tracking-wide">Total: {Math.round(total).toLocaleString()}</span>
+                                                        </div>
+                                                        {/* Bug 2 fix: clarify these are penalty magnitudes, not priority weights.
+                                                            The solver optimises in strict lexicographic tiers, so categories in
+                                                            different tiers are never traded off against each other — presenting
+                                                            them as competing percentages of one total would imply a false ranking. */}
+                                                        <p className="text-[10px] leading-snug text-muted-foreground/50">
+                                                            Share of total penalty magnitude by category — not priority weights. The solver optimises in fixed tiers: coverage » wellbeing » cost.
+                                                        </p>
                                                     </div>
                                                     <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted/30">
                                                         {sorted.map(([cat, v]) => (
@@ -804,7 +832,10 @@ export function AutoSchedulerModal({
                                                             <div key={cat} className="flex items-center gap-2 min-w-0">
                                                                 <span className={`${colorOf(cat)} h-2 w-2 rounded-sm shrink-0`} />
                                                                 <span className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-wide truncate">{labelOf(cat)}</span>
-                                                                <span className="text-[10px] font-black text-foreground/90 ml-auto tabular-nums">{((Math.abs(v) / total) * 100).toFixed(0)}%</span>
+                                                                <span
+                                                                    className="text-[10px] font-black text-foreground/90 ml-auto tabular-nums"
+                                                                    title={`${labelOf(cat)}: ${((Math.abs(v) / total) * 100).toFixed(0)}% of total penalty magnitude — not a priority weight`}
+                                                                >{((Math.abs(v) / total) * 100).toFixed(0)}%</span>
                                                                 <span className="text-[10px] font-bold text-muted-foreground/50 tabular-nums shrink-0">{fmtValue(cat, v)}</span>
                                                             </div>
                                                         ))}
