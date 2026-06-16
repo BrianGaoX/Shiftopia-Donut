@@ -77,7 +77,7 @@ def make_employee(
     level: int = 0,
     is_student: bool = False,
     visa_limit: int = 2880,
-    role_id: str | None = None,
+    contracted_role_ids: list[str] | None = None,
     skill_ids: list[str] | None = None,
     license_ids: list[str] | None = None,
     existing_shifts: list[ExistingShiftInput] | None = None,
@@ -86,7 +86,7 @@ def make_employee(
 ) -> EmployeeInput:
     return EmployeeInput(
         id=eid, name=f"Emp-{eid}",
-        role_id=role_id,
+        contracted_role_ids=contracted_role_ids or ["role-A"],
         employment_type=employment_type, hourly_rate=hourly_rate,
         min_contract_minutes=min_contract_minutes,
         max_weekly_minutes=max_weekly_minutes,

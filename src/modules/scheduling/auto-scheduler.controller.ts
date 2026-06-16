@@ -50,7 +50,20 @@ import type {
     UncoveredAudit,
     CapacityCheck,
     CapacityDayBreakdown,
+    PillarScores,
+    BindingConstraint,
+    ParetoAlternative,
+    AssignmentRationale,
 } from './types';
+
+// B1 — Single-mode policy. The autoscheduler no longer exposes cost/fatigue/
+// fairness sliders: the solver optimises a fixed lexicographic priority
+// (coverage » guardrails » cost, see model_builder.py). Weights are sent only
+// because the wire schema requires them; under lexicographic tiers they are
+// cross-tier-irrelevant and pinned to the calibrated 1.0× defaults.
+const SINGLE_MODE_STRATEGY: OptimizerStrategy = {
+    fatigue_weight: 50, fairness_weight: 50, cost_weight: 50, coverage_weight: 100,
+};
 
 // Default per-employee daily working-minute cap used by the capacity pre-check
 // when employee.max_daily_minutes is not supplied. 10h = 600m.
@@ -100,6 +113,10 @@ export interface AutoSchedulerInput {
      * no write-back) — the feature is purely additive.
      */
     organizationId?: string;
+    /** B4 — when true, the solver also returns Pareto "what-if" alternatives
+     *  (cheapest / most-balanced) for the trade-off explorer. Adds solve time,
+     *  so the UI requests it explicitly. */
+    computeAlternatives?: boolean;
 }
 
 export interface CommitResult {
@@ -245,13 +262,16 @@ async function greedyFallback(
         // Try employees in order of highest score
         const sorted = candidateScores
             .filter(c => {
-                // HC-Skill (Pre-filter to avoid network call). Treat
-                // missing level data as 0 on both sides — never silently
-                // exclude an employee because their level field wasn't
-                // populated upstream.
-                const empLevel = c.emp.level ?? 0;
-                const shiftLevel = shift.level ?? 0;
-                if (empLevel < shiftLevel) return false;
+                // Role-set eligibility — mirrors the solver's employee_eligible
+                // and the manual/bulk R10 rule: an employee may work a shift only
+                // if they hold a contract for the shift's role. (Replaces the old
+                // numeric level-hierarchy gate, which let any higher-level person
+                // take lower-level work and diverged from the solver.) Skip when
+                // the shift carries no role requirement.
+                if (shift.role_id) {
+                    const roles = c.emp.contracted_role_ids ?? [];
+                    if (!roles.includes(shift.role_id)) return false;
+                }
 
                 // HC-EmploymentType: kept as a SOFT preference upstream in
                 // the optimizer (see SC-1 Employment Isolation). Don't
@@ -269,10 +289,10 @@ async function greedyFallback(
         for (const candidate of sorted) {
             const { emp } = candidate;
             
-            // Skill Alignment Penalty: small penalty for senior doing junior work
-            const levelGap = (emp.level ?? 0) - (shift.level ?? 0);
-            const alignmentPenalty = levelGap > 0 ? levelGap * 50 : 0;
-            const finalScore = candidate.score - alignmentPenalty;
+            // No overqualification penalty (single-mode policy): holding a
+            // role's contract makes that shift a legitimate assignment, so a
+            // multi-role employee is not penalised for taking a lower role.
+            const finalScore = candidate.score;
 
             const existingV8ShiftIds = assignedByEmployee.get(emp.id) ?? [];
             const candidateIds = [...existingV8ShiftIds, shift.id];
@@ -538,6 +558,7 @@ export class AutoSchedulerController {
                 id: e.id,
                 name: e.name,
                 contract_type: e.contract_type,
+                contracted_role_ids: e.contracted_role_ids ?? [],
 
                 hourly_rate: e.remuneration_rate ?? (isFT ? 25.65 : isPT ? 25.65 : 32.06),
                 // Scale limits by the number of weeks in the request to support averaging
@@ -571,6 +592,11 @@ export class AutoSchedulerController {
         let validatedProposals: ValidatedProposal[] = [];
         let usedFallback = false;
         let optimizerObjectiveBreakdown: Record<string, number> | null = null;
+        // B3/B5 — single-mode transparency, forwarded to the UI.
+        let optimizerPillars: PillarScores | null = null;
+        let optimizerBinding: BindingConstraint[] | null = null;
+        let optimizerAlternatives: ParetoAlternative[] | null = null;
+        let optimizerRationaleByShift: Record<string, AssignmentRationale> | undefined;
 
         // ── Layer 2: Call optimizer (with fallback) ───────────────────────────
         // Auto-scale the solver budget with problem size. Preprocess time
@@ -597,10 +623,12 @@ export class AutoSchedulerController {
                 shifts: optimizerShifts,
                 employees: optimizerEmployees,
                 constraints: input.constraints ?? { min_rest_minutes: 600, relax_constraints: false },
-                strategy: input.strategy ?? { fatigue_weight: 50, fairness_weight: 50, cost_weight: 50, coverage_weight: 100 },
+                // B1 — single-mode: always send the pinned policy (no sliders).
+                strategy: SINGLE_MODE_STRATEGY,
                 solver_params: {
                     max_time_seconds: solverBudget,
                     num_workers: input.numWorkers ?? 8,
+                    compute_alternatives: input.computeAlternatives ?? false,
                 },
             };
 
@@ -609,6 +637,15 @@ export class AutoSchedulerController {
             optimizerStatus = optimizeResponse.status;
             solveTimeMs = optimizeResponse.solve_time_ms;
             optimizerObjectiveBreakdown = optimizeResponse.objective_breakdown ?? null;
+            // B3/B5/B4 — capture single-mode transparency for the UI.
+            optimizerPillars = optimizeResponse.pillars ?? null;
+            optimizerBinding = optimizeResponse.binding_constraints ?? null;
+            optimizerAlternatives = optimizeResponse.alternatives ?? null;
+            optimizerRationaleByShift = Object.fromEntries(
+                optimizeResponse.assignments
+                    .filter(a => a.rationale)
+                    .map(a => [a.shift_id, a.rationale as AssignmentRationale]),
+            );
 
             if (optimizerStatus === 'INFEASIBLE' || optimizerStatus === 'UNKNOWN' || optimizerStatus === 'MODEL_INVALID') {
                 // Optimizer cannot find a solution → fall back to greedy
@@ -760,6 +797,12 @@ export class AutoSchedulerController {
             // because greedyFallback never calls the optimizer.
             objective_breakdown: optimizerObjectiveBreakdown,
             organizationId: input.organizationId,
+            // B3/B5/B4 — single-mode transparency for the scorecard, constraint
+            // banner, trade-off explorer, and per-shift "why" panel.
+            pillars: optimizerPillars,
+            bindingConstraints: optimizerBinding,
+            alternatives: optimizerAlternatives,
+            rationaleByShift: optimizerRationaleByShift,
         };
 
 

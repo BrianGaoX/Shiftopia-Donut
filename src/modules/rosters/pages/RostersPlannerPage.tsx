@@ -1258,6 +1258,7 @@ const NewRostersPage: React.FC = () => {
       <RosterModals
         ref={modalsRef}
         organizationId={selectedOrganizationId || undefined}
+        queryFilters={queryFilters}
         selectedV8ShiftIds={selectedV8ShiftIdsArray}
         employees={employees.map((e) => ({
           id: e.id,
@@ -1281,6 +1282,7 @@ const NewRostersPage: React.FC = () => {
           name: `${e.first_name} ${e.last_name}`.trim() || e.id,
           contracted_weekly_hours: (e as any).contracted_weekly_hours,
           contract_type: (e as any).contract_type,
+          contracted_role_ids: (e as any).contracted_role_ids,
         }))}
         onShiftSaved={handleShiftCreated}
         onAssignComplete={() => { clearSelection(); setBulkModeActive(false); }}

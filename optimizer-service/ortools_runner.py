@@ -136,6 +136,7 @@ class EmployeeReq(BaseModel):
     id: str
     name: str
     role_id: Optional[str] = None
+    contracted_role_ids: list[str] = Field(default_factory=list)
     employment_type: str = 'Casual'
     hourly_rate: float = 25.0
     max_weekly_minutes: int = 2400
@@ -186,6 +187,9 @@ class SolverParamsReq(BaseModel):
     # Surface the solver's verbose search log when debugging a stuck
     # problem. Off by default — produces ~MB of output per second.
     log_search: bool = False
+    # B4 — also compute Pareto "what-if" alternatives (cheapest / most-balanced)
+    # for the trade-off explorer. Off by default (adds extra solves).
+    compute_alternatives: bool = False
 
 
 class OptimizeReq(BaseModel):
@@ -213,6 +217,8 @@ class AssignmentRes(BaseModel):
     employee_id: str
     employment_type: str
     cost: float
+    # B5 — per-assignment "why this person" factors (optional).
+    rationale: Optional[dict] = None
 
 
 class OptimizeRes(BaseModel):
@@ -224,6 +230,12 @@ class OptimizeRes(BaseModel):
     proven_optimal: bool
     debug: DebugMetricsRes
     objective_breakdown: Optional[dict[str, int]] = None
+    # B3/B5 — single-mode transparency for the UI.
+    tier_values: Optional[dict[str, float]] = None
+    pillars: Optional[dict] = None
+    binding_constraints: Optional[list[dict]] = None
+    # B4 — Pareto "what-if" alternatives for the trade-off explorer.
+    alternatives: Optional[list[dict]] = None
 
 
 # ---- /audit (server-side eligibility audit) -------------------------------
@@ -489,7 +501,9 @@ async def optimize(
     return OptimizeRes(
         status=output.status,
         assignments=[
-            AssignmentRes(shift_id=a.shift_id, employee_id=a.employee_id, employment_type=a.employment_type, cost=a.cost)
+            AssignmentRes(shift_id=a.shift_id, employee_id=a.employee_id,
+                          employment_type=a.employment_type, cost=a.cost,
+                          rationale=getattr(a, 'rationale', None))
             for a in output.assignments
         ],
         unassigned_shift_ids=output.unassigned_shift_ids,
@@ -508,6 +522,10 @@ async def optimize(
             coverage_rate=round(coverage_rate, 3),
         ),
         objective_breakdown=output.objective_breakdown,
+        tier_values=getattr(output, 'tier_values', None),
+        pillars=getattr(output, 'pillars', None),
+        binding_constraints=getattr(output, 'binding_constraints', None),
+        alternatives=getattr(output, 'alternatives', None),
     )
 
 
@@ -547,8 +565,9 @@ def _explain_eligibility(
         reasons.append('UNAVAILABLE_DATE')
 
     # Role / skill / license
-    if c.enforce_role_match and shift.role_id and emp.role_id and emp.role_id != shift.role_id:
-        reasons.append('ROLE_MISMATCH')
+    if c.enforce_role_match and shift.role_id:
+        if shift.role_id not in emp.contracted_role_ids:
+            reasons.append('ROLE_MISMATCH')
     if c.enforce_skill_match and shift.required_skill_ids:
         if not set(shift.required_skill_ids).issubset(set(emp.skill_ids)):
             reasons.append('QUALIFICATION_MISSING')
@@ -563,11 +582,7 @@ def _explain_eligibility(
         if not c.relax_constraints:
             reasons.append('REST_GAP')
 
-    # Skill hierarchy
-    emp_level = emp.level if emp.level is not None else 0
-    shift_level = getattr(shift, 'level', 0) or 0
-    if emp_level < shift_level:
-        reasons.append('LEVEL_TOO_LOW')
+
 
     # Min engagement floor
     if shift.duration_minutes < 60:

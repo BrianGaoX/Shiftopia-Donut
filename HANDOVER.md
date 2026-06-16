@@ -18,8 +18,46 @@ enterprise upgrades. Three feature lines are in flight:
 | **F1** | ✅ Functional + hardened (2026-06-16) | Reads debts → solver SC-11 (now incl. **SC-11b hours-fairness** from `total_hours`/`overtime_minutes`); writes back incrementally on commit **and rebuilds org-wide post-publish** (`usePublishRoster`); table now has **org-scoped RLS** (cert-based). |
 | **F3** | ✅ Now wired in the LIVE path | The user's original F3 was in a **dead module** (see below). Re-implemented in the live bid auto-pick loop (`OpenBidsView`): orders bidders by `denied_preferences` debt before "first compliance-clear wins". |
 
-**Gates (all green):** `tsc` 0 · vitest **529** · optimizer pytest **60** · ml pytest **60** · `npm run build` ✓
-_(optimizer 57 → 60: +3 SC-11b hours-fairness regression tests added 2026-06-16.)_
+**Gates (all green):** `tsc` 0 · vitest **529** · optimizer pytest **69** · ml pytest **60** · `npm run build` ✓
+_(optimizer 57 → 69: +3 SC-11b hours-fairness, +2 lexicographic, +2 pillar/rationale, +1 Pareto, +4 role-set distribution.)_
+
+## Role-set eligibility (2026-06-16) — replaces numeric level hierarchy
+The autoscheduler's eligibility was a numeric **level hierarchy** (`emp_level >= shift_level` → any higher-level person could take lower-level shifts) **and the level/role data was never even plumbed**, so role eligibility was effectively OFF. Now it's **role-set membership**, matching the manual/bulk R10 rule (`eligibility.service.ts` / `incremental-validator.ts`):
+- **Eligibility = the shift's `role_id` ∈ the employee's active contracted role_ids** (`user_contracts`), gated by `enforce_role_match` (default true). No level gate; remuneration level is a pay attribute, not eligibility. Multi-contract staff (e.g. holds TL+TM) are eligible for *all* held roles; a TM-only person only for TM. Distribution across shared roles is handled by lexicographic coverage(T1)+fairness(T2) — the overqual penalty was **removed** (it fought this).
+- **New wire field `contracted_role_ids: string[]`** on `EmployeeInput`/`EmployeeReq`/TS `OptimizerEmployee` + snapshot. Populated by `EligibilityService.getEligibleEmployees` (already returns it) → `useEmployees` → `RostersPlannerPage` → modal → controller `?? []`.
+- **Greedy fallback** (`auto-scheduler.controller.ts`) was using the OLD level gate (two-engine divergence) — fixed to the same role-set check + dropped its alignment penalty.
+- Audit endpoint emits **`ROLE_MISMATCH`** (not the retired `LEVEL_TOO_LOW`).
+- **UI:** the Min-Rest-Hours input and Relax-Blockers toggle were removed (rest is always the 10h EBA default; relax not exposed). Solver keeps hard defaults (600m rest, no relax).
+
+## Single-mode autoscheduler (2026-06-16) — the big change
+The cost/fatigue/fairness **sensitivity sliders are GONE**. The solver now runs ONE
+fixed **lexicographic** policy and the UI *shows* the trade-off instead of asking the
+manager to tune it.
+- **Solver (`model_builder.py`):** objective is no longer a single weighted `Minimize`.
+  `_add_objective()` builds three tiers (`self._objective_tiers`); `_solve()` optimises
+  them in order, locking each at its optimum before the next: **Tier 1 coverage+legal**
+  (`coverage`,`relaxed_violations`,`other`) » **Tier 2 guardrails** (fatigue, fairness,
+  balance, quality) » **Tier 3 cost**. `tier_profile` ('balanced'|'cheapest'|'fairest')
+  selects the ordering — used only to generate Pareto alternatives. Convex fairness band
+  added (peak-load + steeper band past 1.25× fair share); fatigue was already 2-band convex.
+  Per-tier wall/det budget is `total / n_tiers`.
+- **Transparency payload (B5):** `OptimizerOutput` now carries `pillars`
+  (coverage/cost/fairness/fatigue scorecard from the *solution*), `binding_constraints`
+  (why shifts uncovered), `tier_values`, and per-assignment `rationale` ("why this person").
+- **Pareto (B4):** `solver_params.compute_alternatives` → re-solves 'cheapest'/'fairest'
+  via fresh sub-builders (recursion-guarded) and returns each one's pillars as `alternatives`.
+  Off by default; the modal sets it true.
+- **Wire:** all of the above mirrored on `ortools_runner.py` (`SolverParamsReq`,
+  `AssignmentRes.rationale`, `OptimizeRes.*`), the TS `types.ts`, and `auto-scheduler.controller.ts`
+  (pins `SINGLE_MODE_STRATEGY`, threads `computeAlternatives`, maps response → `AutoSchedulerResult`).
+  Schema snapshot regenerated (`scripts/dump_schema.py`); both schema-contract gates pass.
+- **UI (`AutoSchedulerModal.tsx`):** sliders + presets + their localStorage removed (kept
+  Min-Rest-Hours + relax-constraints as operational limits). New components:
+  `AutoSchedulerInsights.tsx` (four-pillar scorecard + constraint banner + **recharts radar**
+  trade-off explorer) and `WhyThisPerson.tsx` (hover-card rationale on each proposal row).
+- **To revisit:** alternatives ~2-3× the solve time (acceptable; behind the flag). The pillar
+  fairness/fatigue scores are heuristic 0-100 indices — tune thresholds in `_compute_pillars`
+  if they read too harsh/lax. AI/LLM rationale (Phase 3 / S1) was scoped but NOT built.
 
 ## Architecture map (the non-obvious parts)
 

@@ -44,6 +44,7 @@ export interface EligibleEmployee {
     department_name?: string;
     sub_department_name?: string;
     contract_type?: 'FT' | 'PT' | 'CASUAL' | null;
+    contracted_role_ids?: string[];
     contracted_weekly_hours?: number;
 }
 
@@ -216,6 +217,7 @@ export const EligibilityService = {
                                   displayContract?.employment_status === 'Part-Time' ? 'PT' :
                                   displayContract?.employment_status === 'Casual' ? 'CASUAL' :
                                   displayContract?.employment_status === 'Flexible Part-Time' ? 'PT' : null,
+                    contracted_role_ids: Array.from(new Set(activeContracts.map((c: any) => c.role_id).filter(Boolean))),
                     contracted_weekly_hours: displayContract?.contracted_weekly_hours ?? 38
                 } as EligibleEmployee);
             });

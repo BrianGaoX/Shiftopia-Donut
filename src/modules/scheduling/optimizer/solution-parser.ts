@@ -35,6 +35,7 @@ export interface EmployeeMeta {
     id: string;
     name: string;
     contract_type?: 'FT' | 'PT' | 'CASUAL' | null;
+    contracted_role_ids?: string[];
     contracted_weekly_hours?: number;
     remuneration_rate?: number;
     max_weekly_minutes?: number;

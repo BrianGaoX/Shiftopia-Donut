@@ -648,3 +648,107 @@ def test_sc11b_no_terms_when_no_hours_debt():
     out = solve([weekday], [e])
     assert out.status in ("OPTIMAL", "FEASIBLE")
     assert len(out.assignments) == 1
+
+
+# ---------------------------------------------------------------------------
+# B3 — Single-mode lexicographic objective. Coverage >> guardrails (fatigue /
+# fairness) >> cost, optimised in strict priority order. These tests are the
+# contract for the "one mode" autoscheduler: a cheaper roster can never be
+# bought at the price of a blown guardrail.
+# ---------------------------------------------------------------------------
+
+def test_lexicographic_guardrail_outranks_cost():
+    """The fairness/fatigue guardrail tier is optimised BEFORE cost, so the
+    solver spreads work across the pool even when concentrating it all on the
+    cheapest employee would be cheaper. Two far-apart shifts, both coverable by a
+    cheap and an expensive employee: a cost-first solver hands both to the cheap
+    one; the lexicographic guardrail tier must split them one each."""
+    shifts = [
+        make_shift("s1", "2026-05-11", "09:00", "17:00"),  # Mon
+        make_shift("s2", "2026-05-14", "09:00", "17:00"),  # Thu — days apart, no rest conflict
+    ]
+    cheap = make_employee("cheap", hourly_rate=20.0)
+    expensive = make_employee("expensive", hourly_rate=40.0)
+
+    out = solve(shifts, [cheap, expensive])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 2
+    assigned = {a.shift_id: a.employee_id for a in out.assignments}
+    assert set(assigned.values()) == {"cheap", "expensive"}, (
+        "Lexicographic guardrail tier should spread work across the pool before "
+        f"cost is considered; got {assigned}"
+    )
+
+
+def test_lexicographic_coverage_outranks_everything():
+    """Coverage is the top tier: every coverable shift must be filled, and cost
+    minimisation (bottom tier) can never choose to leave one uncovered to save
+    money. One shift, one (expensive) eligible employee → it must still be
+    covered."""
+    out = solve([make_shift("s1")], [make_employee("pricey", hourly_rate=99.0)])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+    assert len(out.unassigned_shift_ids) == 0
+
+
+# ---------------------------------------------------------------------------
+# B5 — transparency payload (pillars + per-assignment rationale). Drives the
+# single-mode scorecard and the "why this person" UI.
+# ---------------------------------------------------------------------------
+
+def test_b5_pillars_reported_on_solve():
+    """Every solve returns a four-pillar scorecard derived from the solution."""
+    shifts = [make_shift("s1", "2026-05-11", "09:00", "17:00"),
+              make_shift("s2", "2026-05-14", "09:00", "17:00")]
+    out = solve(shifts, [make_employee("a"), make_employee("b")])
+    assert out.pillars is not None
+    p = out.pillars
+    assert p["coverage"]["score"] == 100.0
+    assert p["cost"]["total"] > 0
+    assert 0 <= p["fairness"]["score"] <= 100
+    assert 0 <= p["fatigue"]["score"] <= 100
+    # Two far-apart shifts, two employees → guardrail spreads one each → perfectly
+    # even load → top fairness score.
+    assert p["fairness"]["employees_used"] == 2
+    assert p["fairness"]["score"] == 100
+
+
+def test_b5_assignment_rationale_present():
+    """Each assignment carries 'why this person' factors."""
+    out = solve([make_shift("s1")], [make_employee("cheap", hourly_rate=20.0),
+                                     make_employee("pricey", hourly_rate=40.0)])
+    assert len(out.assignments) == 1
+    r = out.assignments[0].rationale
+    assert r is not None
+    assert r["eligible_count"] == 2
+    assert r["cost_rank"] == 1           # cost tier picks the cheapest eligible
+    assert r["cheapest_eligible"] is True
+
+
+# ---------------------------------------------------------------------------
+# B4 — Pareto "what-if" alternatives for the trade-off explorer.
+# ---------------------------------------------------------------------------
+
+def test_b4_alternatives_computed_when_requested():
+    """With compute_alternatives, the solve returns Pareto corners whose pillar
+    scorecards bracket the chosen roster — the cheapest alternative never costs
+    more than the balanced one."""
+    from model_builder import (
+        ScheduleModelBuilder, OptimizerInput, OptimizerConstraints, SolverParameters,
+    )
+    shifts = [make_shift("s1", "2026-05-11", "09:00", "17:00"),
+              make_shift("s2", "2026-05-14", "09:00", "17:00")]
+    emps = [make_employee("cheap", hourly_rate=20.0),
+            make_employee("pricey", hourly_rate=40.0)]
+    data = OptimizerInput(
+        shifts=shifts, employees=emps,
+        constraints=OptimizerConstraints(enforce_role_match=False, enforce_skill_match=False),
+        solver_params=SolverParameters(max_time_seconds=2.0, num_workers=2,
+                                       compute_alternatives=True),
+    )
+    out = ScheduleModelBuilder(data).build_and_solve()
+    assert out.alternatives is not None and len(out.alternatives) >= 1
+    keys = {a["key"] for a in out.alternatives}
+    assert "cheapest" in keys
+    cheapest = next(a for a in out.alternatives if a["key"] == "cheapest")
+    assert cheapest["pillars"]["cost"]["total"] <= out.pillars["cost"]["total"] + 0.01

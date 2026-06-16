@@ -15,8 +15,10 @@
     "availability_overrides",
     "availability_slots",
     "contract_weekly_minutes",
+    "contracted_role_ids",
     "employment_type",
     "existing_shifts",
+    "fairness_debts",
     "has_availability_data",
     "hourly_rate",
     "id",
@@ -60,6 +62,7 @@
     "unpaid_break_minutes"
   ],
   "SolverParams": [
+    "compute_alternatives",
     "enable_greedy_hint",
     "log_search",
     "max_time_seconds",

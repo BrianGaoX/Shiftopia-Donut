@@ -40,7 +40,7 @@ Preprocessing pipeline:
 from __future__ import annotations
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from ortools.sat.python import cp_model
@@ -107,6 +107,7 @@ class EmployeeInput:
     id: str
     name: str
     role_id: Optional[str] = None
+    contracted_role_ids: list[str] = field(default_factory=list)
     employment_type: str = 'Casual'
     hourly_rate: float = 25.0
     max_weekly_minutes: int = 2400
@@ -176,6 +177,10 @@ class SolverParameters:
     num_workers: int = 8
     enable_greedy_hint: bool = True
     log_search: bool = False
+    # B4 — when true, build_and_solve() also computes Pareto "what-if"
+    # alternatives (cheapest / most-balanced) for the trade-off explorer UI.
+    # Off by default so the normal solve path is never slowed.
+    compute_alternatives: bool = False
 
 
 @dataclass
@@ -193,6 +198,11 @@ class AssignmentProposal:
     employee_id: str
     employment_type: str
     cost: float
+    # B5 — per-assignment explainability ("why this person"). Optional so older
+    # callers/tests are unaffected. Keys: cheapest_eligible (bool), cost_rank
+    # (1=cheapest of the eligible pool), eligible_count, fairness_debt (sum of
+    # the employee's positive ledger debts), qual_gap (emp.level - shift.level).
+    rationale: Optional[dict] = None
 
 
 @dataclass
@@ -217,6 +227,12 @@ class OptimizerOutput:
     proven_optimal: bool
     metrics: OptimizerDebugMetrics
     objective_breakdown: Optional[dict[str, int]] = None
+    # B3/B5 — single-mode transparency payload for the UI.
+    tier_values: Optional[dict[str, float]] = None        # per-tier objective optima
+    pillars: Optional[dict] = None                         # coverage/cost/fairness/fatigue scorecard
+    binding_constraints: Optional[list[dict]] = None       # why shifts were left uncovered
+    # B4 — Pareto "what-if" alternatives (each: {key,label,pillars}).
+    alternatives: Optional[list[dict]] = None
 
 
 # =============================================================================
@@ -368,8 +384,9 @@ def employee_eligible(
 ) -> bool:
     if shift.shift_date in emp.unavailable_dates:
         return False
-    if c.enforce_role_match and shift.role_id and emp.role_id and emp.role_id != shift.role_id:
-        return False
+    if c.enforce_role_match and shift.role_id:
+        if shift.role_id not in emp.contracted_role_ids:
+            return False
     if c.enforce_skill_match and shift.required_skill_ids:
         if not set(shift.required_skill_ids).issubset(set(emp.skill_ids)):
             return False
@@ -383,14 +400,7 @@ def employee_eligible(
         if not c.relax_constraints:
             return False
     
-    # HC-5b: Skill Hierarchy. Treat missing level data on either side as 0 so
-    # an unmapped employee/shift never silently filters out the entire pool.
-    # Upstream code is supposed to populate this, but defensive defaults
-    # prevent a single missing field from collapsing the model to INFEASIBLE.
-    emp_level = emp.level if emp.level is not None else 0
-    shift_level = getattr(shift, 'level', 0) or 0
-    if emp_level < shift_level:
-        return False
+
 
     # HC-6: Minimum Engagement Pre-filter
     # Note: keep this loose by default — many valid rosters use 1-2h
@@ -539,7 +549,6 @@ class ScheduleModelBuilder:
             'fatigue': [],
             'coverage': [],
             'continuity': [],
-            'overqual': [],
             'employment_mix': [],
             'relaxed_violations': [],
             'availability': [],
@@ -547,6 +556,13 @@ class ScheduleModelBuilder:
             'longitudinal_fairness': [],  # SC-11: F1 cross-roster fairness ledger
             'other': [],
         }
+        # B3 — lexicographic objective tiers, populated by _add_objective() and
+        # optimised in strict priority order by _solve(). See _add_objective.
+        self._objective_tiers: list[tuple[str, object]] = []
+        # B4 — tier ordering profile. 'balanced' is the live single-mode policy
+        # (coverage > guardrails > cost); 'cheapest' / 'fairest' are used only to
+        # generate Pareto "what-if" alternatives for the UI trade-off explorer.
+        self.tier_profile: str = 'balanced'
 
     # -- Objective breakdown ---------------------------------------------------
 
@@ -571,6 +587,125 @@ class ScheduleModelBuilder:
                         total += term
             result[category] = total
         return result
+
+    # -- B5: transparency helpers ---------------------------------------------
+
+    @staticmethod
+    def _assignment_cost_cents(emp: 'EmployeeInput', shift: 'ShiftInput') -> int:
+        """Labour cost in cents for emp working shift, incl. award penalties.
+        Mirrors the SC-1 cost formula so cost_rank in the rationale is faithful."""
+        rate = emp.hourly_rate
+        if shift.is_public_holiday:
+            rate *= 2.50
+        elif shift.is_sunday:
+            rate *= 1.50
+        return int(round((shift.duration_minutes / 60.0) * rate * 100))
+
+    def _assignment_rationale(self, emp: 'EmployeeInput', shift: 'ShiftInput') -> dict:
+        """Per-assignment 'why this person' factors for the UI."""
+        eligible = self._eligibility_map.get(shift.id, [])
+        ranked = sorted(eligible, key=lambda e: self._assignment_cost_cents(e, shift))
+        cost_rank = next((i + 1 for i, e in enumerate(ranked) if e.id == emp.id), None)
+        debts = getattr(emp, 'fairness_debts', {}) or {}
+        fairness_debt = round(sum(
+            v for k, v in debts.items()
+            if k != 'denied_preferences' and isinstance(v, (int, float))
+        ), 2)
+        qual_gap = (emp.level or 0) - (getattr(shift, 'level', 0) or 0)
+        return {
+            'cost_rank': cost_rank,
+            'eligible_count': len(eligible),
+            'cheapest_eligible': cost_rank == 1,
+            'fairness_debt': fairness_debt,
+            'qual_gap': qual_gap,
+        }
+
+    def _compute_pillars(self, assignments: list, unassigned: list) -> dict:
+        """Four-pillar scorecard (Coverage / Cost / Fairness / Fatigue) derived
+        from the actual solution — interpretable values for the UI, not raw
+        objective penalties."""
+        shifts = self.data.shifts
+        total = len(shifts)
+        covered = total - len(unassigned)
+        coverage_score = round(100.0 * covered / total, 1) if total else 100.0
+
+        total_cost = round(sum(a.cost for a in assignments), 2)
+
+        dur = {s.id: s.duration_minutes for s in shifts}
+        mins_by_emp: dict[str, float] = {}
+        for a in assignments:
+            mins_by_emp[a.employee_id] = mins_by_emp.get(a.employee_id, 0) + dur.get(a.shift_id, 0)
+        loads = list(mins_by_emp.values())
+        used = len(loads)
+
+        # Fairness = workload evenness across the people used. Coefficient of
+        # variation 0 (perfectly even) → 100; higher spread → lower score.
+        if loads and used > 1 and sum(loads) > 0:
+            mean = sum(loads) / used
+            sd = (sum((x - mean) ** 2 for x in loads) / used) ** 0.5
+            cv = sd / mean if mean else 0.0
+            fairness_score = max(0, round(100 * (1 - min(1.0, cv))))
+            spread = round(max(loads) - min(loads))
+        else:
+            fairness_score, spread = 100, 0
+
+        # Fatigue = how many people pushed into the amber/critical effective-hours
+        # bands (mirrors SC-7 thresholds: 1200 / 1800 effective minutes).
+        eff = {s.id: _calculate_effective_minutes(s) for s in shifts}
+        init = {e.id: e.initial_fatigue_score * 60 for e in self.data.employees}
+        eff_by_emp: dict[str, float] = {}
+        for a in assignments:
+            eff_by_emp[a.employee_id] = eff_by_emp.get(a.employee_id, 0) + eff.get(a.shift_id, 0)
+        amber = critical = 0
+        for emp_id, em in eff_by_emp.items():
+            te = em + init.get(emp_id, 0)
+            if te > 1800:
+                critical += 1
+            elif te > 1200:
+                amber += 1
+        fatigue_score = max(0, round(100 - (amber * 15 + critical * 40)))
+
+        return {
+            'coverage': {'score': coverage_score, 'covered': covered, 'total': total},
+            'cost': {'total': total_cost, 'currency': 'AUD',
+                     'avg_per_shift': round(total_cost / covered, 2) if covered else 0.0},
+            'fairness': {'score': fairness_score, 'employees_used': used,
+                         'spread_minutes': spread,
+                         'peak_minutes': round(max(loads)) if loads else 0},
+            'fatigue': {'score': fatigue_score, 'amber': amber, 'critical': critical},
+        }
+
+    def _compute_binding(self, unassigned: list) -> list:
+        """Explain why each shift was left uncovered (drives the U5 banner)."""
+        out = []
+        for sid in unassigned:
+            n = len(self._eligibility_map.get(sid, []))
+            reason = ('No qualified or available employee for this shift'
+                      if n == 0 else
+                      f'All {n} eligible employees were already committed '
+                      f'(overlap, rest-gap, or hours limits)')
+            out.append({'shift_id': sid, 'eligible_count': n, 'reason': reason})
+        return out
+
+    def _compute_alternatives(self) -> list:
+        """B4 — Pareto 'what-if' alternatives for the trade-off explorer. Re-solve
+        the SAME problem under different tier priorities on a reduced budget and
+        return each one's pillar scorecard. compute_alternatives is forced off on
+        the sub-solves so this never recurses."""
+        alts: list[dict] = []
+        budget = max(0.3, self.data.solver_params.max_time_seconds * 0.5)
+        for key, label in [('cheapest', 'Lowest cost'), ('fairest', 'Most balanced')]:
+            try:
+                sub_params = replace(self.data.solver_params,
+                                     compute_alternatives=False, max_time_seconds=budget)
+                sub = type(self)(replace(self.data, solver_params=sub_params))
+                sub.tier_profile = key
+                out = sub.build_and_solve()
+                if out.pillars and out.status in ('OPTIMAL', 'FEASIBLE'):
+                    alts.append({'key': key, 'label': label, 'pillars': out.pillars})
+            except Exception as exc:  # never let an alternative break the main solve
+                logger.warning('[ModelBuilder] alternative %s failed: %s', key, exc)
+        return alts
 
     # -- Public entry ----------------------------------------------------------
 
@@ -653,6 +788,15 @@ class ScheduleModelBuilder:
         )
 
         output.metrics = self._metrics
+
+        # B4 — Pareto "what-if" alternatives for the trade-off explorer. Only on
+        # explicit request, only for the live 'balanced' profile (so the
+        # sub-solves below don't themselves spawn alternatives).
+        if (self.data.solver_params.compute_alternatives
+                and self.tier_profile == 'balanced'
+                and output.status in ('OPTIMAL', 'FEASIBLE')):
+            output.alternatives = self._compute_alternatives()
+
         return output
 
     # -- A: Eligibility filtering ----------------------------------------------
@@ -1276,7 +1420,19 @@ class ScheduleModelBuilder:
         if peak_terms:
             peak_load = self.model.NewIntVar(0, self._minute_ub, 'peak_load')
             self.model.AddMaxEquality(peak_load, peak_terms)
+            # B2 — CONVEX fairness guardrail. A gentle penalty on the busiest
+            # employee's load, PLUS a steeper second band once they pull well
+            # past the pool's fair share. The escalating marginal cost is what
+            # makes single-mode auto-spread work without a slider: each extra
+            # shift piled on the same person is progressively more expensive than
+            # giving it to someone lighter, so the solver levels the load itself.
             _t(int(5 * fair_mult) * peak_load, 'fairness')
+            n_emp_fair = max(1, len(peak_terms))
+            fair_share = int(self._total_shift_minutes / n_emp_fair)
+            severe_threshold = int(1.25 * fair_share)
+            peak_severe = self.model.NewIntVar(0, self._minute_ub, 'peak_severe')
+            self.model.AddMaxEquality(peak_severe, [peak_load - severe_threshold, 0])
+            _t(int(20 * fair_mult) * peak_severe, 'fairness')
 
         # -- SC-Alignment: Skill Hierarchy & Employment Isolation --------------
         # Pre-build dict lookups so we don't do `next(e for e in ...)` for
@@ -1289,16 +1445,7 @@ class ScheduleModelBuilder:
             emp = emp_by_id[e_id]
             shift = shift_by_id[s_id]
 
-            # SC-Alignment: Skill Overqualification (Precision Fix #4)
-            # Defensive: treat missing level as 0 on both sides so a None
-            # never propagates through arithmetic. Mirrors the same
-            # defaults applied in `employee_eligible`.
-            emp_level = emp.level if emp.level is not None else 0
-            shift_level = getattr(shift, 'level', 0) or 0
-            skill_gap = emp_level - shift_level
-            if skill_gap > 0:
-                # Small penalty per level gap to encourage tightest-fit first
-                _t(100 * skill_gap * var, 'overqual')
+
 
             # SC-1: Employment Isolation (Precision Fix #8: SOFT)
             target = getattr(shift, 'target_employment_type', None)
@@ -1604,7 +1751,47 @@ class ScheduleModelBuilder:
                 # $10M penalty per internal overlap
                 _t(1_000_000_000 * v_var, 'relaxed_violations')
 
-        self.model.Minimize(cp_model.LinearExpr.Sum(terms))
+        # -- B3: Lexicographic objective tiers --------------------------------
+        # Single-mode autoscheduler: rather than a manager-tuned weighted sum,
+        # the solver optimises three tiers in STRICT priority order (see
+        # _solve), locking each at its optimum before moving on:
+        #   Tier 1  feasibility + coverage — uncovered shifts, softened-hard
+        #           legal/contract slacks ('other'), relaxed-constraint violations.
+        #   Tier 2  guardrails — fatigue, fairness/balance, availability & quality.
+        #   Tier 3  cost — labour $, the residual tie-breaker.
+        # A cheaper roster can therefore NEVER be bought at the price of coverage
+        # or a blown fatigue/fairness guardrail. Tiers are assembled from the same
+        # per-category term buckets, so objective_breakdown() still itemises every
+        # line. ('other' holds only the workload-slack terms appended in SC-8.)
+        cat = self._term_categories
+
+        def _cat_sum(names: list[str]):
+            exprs = [t for n in names for t in cat[n]]
+            return cp_model.LinearExpr.Sum(exprs) if exprs else 0
+
+        coverage_t = _cat_sum(['coverage', 'relaxed_violations', 'other'])
+        guardrail_t = _cat_sum(['fatigue', 'fairness', 'undesirable_balance',
+                                'longitudinal_fairness', 'availability',
+                                'employment_mix', 'continuity'])
+        cost_t = _cat_sum(['cost'])
+        fairness_only_t = _cat_sum(['fairness', 'undesirable_balance',
+                                    'longitudinal_fairness'])
+
+        # tier_profile selects the priority order. 'balanced' is the live policy;
+        # the others exist only to generate Pareto "what-if" alternatives (B4).
+        if self.tier_profile == 'cheapest':
+            # Cost beats wellbeing → the cheapest coverage-feasible roster.
+            self._objective_tiers = [
+                ('coverage', coverage_t), ('cost', cost_t), ('guardrail', guardrail_t)]
+        elif self.tier_profile == 'fairest':
+            # Push balance hardest (fairness as the sole tier-2 objective).
+            self._objective_tiers = [
+                ('coverage', coverage_t), ('guardrail', fairness_only_t), ('cost', cost_t)]
+        else:  # 'balanced' — the live single-mode policy
+            self._objective_tiers = [
+                ('coverage', coverage_t), ('guardrail', guardrail_t), ('cost', cost_t)]
+        # NOTE: the objective itself is set per-tier inside _solve(); we do not
+        # call self.model.Minimize() here.
 
         # -- Search Strategy (Symmetry & Pruning) ----------------------------
         # Prioritize assigning uncovered shifts (biggest impact on objective)
@@ -1680,7 +1867,37 @@ class ScheduleModelBuilder:
         # the LNS workers, contributing to UNKNOWN time-outs on busy days.
         solver.parameters.search_branching = cp_model.AUTOMATIC_SEARCH
 
-        status_code = solver.solve(self.model)
+        # -- B3: Lexicographic (preemptive) optimisation ----------------------
+        # Optimise each tier in strict priority order, locking it at its optimum
+        # before the next is touched. The model is built once and re-solved per
+        # tier; the wall/deterministic budget is split across tiers so total
+        # solve time stays bounded. Defensive fallback to a single combined solve
+        # if tiers were never assembled.
+        import math
+        tiers = self._objective_tiers or [
+            ('all', cp_model.LinearExpr.Sum(
+                [t for lst in self._term_categories.values() for t in lst]))
+        ]
+        n_tiers = len(tiers)
+        per_tier_wall = max(0.05, params.max_time_seconds / n_tiers)
+        status_code = cp_model.UNKNOWN
+        self._tier_values: dict[str, float] = {}
+        for idx, (tier_name, tier_expr) in enumerate(tiers):
+            solver.parameters.max_time_in_seconds = per_tier_wall
+            solver.parameters.max_deterministic_time = per_tier_wall * 1000
+            self.model.Minimize(tier_expr)
+            status_code = solver.solve(self.model)
+            if status_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                # Tier 1 failing means no coverage-feasible roster exists; report
+                # that status and stop (upstream greedy fallback handles it).
+                break
+            opt_val = solver.objective_value
+            self._tier_values[tier_name] = opt_val
+            # Lock this tier at its optimum so lower-priority tiers cannot regress
+            # it. Skip the final tier and constant (empty) tiers. Objective values
+            # are integer here, so round() is exact and keeps the optimum feasible.
+            if idx < n_tiers - 1 and not isinstance(tier_expr, int):
+                self.model.Add(tier_expr <= int(round(opt_val)))
 
         STATUS = {
             cp_model.OPTIMAL:    'OPTIMAL',
@@ -1703,29 +1920,42 @@ class ScheduleModelBuilder:
                     shift = shift_map[shift_id]
                     cost = (shift.duration_minutes / 60.0) * emp.hourly_rate
                     assignments.append(AssignmentProposal(
-                        shift_id=shift_id, 
-                        employee_id=emp_id, 
+                        shift_id=shift_id,
+                        employee_id=emp_id,
                         employment_type=emp.employment_type,
-                        cost=round(cost, 2)
+                        cost=round(cost, 2),
+                        rationale=self._assignment_rationale(emp, shift),
                     ))
             for shift in self.data.shifts:
                 if solver.value(self._uncovered[shift.id]) == 1:
                     unassigned.append(shift.id)
 
         breakdown: Optional[dict[str, int]] = None
+        pillars: Optional[dict] = None
+        binding: Optional[list] = None
         if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             try:
                 breakdown = self.objective_breakdown(solver)
             except Exception as _exc:
                 logger.warning('[ModelBuilder] objective_breakdown failed: %s', _exc)
+            try:
+                pillars = self._compute_pillars(assignments, unassigned)
+                binding = self._compute_binding(unassigned)
+            except Exception as _exc:
+                logger.warning('[ModelBuilder] pillar/binding computation failed: %s', _exc)
 
         return OptimizerOutput(
             status=status,
             assignments=assignments,
             unassigned_shift_ids=unassigned,
-            objective_value=solver.objective_value if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0.0,
+            objective_value=(float(sum(breakdown.values())) if breakdown is not None
+                             else (solver.objective_value
+                                   if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0.0)),
             best_objective_bound=solver.best_objective_bound if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0.0,
             proven_optimal=(status_code == cp_model.OPTIMAL),
             metrics=self._metrics,
             objective_breakdown=breakdown,
+            tier_values=(getattr(self, '_tier_values', None) or None),
+            pillars=pillars,
+            binding_constraints=binding,
         )

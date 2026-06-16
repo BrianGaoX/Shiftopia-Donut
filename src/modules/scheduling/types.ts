@@ -58,6 +58,7 @@ export interface OptimizerEmployee {
     id: string;
     name: string;
     role_id?: string | null;
+    contracted_role_ids?: string[];
     contract_type?: 'FT' | 'PT' | 'CASUAL' | null;
     employment_type?: string;
     hourly_rate?: number;
@@ -128,6 +129,8 @@ export interface OptimizeRequest {
         max_time_seconds?: number;
         num_workers?: number;
         enable_greedy_hint?: boolean;
+        /** B4 — also compute Pareto "what-if" alternatives for the explorer. */
+        compute_alternatives?: boolean;
     };
 }
 
@@ -146,7 +149,7 @@ export interface AuditRequest {
 export interface AuditEmployeeRow {
     employee_id: string;
     status: 'PASS' | 'FAIL';
-    /** Reason codes (e.g. 'LEVEL_TOO_LOW', 'OUTSIDE_DECLARED_AVAILABILITY'). */
+    /** Reason codes (e.g. 'ROLE_MISMATCH', 'OUTSIDE_DECLARED_AVAILABILITY'). */
     rejection_reasons: string[];
 }
 
@@ -169,11 +172,46 @@ export interface AuditResponse {
 
 export type OptimizerStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'UNKNOWN' | 'MODEL_INVALID';
 
+/** B5 — per-assignment "why this person" factors from the solver. */
+export interface AssignmentRationale {
+    /** 1 = cheapest of the eligible pool for this shift; null if unknown. */
+    cost_rank: number | null;
+    eligible_count: number;
+    cheapest_eligible: boolean;
+    /** Sum of the employee's positive fairness-ledger debts (excl. preferences). */
+    fairness_debt: number;
+    /** emp.level − shift.level (positive = over-qualified). */
+    qual_gap: number;
+}
+
 export interface AssignmentProposal {
     shift_id: string;
     employee_id: string;
     employment_type: string;
     cost: number;
+    rationale?: AssignmentRationale | null;
+}
+
+/** B3/B5 — four-pillar scorecard derived from the solution (single-mode UX). */
+export interface PillarScores {
+    coverage: { score: number; covered: number; total: number };
+    cost: { total: number; currency: string; avg_per_shift: number };
+    fairness: { score: number; employees_used: number; spread_minutes: number; peak_minutes: number };
+    fatigue: { score: number; amber: number; critical: number };
+}
+
+/** B5 — why a shift was left uncovered (drives the U5 banner). */
+export interface BindingConstraint {
+    shift_id: string;
+    eligible_count: number;
+    reason: string;
+}
+
+/** B4 — a Pareto "what-if" alternative for the trade-off explorer. */
+export interface ParetoAlternative {
+    key: string;          // 'cheapest' | 'fairest' | ...
+    label: string;        // human label
+    pillars: PillarScores;
 }
 
 export interface OptimizeResponse {
@@ -188,8 +226,16 @@ export interface OptimizeResponse {
     /** Per-category breakdown of the solver objective value (cents).
      *  Null when the solver returned INFEASIBLE / UNKNOWN / MODEL_INVALID.
      *  Categories: cost, fairness, fatigue, coverage, continuity,
-     *  overqual, employment_mix, relaxed_violations, availability, other. */
+     *  employment_mix, relaxed_violations, availability, other. */
     objective_breakdown?: Record<string, number> | null;
+    /** B3 — per-tier objective optima (coverage / guardrail / cost). */
+    tier_values?: Record<string, number> | null;
+    /** B5 — four-pillar scorecard. */
+    pillars?: PillarScores | null;
+    /** B5 — reasons for uncovered shifts. */
+    binding_constraints?: BindingConstraint[] | null;
+    /** B4 — Pareto "what-if" alternatives. */
+    alternatives?: ParetoAlternative[] | null;
 }
 
 // =============================================================================
@@ -281,6 +327,13 @@ export interface AutoSchedulerResult {
     /** Org scope echoed from the run input, so commit() can write the F1
      *  fairness ledger back. Undefined when no org was supplied (ledger off). */
     organizationId?: string;
+    /** B3/B5 — single-mode transparency, forwarded from the solver for the UI
+     *  scorecard, constraint banner, and trade-off explorer. */
+    pillars?: PillarScores | null;
+    bindingConstraints?: BindingConstraint[] | null;
+    alternatives?: ParetoAlternative[] | null;
+    /** B5 — per-assignment rationale keyed by shiftId ("why this person"). */
+    rationaleByShift?: Record<string, AssignmentRationale>;
 }
 
 // =============================================================================

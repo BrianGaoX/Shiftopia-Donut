@@ -52,7 +52,6 @@ const REASON_DESCRIPTIONS: Record<string, string> = {
     ROLE_MISMATCH: 'Employee role does not match the shift role.',
     QUALIFICATION_MISSING: 'Employee is missing required qualifications.',
     REST_GAP: 'Insufficient rest gap before/after another scheduled shift.',
-    LEVEL_TOO_LOW: 'Employee skill level is below the shift requirement.',
     SHIFT_TOO_SHORT: 'Shift duration is below the minimum-engagement floor.',
     HARD_AVAILABILITY_BLOCK: 'Shift falls inside a hard availability block.',
     OUTSIDE_DECLARED_AVAILABILITY: "Shift falls outside the employee's declared availability.",

@@ -32,12 +32,12 @@ def _shift(sid="s1", date="2026-05-15", start="09:00", end="17:00",
 
 
 def _employee(eid="e1", level=0, has_avail=False, slots=None,
-              role_id=None, existing=None):
+              contracted_role_ids=None, existing=None):
     return {
         "id": eid, "name": f"E-{eid}", "employment_type": "FT",
         "hourly_rate": 25.65, "min_contract_minutes": 0,
         "max_weekly_minutes": 2400, "level": level,
-        "role_id": role_id,
+        "contracted_role_ids": contracted_role_ids or ["role-A"],
         "existing_shifts": existing or [],
         "has_availability_data": has_avail,
         "availability_slots": slots or [],
@@ -64,22 +64,25 @@ def test_audit_pass_when_universally_available():
     assert body["rows"][0]["employees"][0]["status"] == "PASS"
 
 
-def test_audit_flags_level_too_low():
+def test_audit_flags_role_mismatch():
+    """Eligibility is role-set based (no numeric level hierarchy). An employee
+    who does not hold a contract for the shift's role must be flagged
+    ROLE_MISMATCH — the replacement for the retired LEVEL_TOO_LOW reason."""
     payload = {
-        "shifts": [_shift(level=3)],
-        "employees": [_employee(level=1)],
+        "shifts": [_shift(role_id="role-A")],
+        "employees": [_employee(contracted_role_ids=["role-B"])],
         "constraints": {
             "min_rest_minutes": 600, "relax_constraints": False,
-            "enforce_role_match": False, "enforce_skill_match": False,
+            "enforce_role_match": True, "enforce_skill_match": False,
             "allow_partial": True,
         },
         "target_shift_ids": ["s1"],
     }
     res = client.post("/audit", json=payload).json()
     row = res["rows"][0]
-    assert row["rejection_summary"] == {"LEVEL_TOO_LOW": 1}
+    assert row["rejection_summary"] == {"ROLE_MISMATCH": 1}
     assert row["employees"][0]["status"] == "FAIL"
-    assert "LEVEL_TOO_LOW" in row["employees"][0]["rejection_reasons"]
+    assert "ROLE_MISMATCH" in row["employees"][0]["rejection_reasons"]
 
 
 def test_audit_flags_outside_declared_availability():

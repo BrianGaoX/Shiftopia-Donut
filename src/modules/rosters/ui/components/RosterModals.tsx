@@ -29,6 +29,7 @@ const AutoSchedulerModal = lazy(() =>
 
 import type { ShiftContext } from '@/modules/rosters/ui/dialogs/EnhancedAddShiftModal';
 import type { BulkAssignmentEmployee } from '@/modules/rosters/ui/dialogs/BulkAssignmentPanel';
+import type { ShiftFilters } from '@/modules/rosters/api/queryKeys';
 
 // =============================================================================
 // TYPES
@@ -59,6 +60,8 @@ interface RosterModalsProps {
         name: string;
         contract_type?: 'FT' | 'PT' | 'CASUAL' | null;
         contracted_weekly_hours?: number;
+        /** Active contracted role_ids — drives role-set eligibility in the solver. */
+        contracted_role_ids?: string[];
     }>;
     /** Called when a shift is created or saved successfully. */
     onShiftSaved: () => void;
@@ -68,6 +71,8 @@ interface RosterModalsProps {
     onAutoScheduleComplete: () => void;
     /** Org scope forwarded to the auto-scheduler for the F1 fairness ledger. */
     organizationId?: string;
+    /** Current roster view filters to scope the auto-scheduler query */
+    queryFilters?: ShiftFilters;
 }
 
 /** Imperative handle — parent calls these to open modals. */
@@ -93,6 +98,7 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
         onAssignComplete,
         onAutoScheduleComplete,
         organizationId,
+        queryFilters,
     },
     ref,
 ) => {
@@ -125,6 +131,7 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
                         employees={autoSchedulerEmployees}
                         onComplete={onAutoScheduleComplete}
                         organizationId={organizationId}
+                        queryFilters={queryFilters}
                     />
                 </Suspense>
             )}

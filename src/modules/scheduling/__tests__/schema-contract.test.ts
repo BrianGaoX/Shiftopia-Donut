@@ -68,14 +68,14 @@ const SHIFT_FIELDS = fieldSet<Required<OptimizerShift>>({
 });
 
 const EMPLOYEE_FIELDS = fieldSet<Required<OptimizerEmployee>>({
-    id: 0, name: 0, role_id: 0, contract_type: 0, employment_type: 0,
+    id: 0, name: 0, role_id: 0, contracted_role_ids: 0, contract_type: 0, employment_type: 0,
     hourly_rate: 0, min_contract_minutes: 0, contract_weekly_minutes: 0,
     max_weekly_minutes: 0, skill_ids: 0, license_ids: 0,
     preferred_shift_ids: 0, unavailable_dates: 0, level: 0,
     is_flexible: 0, is_student: 0, visa_limit: 0,
     existing_shifts: 0, contracts: 0, qualifications: 0,
     availability_slots: 0, has_availability_data: 0,
-    availability_overrides: 0,
+    availability_overrides: 0, fairness_debts: 0,
 });
 
 const CONSTRAINTS_FIELDS = fieldSet<Required<OptimizerConstraints>>({

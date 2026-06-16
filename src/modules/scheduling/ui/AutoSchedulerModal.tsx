@@ -23,28 +23,18 @@ import {
     Calendar,
     Activity,
     Scale,
-    LayoutGrid,
-    List,
     ArrowUpDown,
     ChevronUp,
     ChevronDown,
     Download,
     HelpCircle,
-    Bookmark,
-    X as XIcon,
-    Plus,
 } from 'lucide-react';
-import { 
-    PieChart, 
-    Pie, 
-    Cell, 
-    ResponsiveContainer, 
-    Tooltip as RechartsTooltip 
-} from 'recharts';
 import { Input } from '@/modules/core/ui/primitives/input';
 import { Label } from '@/modules/core/ui/primitives/label';
 import { format } from 'date-fns';
 import { cn } from '@/modules/core/lib/utils';
+import { AutoSchedulerInsights } from './AutoSchedulerInsights';
+import { WhyThisPerson } from './WhyThisPerson';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { shiftKeys } from '@/modules/rosters/api/queryKeys';
@@ -60,6 +50,7 @@ import type {
     ShiftMeta,
     EmployeeMeta,
 } from '@/modules/scheduling';
+import { useShiftsByDateRange, type ShiftFilters } from '@/modules/rosters/state/useRosterShifts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/modules/core/ui/primitives/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/modules/core/ui/primitives/popover";
@@ -76,6 +67,7 @@ interface AutoSchedulerModalProps {
     onComplete: () => void;
     /** Org scope for the F1 fairness ledger. When omitted, the ledger is skipped. */
     organizationId?: string;
+    queryFilters?: ShiftFilters;
 }
 
 type PipelinePhase = 'idle' | 'optimizing' | 'validating' | 'reviewing' | 'done';
@@ -118,10 +110,11 @@ const getRoleColor = (roleName: string) => {
 export function AutoSchedulerModal({
     open,
     onClose,
-    shifts,
+    shifts: initialShifts,
     employees,
     onComplete,
     organizationId,
+    queryFilters,
 }: AutoSchedulerModalProps) {
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -132,7 +125,7 @@ export function AutoSchedulerModal({
     const [isCommitting, setIsCommitting] = useState(false);
     const [isDownloading, setIsDownloading] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
-    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
     const [sortField, setSortField] = useState<'name' | 'utilization' | 'shifts' | 'compliance' | 'cost' | 'fatigue'>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [hoveredDistId, setHoveredDistId] = useState<string | null>(null);
@@ -159,137 +152,56 @@ export function AutoSchedulerModal({
 
 
     // Date Range Selection
-    const defaultStart = useMemo(() => shifts.length > 0 ? [...shifts].sort((a, b) => a.shift_date.localeCompare(b.shift_date))[0].shift_date : '', [shifts]);
-    const defaultEnd = useMemo(() => shifts.length > 0 ? [...shifts].sort((a, b) => b.shift_date.localeCompare(a.shift_date))[0].shift_date : '', [shifts]);
+    const defaultStart = useMemo(() => initialShifts.length > 0 ? [...initialShifts].sort((a, b) => a.shift_date.localeCompare(b.shift_date))[0].shift_date : '', [initialShifts]);
+    const defaultEnd = useMemo(() => initialShifts.length > 0 ? [...initialShifts].sort((a, b) => b.shift_date.localeCompare(a.shift_date))[0].shift_date : '', [initialShifts]);
 
     const [startDate, setStartDate] = useState(defaultStart);
     const [endDate, setEndDate] = useState(defaultEnd);
 
-    // Strategy & Tuning state
-    const [fatigueWeight, setFatigueWeight] = useState(50);
-    const [fairnessWeight, setFairnessWeight] = useState(50);
-    const [costWeight, setCostWeight] = useState(50);
-    const [coverageWeight, setCoverageWeight] = useState(100);
-    const [relaxConstraints, setRelaxConstraints] = useState(false);
-    // Fix 5: min rest hours — converted to minutes when sent to the solver
-    const [minRestHours, setMinRestHours] = useState(10);
-
-    // Fix 6: Load persisted strategy from localStorage on mount
-    useEffect(() => {
-        try {
-            const raw = localStorage.getItem('autoScheduler.strategy');
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (typeof parsed.fatigueWeight === 'number') setFatigueWeight(parsed.fatigueWeight);
-                if (typeof parsed.fairnessWeight === 'number') setFairnessWeight(parsed.fairnessWeight);
-                if (typeof parsed.costWeight === 'number') setCostWeight(parsed.costWeight);
-                if (typeof parsed.coverageWeight === 'number') setCoverageWeight(parsed.coverageWeight);
-                if (typeof parsed.minRestHours === 'number') setMinRestHours(parsed.minRestHours);
-                if (typeof parsed.relaxConstraints === 'boolean') setRelaxConstraints(parsed.relaxConstraints);
-            }
-        } catch {
-            // Corrupted localStorage — silently ignore and keep defaults
+    const validationError = useMemo(() => {
+        if (!startDate || !endDate) {
+            return "Please select both start and end dates.";
         }
-    }, []);
-
-    // Fix 6: Persist strategy to localStorage whenever any slider changes
-    useEffect(() => {
-        try {
-            localStorage.setItem('autoScheduler.strategy', JSON.stringify({
-                fatigueWeight,
-                fairnessWeight,
-                costWeight,
-                coverageWeight,
-                minRestHours,
-                relaxConstraints,
-            }));
-        } catch {
-            // Storage write failures are non-fatal
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return "Invalid date format.";
         }
-    }, [fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints]);
-
-    // Gap 9: Named strategy presets
-    type StrategyPreset = {
-        fatigueWeight: number;
-        fairnessWeight: number;
-        costWeight: number;
-        coverageWeight: number;
-        minRestHours: number;
-        relaxConstraints: boolean;
-    };
-    const BUILTIN_PRESETS: Record<string, StrategyPreset> = useMemo(() => ({
-        Balanced:           { fatigueWeight: 50,  fairnessWeight: 50, costWeight: 50,  coverageWeight: 100, minRestHours: 10, relaxConstraints: false },
-        'Cost-First':       { fatigueWeight: 30,  fairnessWeight: 30, costWeight: 100, coverageWeight: 80,  minRestHours: 10, relaxConstraints: false },
-        'Fatigue-Safe':     { fatigueWeight: 100, fairnessWeight: 80, costWeight: 30,  coverageWeight: 100, minRestHours: 11, relaxConstraints: false },
-        'Weekend Coverage': { fatigueWeight: 50,  fairnessWeight: 30, costWeight: 30,  coverageWeight: 150, minRestHours: 10, relaxConstraints: false },
-    }), []);
-    const [userPresets, setUserPresets] = useState<Record<string, StrategyPreset>>({});
-    const [presetSaveOpen, setPresetSaveOpen] = useState(false);
-    const [presetNameDraft, setPresetNameDraft] = useState('');
-
-    useEffect(() => {
-        try {
-            const raw = localStorage.getItem('autoScheduler.presets');
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') setUserPresets(parsed);
-            }
-        } catch {
-            // Corrupted presets — ignore
+        if (start > end) {
+            return "Start date cannot be after end date.";
         }
-    }, []);
-    useEffect(() => {
-        try {
-            localStorage.setItem('autoScheduler.presets', JSON.stringify(userPresets));
-        } catch {
-            // non-fatal
+        const diffTime = end.getTime() - start.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // inclusive
+        if (diffDays > 31) {
+            return "Date range cannot exceed 31 days.";
         }
-    }, [userPresets]);
+        return null;
+    }, [startDate, endDate]);
 
-    const applyPreset = useCallback((p: StrategyPreset) => {
-        setFatigueWeight(p.fatigueWeight);
-        setFairnessWeight(p.fairnessWeight);
-        setCostWeight(p.costWeight);
-        setCoverageWeight(p.coverageWeight);
-        setMinRestHours(p.minRestHours);
-        setRelaxConstraints(p.relaxConstraints);
-    }, []);
-    const saveCurrentAsPreset = useCallback(() => {
-        const name = presetNameDraft.trim();
-        if (!name) return;
-        setUserPresets(prev => ({
-            ...prev,
-            [name]: { fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints },
-        }));
-        setPresetNameDraft('');
-        setPresetSaveOpen(false);
-    }, [presetNameDraft, fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints]);
-    const deletePreset = useCallback((name: string) => {
-        setUserPresets(prev => {
-            const next = { ...prev };
-            delete next[name];
-            return next;
-        });
-    }, []);
-    const activePresetName = useMemo(() => {
-        const current: StrategyPreset = { fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints };
-        const matches = (p: StrategyPreset) =>
-            p.fatigueWeight === current.fatigueWeight &&
-            p.fairnessWeight === current.fairnessWeight &&
-            p.costWeight === current.costWeight &&
-            p.coverageWeight === current.coverageWeight &&
-            p.minRestHours === current.minRestHours &&
-            p.relaxConstraints === current.relaxConstraints;
-        const builtin = Object.entries(BUILTIN_PRESETS).find(([, p]) => matches(p));
-        if (builtin) return builtin[0];
-        const user = Object.entries(userPresets).find(([, p]) => matches(p));
-        return user ? user[0] : null;
-    }, [fatigueWeight, fairnessWeight, costWeight, coverageWeight, minRestHours, relaxConstraints, userPresets, BUILTIN_PRESETS]);
+    // Operational limits (single-mode: cost/fatigue/fairness weight sliders +
+    // presets were removed — the solver runs a fixed lexicographic policy).
+
+    const { data: rawShifts = [], isFetching: isShiftsLoading } = useShiftsByDateRange(
+        organizationId || null,
+        validationError ? null : (startDate || null),
+        validationError ? null : (endDate || null),
+        queryFilters
+    );
 
     const filteredShifts = useMemo(() => {
-        if (!startDate || !endDate) return shifts;
-        return shifts.filter(s => s.shift_date >= startDate && s.shift_date <= endDate);
-    }, [shifts, startDate, endDate]);
+        if (!startDate || !endDate || validationError) return [];
+        return rawShifts
+            .filter((s) => !s.assigned_employee_id && !s.is_cancelled && !s.deleted_at)
+            .map((s) => ({
+                id: s.id,
+                shift_date: s.shift_date,
+                start_time: s.start_time,
+                end_time: s.end_time,
+                role_id: (s as any).role_id ?? null,
+                roleName: (s as any).role_name || (s as any).roles?.name || '',
+                unpaid_break_minutes: s.unpaid_break_minutes ?? 0,
+            } as ShiftMeta));
+    }, [rawShifts, startDate, endDate, validationError]);
 
     const preRunCapacity = useMemo(() => {
         if (filteredShifts.length === 0 || employees.length === 0) return null;
@@ -318,17 +230,10 @@ export function AutoSchedulerModal({
                 organizationId,
                 signal: ac.signal,
                 timeLimitSeconds: ESTIMATED_TOTAL_SECONDS,
-                strategy: {
-                    fatigue_weight: fatigueWeight,
-                    fairness_weight: fairnessWeight,
-                    cost_weight: costWeight,
-                    coverage_weight: coverageWeight,
-                },
-                constraints: {
-                    relax_constraints: relaxConstraints,
-                    // Fix 5: convert minRestHours (user-facing) to minutes for the solver
-                    min_rest_minutes: Math.round(minRestHours * 60),
-                }
+                // Single-mode: no cost/fatigue/fairness sliders. The solver runs a
+                // fixed lexicographic policy (coverage » guardrails » cost). We
+                // also request Pareto "what-if" alternatives for the explorer.
+                computeAlternatives: true,
             });
             if (ac.signal.aborted) return;
             setPhase('reviewing');
@@ -347,7 +252,7 @@ export function AutoSchedulerModal({
         } finally {
             if (runAbortRef.current === ac) runAbortRef.current = null;
         }
-    }, [filteredShifts, employees, toast, fatigueWeight, fairnessWeight, costWeight, coverageWeight, relaxConstraints, minRestHours]);
+    }, [filteredShifts, employees, toast, organizationId]);
 
     const handleCancel = useCallback(() => {
         if (runAbortRef.current) {
@@ -504,15 +409,13 @@ export function AutoSchedulerModal({
 
         const groups = Array.from(map.entries()).map(([id, { name, proposals }]) => {
             const emp = employees.find(e => e.id === id);
-            const levelDist: Record<string, number> = {};
+            const roleDist: Record<string, number> = {};
             proposals.forEach(p => {
-                const match = p.roleName?.match(/\(L([0-7])\)/i);
-                const level = match ? `L${match[1].toUpperCase()}` : 'Other';
-                levelDist[level] = (levelDist[level] ?? 0) + 1;
+                const role = p.roleName || 'Unassigned';
+                roleDist[role] = (roleDist[role] ?? 0) + 1;
             });
 
-            // Sort by level name (L0, L1, ...)
-            const sortedDist = Object.entries(levelDist)
+            const sortedDist = Object.entries(roleDist)
                 .map(([name, value]) => ({ name, value }))
                 .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -627,295 +530,55 @@ export function AutoSchedulerModal({
                                 <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60 ml-1">Range Start</Label>
                                 <Input 
                                     type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                                    className="h-10 bg-background border-border rounded-xl text-xs font-bold focus:ring-primary/20"
+                                    className={cn(
+                                        "h-10 bg-background border-border rounded-xl text-xs font-bold focus:ring-primary/20",
+                                        validationError && "border-red-500/50 focus:ring-red-500/20"
+                                    )}
                                 />
                             </div>
                             <div className="space-y-1.5">
                                 <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60 ml-1">Range End</Label>
                                 <Input 
                                     type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                                    className="h-10 bg-background border-border rounded-xl text-xs font-bold focus:ring-primary/20"
+                                    className={cn(
+                                        "h-10 bg-background border-border rounded-xl text-xs font-bold focus:ring-primary/20",
+                                        validationError && "border-red-500/50 focus:ring-red-500/20"
+                                    )}
                                 />
                             </div>
+                            {validationError && (
+                                <div className="flex items-start gap-1.5 p-2 rounded-lg bg-red-500/5 border border-red-500/20 text-red-500 mt-1">
+                                    <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                                    <span className="text-[10px] font-medium leading-tight">{validationError}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
 
                     {/* Tuning Sidebar — Fixes 4, 5, 7 + Gap 9 (presets) */}
                     <div className="space-y-6 mt-8">
-                        {/* Gap 9: Named strategy presets */}
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <Bookmark className="h-3 w-3 text-muted-foreground/50" />
-                                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/50">Presets</span>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setPresetSaveOpen(v => !v)}
-                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 hover:text-primary transition-colors px-2 py-1 rounded-lg hover:bg-muted/40"
-                                    title="Save current settings as a preset"
-                                >
-                                    <Plus className="h-3 w-3" />
-                                    Save
-                                </button>
+                        {/* Single-mode notice — the cost/fatigue/fairness/coverage
+                            sensitivity sliders + presets were removed in favour of one
+                            fixed lexicographic policy (coverage » wellbeing » cost).
+                            After a run, AutoSchedulerInsights shows the achieved scores
+                            and the Pareto alternatives. */}
+                        <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-1">
+                            <div className="flex items-center gap-1.5">
+                                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                                <span className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/70">One optimal mode</span>
                             </div>
-                            <div className="flex flex-wrap gap-1.5">
-                                {Object.entries(BUILTIN_PRESETS).map(([name, p]) => {
-                                    const isActive = activePresetName === name;
-                                    return (
-                                        <button
-                                            key={name}
-                                            type="button"
-                                            onClick={() => applyPreset(p)}
-                                            className={cn(
-                                                "text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-lg border transition-all",
-                                                isActive
-                                                    ? "bg-primary/15 border-primary/40 text-primary"
-                                                    : "bg-muted/30 border-border/40 text-muted-foreground/80 hover:bg-muted/50 hover:text-foreground"
-                                            )}
-                                        >
-                                            {name}
-                                        </button>
-                                    );
-                                })}
-                                {Object.entries(userPresets).map(([name, p]) => {
-                                    const isActive = activePresetName === name;
-                                    return (
-                                        <div
-                                            key={name}
-                                            className={cn(
-                                                "group flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide pl-2.5 pr-1 py-1 rounded-lg border transition-all",
-                                                isActive
-                                                    ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-                                                    : "bg-muted/30 border-border/40 text-muted-foreground/80 hover:bg-muted/50 hover:text-foreground"
-                                            )}
-                                        >
-                                            <button
-                                                type="button"
-                                                onClick={() => applyPreset(p)}
-                                                className="cursor-pointer"
-                                            >
-                                                {name}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => deletePreset(name)}
-                                                className="opacity-50 hover:opacity-100 hover:text-rose-500 transition-opacity p-0.5"
-                                                title={`Delete preset "${name}"`}
-                                            >
-                                                <XIcon className="h-2.5 w-2.5" />
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                                {Object.keys(userPresets).length === 0 && (
-                                    <span className="text-[10px] text-muted-foreground/40 italic px-1 py-1">
-                                        Save your own below
-                                    </span>
-                                )}
-                            </div>
-                            {presetSaveOpen && (
-                                <div className="flex gap-1.5 pt-1">
-                                    <Input
-                                        type="text"
-                                        value={presetNameDraft}
-                                        onChange={e => setPresetNameDraft(e.target.value)}
-                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveCurrentAsPreset(); } }}
-                                        placeholder="Preset name…"
-                                        autoFocus
-                                        className="h-7 text-[11px] flex-1"
-                                    />
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        onClick={saveCurrentAsPreset}
-                                        disabled={!presetNameDraft.trim() || presetNameDraft.trim() in BUILTIN_PRESETS}
-                                        className="h-7 text-[10px] font-black uppercase tracking-widest px-2.5"
-                                    >
-                                        Save
-                                    </Button>
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => { setPresetSaveOpen(false); setPresetNameDraft(''); }}
-                                        className="h-7 text-[10px] font-black uppercase tracking-widest px-2.5"
-                                    >
-                                        Cancel
-                                    </Button>
-                                </div>
-                            )}
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                The scheduler optimises a fixed priority —{' '}
+                                <span className="font-semibold text-foreground">coverage → wellbeing → cost</span>{' '}
+                                — so there are no weights to tune. After it runs you'll see exactly how it
+                                scored on each, and what the alternatives would have cost.
+                            </p>
                         </div>
 
-                        <div className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/50">Optimization Strategy</div>
-                        <div className="space-y-4">
-
-                            {/* Fix 7: Fatigue Bias with tooltip */}
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center px-1">
-                                    <div className="flex items-center gap-1">
-                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Fatigue Bias</Label>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
-                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
-                                                    Penalty weight on amber-zone (&gt;20h/wk) and critical-zone (&gt;30h/wk) minutes in the optimizer objective. 0% = penalty halved (solver packs shifts more densely). 50% = default weighting. 100% = penalty doubled (solver spreads fatigue aggressively). Hard compliance limits (R03 daily max, R04 consecutive days) remain enforced at any setting.
-                                                </p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </div>
-                                    <span className="text-[10px] font-bold text-primary">{fatigueWeight}%</span>
-                                </div>
-                                <input
-                                    type="range" min="0" max="100" value={fatigueWeight}
-                                    onChange={e => setFatigueWeight(parseInt(e.target.value))}
-                                    className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-                                />
-                            </div>
-
-                            {/* Fix 7: Fairness Bias with tooltip */}
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center px-1">
-                                    <div className="flex items-center gap-1">
-                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Fairness Bias</Label>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
-                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
-                                                    Penalty weight on workload deviation from each employee's baseline. 0% = penalty halved (solver may concentrate shifts). 50% = default weighting. 100% = penalty doubled (solver spreads shifts evenly across the team).
-                                                </p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </div>
-                                    <span className="text-[10px] font-bold text-primary">{fairnessWeight}%</span>
-                                </div>
-                                <input
-                                    type="range" min="0" max="100" value={fairnessWeight}
-                                    onChange={e => setFairnessWeight(parseInt(e.target.value))}
-                                    className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-                                />
-                            </div>
-
-                            {/* Fix 7: Cost Sensitivity with tooltip */}
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center px-1">
-                                    <div className="flex items-center gap-1">
-                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Cost Sensitivity</Label>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
-                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
-                                                    Per-minute cost penalty in the objective. 0% = penalty halved (cost matters less, solver may pick expensive employees). 50% = default weighting. 100% = penalty doubled (solver prefers cheaper rosters). Total spend can still rise if coverage also rises — this controls preference, not budget.
-                                                </p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </div>
-                                    <span className="text-[10px] font-bold text-primary">{costWeight}%</span>
-                                </div>
-                                <input
-                                    type="range" min="0" max="100" value={costWeight}
-                                    onChange={e => setCostWeight(parseInt(e.target.value))}
-                                    className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-                                />
-                            </div>
-
-                            {/* Fix 4: Coverage Priority slider (was hardcoded at 100, now user-controlled) */}
-                            {/* Fix 7: Coverage Priority with tooltip */}
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center px-1">
-                                    <div className="flex items-center gap-1">
-                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Coverage Priority</Label>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
-                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
-                                                    Penalty per uncovered shift. Default 100 = strong pressure to fill every shift. Lower values let the solver leave shifts uncovered in exchange for better cost/fatigue/fairness. Raise above 100 for safety-critical roles.
-                                                </p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </div>
-                                    <span className="text-[10px] font-bold text-primary">{coverageWeight}</span>
-                                </div>
-                                <input
-                                    type="range" min="50" max="200" step="10" value={coverageWeight}
-                                    onChange={e => setCoverageWeight(parseInt(e.target.value))}
-                                    className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-                                />
-                            </div>
-
-                            {/* Fix 5: Min Rest Hours numeric input */}
-                            <div className="space-y-2 pt-2">
-                                <div className="flex items-center gap-1 px-1">
-                                    <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Min Rest Hours</Label>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
-                                        </TooltipTrigger>
-                                        <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
-                                            <p className="text-[11px] text-popover-foreground leading-relaxed">
-                                                Minimum hours of rest required between consecutive shifts for each employee. EBA standard is 10h. Reducing below 10h requires a formal exemption.
-                                            </p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                </div>
-                                <Input
-                                    type="number"
-                                    min={3} max={15} step={0.5}
-                                    value={minRestHours}
-                                    onChange={e => setMinRestHours(parseFloat(e.target.value) || 10)}
-                                    className="h-8 bg-background border-border rounded-xl text-xs font-bold focus:ring-primary/20"
-                                />
-                                {minRestHours < 10 && (
-                                    <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                                        <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
-                                        <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide leading-tight">
-                                            Below EBA minimum — use only with formal exemption
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Fix 7: Relax Blockers with tooltip */}
-                            <div className="pt-2 flex items-center justify-between px-1">
-                                <div className="flex flex-col gap-0.5">
-                                    <div className="flex items-center gap-1">
-                                        <Label className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/60">Relax Blockers</Label>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent className="bg-popover border-border p-3 max-w-[220px] shadow-2xl">
-                                                <p className="text-[11px] text-popover-foreground leading-relaxed">
-                                                    When enabled, the solver may violate hard overlap/rest constraints at a $10M-per-violation penalty rather than rejecting infeasible regions. Use only after the optimizer returns INFEASIBLE.
-                                                </p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </div>
-                                    <span className="text-[7px] text-muted-foreground/40 uppercase font-bold">Soften Overlaps</span>
-                                </div>
-                                <button
-                                    onClick={() => setRelaxConstraints(!relaxConstraints)}
-                                    className={cn(
-                                        "h-5 w-9 rounded-full transition-all relative flex items-center px-1",
-                                        relaxConstraints ? "bg-emerald-500" : "bg-muted"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "h-3 w-3 rounded-full bg-white transition-all shadow-sm",
-                                        relaxConstraints ? "ml-4" : "ml-0"
-                                    )} />
-                                </button>
-                            </div>
-
-                        </div>
+                        {/* Min-Rest-Hours + Relax-Blockers controls removed: rest is
+                            always the 10h EBA default (per-case 8h exemption handled
+                            elsewhere) and constraint relaxation is not exposed. The
+                            solver uses its hard defaults (600m rest, no relaxation). */}
                     </div>
 
                     {/* Quick Metrics Section (Only visible after run) */}
@@ -952,34 +615,12 @@ export function AutoSchedulerModal({
                             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-muted border border-border">
                                 <Calendar className="h-3 w-3 text-muted-foreground/60" />
                                 <span className="text-[10px] font-bold text-muted-foreground tracking-tight">
-                                    {filteredShifts.length} Shifts · {employees.length} Staff
+                                    {isShiftsLoading ? 'Loading shifts...' : `${filteredShifts.length} Shifts`} · {employees.length} Staff
                                 </span>
                             </div>
                         </div>
 
                         <div className="flex items-center gap-2">
-                            {result && (
-                                <div className="flex items-center bg-muted rounded-lg p-1 mr-2 border border-border/50">
-                                    <button 
-                                        onClick={() => setViewMode('grid')}
-                                        className={cn(
-                                            "p-1.5 rounded-md transition-all",
-                                            viewMode === 'grid' ? "bg-background text-primary shadow-sm" : "text-muted-foreground/40 hover:text-muted-foreground"
-                                        )}
-                                    >
-                                        <LayoutGrid className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button 
-                                        onClick={() => setViewMode('list')}
-                                        className={cn(
-                                            "p-1.5 rounded-md transition-all",
-                                            viewMode === 'list' ? "bg-background text-primary shadow-sm" : "text-muted-foreground/40 hover:text-muted-foreground"
-                                        )}
-                                    >
-                                        <List className="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
-                            )}
                             {result && (
                                 <Button onClick={handleDownloadAudit} variant="outline" className="h-8 gap-2 rounded-lg bg-muted/50 border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-all">
                                     <Download className="h-3.5 w-3.5" />
@@ -1076,12 +717,16 @@ export function AutoSchedulerModal({
                                 }
 
                                 {['reviewing', 'done'].includes(phase) && result &&
-                                    <motion.div 
+                                    <motion.div
                                         className="space-y-12"
                                         initial={{ opacity: 0, y: 10 }}
                                         animate={{ opacity: 1, y: 0 }}
                                     >
-                                        
+
+                                        {/* U2/U3/U5 — single-mode transparency: four-pillar scorecard,
+                                            constraint banner, and Pareto trade-off explorer. */}
+                                        <AutoSchedulerInsights result={result} />
+
                                         {/* Result Stats Grid — Fix 1: replaced "Success Rate" (compliance pass-rate)
                                             with "Coverage" (assigned / total shifts asked). Added "Compliance Pass-Rate"
                                             as a 5th tile; used grid-cols-5 with tighter padding so all fit at xl width. */}
@@ -1216,374 +861,208 @@ export function AutoSchedulerModal({
                                         )}
 
                                         {/* Employee Results Cards */}
-                                        <AnimatePresence mode="wait">
-                                            {viewMode === 'grid' ? (
-                                                <div 
-                                                    key="grid"
-                                                    className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+                                        <div className="space-y-2">
+                                            {/* Header for List View */}
+                                            <div className="flex items-center px-6 py-3 border-b border-border/30 text-[9px] font-black uppercase tracking-widest text-muted-foreground/40 gap-4">
+                                                <div className="w-10" />
+                                                <button 
+                                                    onClick={() => {
+                                                        if (sortField === 'name') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortField('name'); setSortDirection('asc'); }
+                                                    }}
+                                                    className="flex-1 min-w-[150px] flex items-center gap-1.5 hover:text-foreground transition-colors group"
                                                 >
-                                            {employeeGroups.map(group => (
-                                                <div key={group.id} className="group p-8 rounded-[2.5rem] bg-muted/10 border border-border hover:bg-muted/20 hover:border-primary/40 transition-all duration-500 shadow-xl flex flex-col">
-                                                    <div className="flex items-start justify-between mb-8">
-                                                        <div className="flex items-start gap-5">
-                                                            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-background to-muted border border-border flex items-center justify-center font-black text-lg uppercase text-primary shadow-lg group-hover:scale-110 transition-transform duration-500">
-                                                                {group.name.split(' ').map(n => n[0]).join('')}
-                                                            </div>
-                                                            <div className="flex flex-col">
-                                                                <span className="text-xl font-black tracking-tight text-foreground">{group.name}</span>
-                                                                <div className="flex flex-wrap items-center gap-2 mt-2">
-                                                                    <Badge className="bg-primary text-white text-[9px] font-black uppercase tracking-widest border-none shadow-lg shadow-primary/20">{group.employmentType}</Badge>
-                                                                    <Badge variant="outline" className="text-muted-foreground/60 text-[9px] font-black uppercase tracking-widest border-border bg-muted/30">{group.contractedHours}h Contract</Badge>
-                                                                    <Popover open={hoveredDistId === group.id} onOpenChange={(o) => !o && setHoveredDistId(null)}>
-                                                                        <PopoverTrigger asChild>
-                                                                            <div 
-                                                                                className="cursor-help"
-                                                                                onMouseEnter={() => setHoveredDistId(group.id)}
-                                                                                onMouseLeave={() => setHoveredDistId(null)}
-                                                                            >
-                                                                                <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[8px] font-black uppercase tracking-widest border-none">{group.proposals.length} SHIFTS</Badge>
-                                                                            </div>
-                                                                        </PopoverTrigger>
-                                                                        <PopoverContent 
-                                                                            side="top" 
-                                                                            align="center"
-                                                                            className="w-[240px] p-0 overflow-hidden bg-background border-border shadow-2xl rounded-2xl z-[1000] pointer-events-none"
-                                                                        >
-                                                                            <div className="p-4 space-y-3">
-                                                                                <div className="flex items-center justify-between border-b border-border/50 pb-2">
-                                                                                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40">Shift Distribution</span>
-                                                                                    <span className="text-[10px] font-black text-primary">{group.proposals.length} Total</span>
-                                                                                </div>
-                                                                                <div className="grid grid-cols-2 gap-2">
-                                                                                    {group.roleDistribution.map(rd => (
-                                                                                        <div key={rd.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/50">
-                                                                                            <div className="flex items-center gap-2">
-                                                                                                <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: LEVEL_COLORS[rd.name] || LEVEL_COLORS.default }} />
-                                                                                                <span className="text-[10px] font-bold text-foreground/80">{rd.name}</span>
-                                                                                            </div>
-                                                                                            <span className="text-[10px] font-black text-primary">{rd.value}</span>
-                                                                                        </div>
-                                                                                    ))}
-                                                                                </div>
-                                                                            </div>
-                                                                        </PopoverContent>
-                                                                    </Popover>
-                                                                    <div className="flex items-center gap-1 ml-2">
-                                                                        <Activity className="h-3 w-3 text-emerald-500" />
-                                                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40">Fatigue: </span>
-                                                                        <span className={cn(
-                                                                            "text-[10px] font-black",
-                                                                            group.avgFatigue > 8 ? "text-red-500" : group.avgFatigue > 5 ? "text-amber-500" : "text-emerald-500"
-                                                                        )}>{group.avgFatigue.toFixed(1)}</span>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="flex flex-wrap gap-1 mt-2">
-                                                                    {group.assignedRoles.map(role => (
-                                                                        <Badge key={role} variant="outline" className="h-4 px-2 text-[8px] font-black uppercase border-none bg-primary/5 text-primary/60">
-                                                                            {role}
-                                                                        </Badge>
-                                                                    ))}
-                                                                </div>
+                                                    Staff Member
+                                                    {sortField === 'name' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
+                                                </button>
+                                                <div className="w-24 text-center">Employment</div>
+                                                <div className="w-20 text-center">Contract</div>
+                                                <button 
+                                                    onClick={() => {
+                                                        if (sortField === 'utilization') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortField('utilization'); setSortDirection('desc'); }
+                                                    }}
+                                                    className="w-24 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
+                                                >
+                                                    Utilization
+                                                    {sortField === 'utilization' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
+                                                </button>
+                                                <button 
+                                                    onClick={() => {
+                                                        if (sortField === 'fatigue') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortField('fatigue'); setSortDirection('desc'); }
+                                                    }}
+                                                    className="w-20 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
+                                                >
+                                                    Fatigue
+                                                    {sortField === 'fatigue' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
+                                                </button>
+                                                <button 
+                                                    onClick={() => {
+                                                        if (sortField === 'shifts') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortField('shifts'); setSortDirection('desc'); }
+                                                    }}
+                                                    className="w-20 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
+                                                >
+                                                    Shifts
+                                                    {sortField === 'shifts' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
+                                                </button>
+                                                <button 
+                                                    onClick={() => {
+                                                        if (sortField === 'compliance') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortField('compliance'); setSortDirection('desc'); }
+                                                    }}
+                                                    className="w-28 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
+                                                >
+                                                    Compliance
+                                                    {sortField === 'compliance' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
+                                                </button>
+                                                <button 
+                                                    onClick={() => {
+                                                        if (sortField === 'cost') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortField('cost'); setSortDirection('desc'); }
+                                                    }}
+                                                    className="w-28 flex items-center justify-end gap-1.5 hover:text-foreground transition-colors group"
+                                                >
+                                                    Est. Cost
+                                                    {sortField === 'cost' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
+                                                </button>
+                                            </div>
+                                            
+                                            {[...employeeGroups].sort((a, b) => {
+                                                const getComplianceRate = (g: any) => {
+                                                    const p = g.proposals.filter((pr: any) => pr.complianceStatus === 'PASS').length;
+                                                    return g.proposals.length > 0 ? (p / g.proposals.length) : 0;
+                                                };
+                                                
+                                                let valA: any, valB: any;
+                                                switch (sortField) {
+                                                    case 'name': valA = a.name; valB = b.name; break;
+                                                    case 'utilization': valA = a.utilization; valB = b.utilization; break;
+                                                    case 'shifts': valA = a.proposals.length; valB = b.proposals.length; break;
+                                                    case 'compliance': valA = getComplianceRate(a); valB = getComplianceRate(b); break;
+                                                    case 'cost': valA = a.totalCost; valB = b.totalCost; break;
+                                                    case 'fatigue': valA = a.avgFatigue; valB = b.avgFatigue; break;
+                                                    default: valA = a.name; valB = b.name;
+                                                }
+                                                
+                                                if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+                                                if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+                                                return 0;
+                                            }).map(group => {
+                                                const passing = group.proposals.filter(p => p.complianceStatus === 'PASS').length;
+                                                const total = group.proposals.length;
+                                                const rate = total > 0 ? (passing / total) * 100 : 0;
+                                                
+                                                return (
+                                                    <div key={group.id} className="group flex items-center px-6 py-4 rounded-[1.25rem] bg-muted/10 border border-border/40 hover:bg-muted/20 hover:border-primary/30 transition-all duration-300 gap-4">
+                                                        <div className="h-10 w-10 shrink-0 rounded-lg bg-gradient-to-br from-background to-muted border border-border flex items-center justify-center font-black text-xs uppercase text-primary">
+                                                            {group.name.split(' ').map(n => n[0]).join('')}
+                                                        </div>
+                                                        
+                                                        <div className="flex-1 min-w-[150px] flex flex-col">
+                                                            <span className="text-sm font-black tracking-tight text-foreground">{group.name}</span>
+                                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                                {group.assignedRoles.slice(0, 2).map(role => (
+                                                                    <Badge key={role} variant="outline" className="h-3.5 px-1.5 text-[7px] font-black uppercase border-none bg-muted/50 text-muted-foreground/60">
+                                                                        {role}
+                                                                    </Badge>
+                                                                ))}
+                                                                {group.assignedRoles.length > 2 && <span className="text-[7px] font-bold text-muted-foreground/30 ml-1">+{group.assignedRoles.length - 2}</span>}
                                                             </div>
                                                         </div>
-                                                        <div className="text-right">
-                                                            <div className="text-2xl font-black tracking-tight text-foreground/80">${group.totalCost.toLocaleString('en-AU')}</div>
-                                                            <div className="text-[10px] font-black uppercase text-muted-foreground/30 tracking-widest mt-1">Est. Cost</div>
-                                                        </div>
-                                                    </div>
 
-                                                    {/* Role Distribution Chart (Improved Layout) */}
-                                                    <div className="flex items-center gap-10 mb-8 p-8 rounded-[2.5rem] bg-muted/30 border border-border shadow-inner">
-                                                        <div className="h-40 w-40 shrink-0 relative">
-                                                            <ResponsiveContainer width="100%" height="100%">
-                                                                <PieChart>
-                                                                    <Pie
-                                                                        data={group.roleDistribution}
-                                                                        innerRadius={45}
-                                                                        outerRadius={65}
-                                                                        paddingAngle={4}
-                                                                        dataKey="value"
-                                                                        stroke="currentColor"
-                                                                        className="text-border"
-                                                                        strokeWidth={1}
-                                                                    >
-                                                                        {group.roleDistribution.map((entry, index) => (
-                                                                            <Cell key={`cell-${index}`} fill={LEVEL_COLORS[entry.name] || LEVEL_COLORS.default} />
-                                                                        ))}
-                                                                    </Pie>
-                                                                    <RechartsTooltip 
-                                                                        contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '12px', fontSize: '10px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
-                                                                        itemStyle={{ color: 'hsl(var(--popover-foreground))', fontWeight: 'bold' }}
-                                                                        cursor={{ fill: 'hsl(var(--muted))' }}
+                                                        <div className="w-24 flex justify-center">
+                                                            <Badge className="bg-muted text-muted-foreground/60 text-[9px] font-black border-none uppercase tracking-widest">{group.employmentType}</Badge>
+                                                        </div>
+
+                                                        <div className="w-20 text-center">
+                                                            <span className="text-xs font-bold text-foreground/70">{group.contractedHours}h</span>
+                                                        </div>
+                                                        
+                                                        <div className="w-24 flex justify-center">
+                                                            <div className="flex flex-col items-center">
+                                                                <span className="text-[10px] font-black text-foreground">{group.utilization.toFixed(0)}%</span>
+                                                                <div className="h-1 w-12 bg-muted rounded-full mt-1 overflow-hidden">
+                                                                    <div 
+                                                                        className={cn(
+                                                                            "h-full transition-all",
+                                                                            group.utilization > 90 ? "bg-red-500" : group.utilization > 70 ? "bg-amber-500" : "bg-emerald-500"
+                                                                        )} 
+                                                                        style={{ width: `${Math.min(group.utilization, 100)}%` }} 
                                                                     />
-                                                                </PieChart>
-                                                            </ResponsiveContainer>
-                                                            {/* Center Stat */}
-                                                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                                                <span className="text-[10px] font-black text-muted-foreground/30 uppercase tracking-widest leading-none">Total</span>
-                                                                <span className="text-sm font-black text-foreground/80">{group.proposals.length}</span>
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                        <div className="flex-1 flex flex-col gap-2 max-h-32 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-muted-foreground/10">
-                                                            {group.roleDistribution.map((rd, idx) => (
-                                                                <div key={rd.name} className="flex items-center justify-between group/item py-0.5">
-                                                                    <div className="flex items-center gap-2.5">
-                                                                        <div className="h-2 w-2 rounded-full shadow-[0_0_8px_rgba(0,0,0,0.1)] dark:shadow-[0_0_8px_rgba(0,0,0,0.5)]" style={{ backgroundColor: LEVEL_COLORS[rd.name] || LEVEL_COLORS.default }} />
-                                                                        <span className="text-[11px] font-bold text-muted-foreground group-hover/item:text-foreground transition-colors truncate max-w-[120px]">{rd.name}</span>
+
+                                                        <div className="w-20 text-center">
+                                                            <span className={cn(
+                                                                "text-xs font-black",
+                                                                group.avgFatigue > 8 ? "text-red-500" : group.avgFatigue > 5 ? "text-amber-500" : "text-emerald-500"
+                                                            )}>
+                                                                {group.avgFatigue.toFixed(1)}
+                                                            </span>
+                                                        </div>
+                                                        
+                                                        <div className="w-20 flex justify-center">
+                                                            <Popover open={hoveredDistId === group.id} onOpenChange={(o) => !o && setHoveredDistId(null)}>
+                                                                <PopoverTrigger asChild>
+                                                                    <div 
+                                                                        className="cursor-help"
+                                                                        onMouseEnter={() => setHoveredDistId(group.id)}
+                                                                        onMouseLeave={() => setHoveredDistId(null)}
+                                                                    >
+                                                                        <Badge variant="outline" className="bg-muted text-muted-foreground/60 text-[9px] font-black border-none hover:bg-muted/50 transition-colors">
+                                                                            {group.proposals.length}
+                                                                        </Badge>
                                                                     </div>
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-[10px] font-black text-muted-foreground/60">{rd.value}</span>
-                                                                        <span className="text-[8px] font-medium text-muted-foreground/20">({((rd.value / group.proposals.length) * 100).toFixed(0)}%)</span>
+                                                                </PopoverTrigger>
+                                                                <PopoverContent 
+                                                                    side="top" 
+                                                                    align="center"
+                                                                    className="w-[240px] p-0 overflow-hidden bg-background border-border shadow-2xl rounded-2xl z-[1000] pointer-events-none"
+                                                                    onMouseEnter={() => setHoveredDistId(group.id)}
+                                                                >
+                                                                    <div className="p-4 space-y-3">
+                                                                        <div className="flex items-center justify-between border-b border-border/50 pb-2">
+                                                                            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40">Shift Distribution</span>
+                                                                            <span className="text-[10px] font-black text-primary">{group.proposals.length} Total</span>
+                                                                        </div>
+                                                                        <div className="grid grid-cols-2 gap-2">
+                                                                            {group.roleDistribution.map(rd => (
+                                                                                <div key={rd.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/50">
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getRoleColor(rd.name) }} />
+                                                                                        <span className="text-[10px] font-bold text-foreground/80">{rd.name}</span>
+                                                                                    </div>
+                                                                                    <span className="text-[10px] font-black text-primary">{rd.value}</span>
+                                                                                </div>
+                                                                            ))}
+                                                                            {group.roleDistribution.length === 0 && (
+                                                                                <div className="col-span-2 text-center py-2 text-[10px] text-muted-foreground/40 italic">No role data</div>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
-                                                                </div>
-                                                            ))}
+                                                                </PopoverContent>
+                                                            </Popover>
+                                                        </div>
+                                                        
+                                                        <div className="w-28 flex flex-col items-center gap-1">
+                                                            <div className="flex items-center gap-1">
+                                                                <div className={cn("h-1.5 w-1.5 rounded-full", rate === 100 ? "bg-emerald-500" : rate > 0 ? "bg-amber-500" : "bg-red-500")} />
+                                                                <span className="text-[10px] font-black text-foreground">{rate.toFixed(0)}% Clear</span>
+                                                            </div>
+                                                            <span className="text-[7px] font-bold text-muted-foreground/40 uppercase tracking-widest">{passing}/{total} Passing</span>
+                                                        </div>
+                                                        
+                                                        <div className="w-28 text-right">
+                                                            <div className="text-sm font-black tracking-tight text-foreground/80">${group.totalCost.toLocaleString('en-AU')}</div>
+                                                            <div className="text-[8px] font-bold uppercase text-muted-foreground/20 tracking-tighter">Estimated</div>
                                                         </div>
                                                     </div>
-
-                                                    <div className="space-y-3">
-                                                        {group.proposals.map(p => (
-                                                            <div key={p.shiftId} className="flex flex-col p-3 rounded-2xl bg-muted/20 border border-border/50 gap-2">
-                                                                <div className="flex items-center justify-between">
-                                                                    <div className="flex items-center gap-3">
-                                                                        <div className={cn(
-                                                                            "h-6 w-6 rounded-lg flex items-center justify-center",
-                                                                            p.complianceStatus === 'PASS' ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" : "bg-red-500/20 text-red-600 dark:text-red-400"
-                                                                        )}>
-                                                                            {p.complianceStatus === 'PASS' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                                                                        </div>
-                                                                        <div className="flex flex-col">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <span className="text-[8px] font-black uppercase text-muted-foreground/40 tracking-widest">{format(new Date(p.shiftDate), 'EEE dd MMM')}</span>
-                                                                                {p.roleName && <Badge variant="outline" className="h-3.5 px-1.5 text-[7px] border-border bg-muted/50 text-muted-foreground uppercase font-black">{p.roleName}</Badge>}
-                                                                            </div>
-                                                                            <span className="text-xs font-bold text-foreground">{p.startTime} – {p.endTime}</span>
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                                {p.violations.length > 0 && (
-                                                                    <div className="px-2 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 space-y-1">
-                                                                        {p.violations.map((v, i) => (
-                                                                            <div key={i} className="flex items-start gap-2 text-[10px] text-red-600 dark:text-red-400/80 leading-tight">
-                                                                                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                                                                                <span>{v.description}</span>
-                                                                            </div>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                                </div>
-                                            ) : (
-                                                <div 
-                                                    key="list"
-                                                    className="space-y-2"
-                                                >
-                                                    {/* Header for List View */}
-                                                    <div className="flex items-center px-6 py-3 border-b border-border/30 text-[9px] font-black uppercase tracking-widest text-muted-foreground/40 gap-4">
-                                                        <div className="w-10" />
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (sortField === 'name') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                                else { setSortField('name'); setSortDirection('asc'); }
-                                                            }}
-                                                            className="flex-1 min-w-[150px] flex items-center gap-1.5 hover:text-foreground transition-colors group"
-                                                        >
-                                                            Staff Member
-                                                            {sortField === 'name' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
-                                                        </button>
-                                                        <div className="w-24 text-center">Employment</div>
-                                                        <div className="w-20 text-center">Contract</div>
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (sortField === 'utilization') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                                else { setSortField('utilization'); setSortDirection('desc'); }
-                                                            }}
-                                                            className="w-24 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
-                                                        >
-                                                            Utilization
-                                                            {sortField === 'utilization' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (sortField === 'fatigue') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                                else { setSortField('fatigue'); setSortDirection('desc'); }
-                                                            }}
-                                                            className="w-20 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
-                                                        >
-                                                            Fatigue
-                                                            {sortField === 'fatigue' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (sortField === 'shifts') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                                else { setSortField('shifts'); setSortDirection('desc'); }
-                                                            }}
-                                                            className="w-20 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
-                                                        >
-                                                            Shifts
-                                                            {sortField === 'shifts' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (sortField === 'compliance') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                                else { setSortField('compliance'); setSortDirection('desc'); }
-                                                            }}
-                                                            className="w-28 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors group"
-                                                        >
-                                                            Compliance
-                                                            {sortField === 'compliance' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (sortField === 'cost') setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                                else { setSortField('cost'); setSortDirection('desc'); }
-                                                            }}
-                                                            className="w-28 flex items-center justify-end gap-1.5 hover:text-foreground transition-colors group"
-                                                        >
-                                                            Est. Cost
-                                                            {sortField === 'cost' ? (sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-100" />}
-                                                        </button>
-                                                    </div>
-                                                    
-                                                    {[...employeeGroups].sort((a, b) => {
-                                                        const getComplianceRate = (g: any) => {
-                                                            const p = g.proposals.filter((pr: any) => pr.complianceStatus === 'PASS').length;
-                                                            return g.proposals.length > 0 ? (p / g.proposals.length) : 0;
-                                                        };
-                                                        
-                                                        let valA: any, valB: any;
-                                                        switch (sortField) {
-                                                            case 'name': valA = a.name; valB = b.name; break;
-                                                            case 'utilization': valA = a.utilization; valB = b.utilization; break;
-                                                            case 'shifts': valA = a.proposals.length; valB = b.proposals.length; break;
-                                                            case 'compliance': valA = getComplianceRate(a); valB = getComplianceRate(b); break;
-                                                            case 'cost': valA = a.totalCost; valB = b.totalCost; break;
-                                                            case 'fatigue': valA = a.avgFatigue; valB = b.avgFatigue; break;
-                                                            default: valA = a.name; valB = b.name;
-                                                        }
-                                                        
-                                                        if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-                                                        if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
-                                                        return 0;
-                                                    }).map(group => {
-                                                        const passing = group.proposals.filter(p => p.complianceStatus === 'PASS').length;
-                                                        const total = group.proposals.length;
-                                                        const rate = total > 0 ? (passing / total) * 100 : 0;
-                                                        
-                                                        return (
-                                                            <div key={group.id} className="group flex items-center px-6 py-4 rounded-[1.25rem] bg-muted/10 border border-border/40 hover:bg-muted/20 hover:border-primary/30 transition-all duration-300 gap-4">
-                                                                <div className="h-10 w-10 shrink-0 rounded-lg bg-gradient-to-br from-background to-muted border border-border flex items-center justify-center font-black text-xs uppercase text-primary">
-                                                                    {group.name.split(' ').map(n => n[0]).join('')}
-                                                                </div>
-                                                                
-                                                                <div className="flex-1 min-w-[150px] flex flex-col">
-                                                                    <span className="text-sm font-black tracking-tight text-foreground">{group.name}</span>
-                                                                    <div className="flex flex-wrap gap-1 mt-1">
-                                                                        {group.assignedRoles.slice(0, 2).map(role => (
-                                                                            <Badge key={role} variant="outline" className="h-3.5 px-1.5 text-[7px] font-black uppercase border-none bg-muted/50 text-muted-foreground/60">
-                                                                                {role}
-                                                                            </Badge>
-                                                                        ))}
-                                                                        {group.assignedRoles.length > 2 && <span className="text-[7px] font-bold text-muted-foreground/30 ml-1">+{group.assignedRoles.length - 2}</span>}
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="w-24 flex justify-center">
-                                                                    <Badge className="bg-muted text-muted-foreground/60 text-[9px] font-black border-none uppercase tracking-widest">{group.employmentType}</Badge>
-                                                                </div>
-
-                                                                <div className="w-20 text-center">
-                                                                    <span className="text-xs font-bold text-foreground/70">{group.contractedHours}h</span>
-                                                                </div>
-                                                                
-                                                                <div className="w-24 flex justify-center">
-                                                                    <div className="flex flex-col items-center">
-                                                                        <span className="text-[10px] font-black text-foreground">{group.utilization.toFixed(0)}%</span>
-                                                                        <div className="h-1 w-12 bg-muted rounded-full mt-1 overflow-hidden">
-                                                                            <div 
-                                                                                className={cn(
-                                                                                    "h-full transition-all",
-                                                                                    group.utilization > 90 ? "bg-red-500" : group.utilization > 70 ? "bg-amber-500" : "bg-emerald-500"
-                                                                                )} 
-                                                                                style={{ width: `${Math.min(group.utilization, 100)}%` }} 
-                                                                            />
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="w-20 text-center">
-                                                                    <span className={cn(
-                                                                        "text-xs font-black",
-                                                                        group.avgFatigue > 8 ? "text-red-500" : group.avgFatigue > 5 ? "text-amber-500" : "text-emerald-500"
-                                                                    )}>
-                                                                        {group.avgFatigue.toFixed(1)}
-                                                                    </span>
-                                                                </div>
-                                                                
-                                                                <div className="w-20 flex justify-center">
-                                                                    <Popover open={hoveredDistId === group.id} onOpenChange={(o) => !o && setHoveredDistId(null)}>
-                                                                        <PopoverTrigger asChild>
-                                                                            <div 
-                                                                                className="cursor-help"
-                                                                                onMouseEnter={() => setHoveredDistId(group.id)}
-                                                                                onMouseLeave={() => setHoveredDistId(null)}
-                                                                            >
-                                                                                <Badge variant="outline" className="bg-muted text-muted-foreground/60 text-[9px] font-black border-none hover:bg-muted/50 transition-colors">
-                                                                                    {group.proposals.length}
-                                                                                </Badge>
-                                                                            </div>
-                                                                        </PopoverTrigger>
-                                                                        <PopoverContent 
-                                                                            side="top" 
-                                                                            align="center"
-                                                                            className="w-[240px] p-0 overflow-hidden bg-background border-border shadow-2xl rounded-2xl z-[1000] pointer-events-none"
-                                                                            onMouseEnter={() => setHoveredDistId(group.id)}
-                                                                        >
-                                                                            <div className="p-4 space-y-3">
-                                                                                <div className="flex items-center justify-between border-b border-border/50 pb-2">
-                                                                                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40">Shift Distribution</span>
-                                                                                    <span className="text-[10px] font-black text-primary">{group.proposals.length} Total</span>
-                                                                                </div>
-                                                                                <div className="grid grid-cols-2 gap-2">
-                                                                                    {group.roleDistribution.map(rd => (
-                                                                                        <div key={rd.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/50">
-                                                                                            <div className="flex items-center gap-2">
-                                                                                                <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: LEVEL_COLORS[rd.name] || LEVEL_COLORS.default }} />
-                                                                                                <span className="text-[10px] font-bold text-foreground/80">{rd.name}</span>
-                                                                                            </div>
-                                                                                            <span className="text-[10px] font-black text-primary">{rd.value}</span>
-                                                                                        </div>
-                                                                                    ))}
-                                                                                    {group.roleDistribution.length === 0 && (
-                                                                                        <div className="col-span-2 text-center py-2 text-[10px] text-muted-foreground/40 italic">No level data</div>
-                                                                                    )}
-                                                                                </div>
-                                                                            </div>
-                                                                        </PopoverContent>
-                                                                    </Popover>
-                                                                </div>
-                                                                
-                                                                <div className="w-28 flex flex-col items-center gap-1">
-                                                                    <div className="flex items-center gap-1">
-                                                                        <div className={cn("h-1.5 w-1.5 rounded-full", rate === 100 ? "bg-emerald-500" : rate > 0 ? "bg-amber-500" : "bg-red-500")} />
-                                                                        <span className="text-[10px] font-black text-foreground">{rate.toFixed(0)}% Clear</span>
-                                                                    </div>
-                                                                    <span className="text-[7px] font-bold text-muted-foreground/40 uppercase tracking-widest">{passing}/{total} Passing</span>
-                                                                </div>
-                                                                
-                                                                <div className="w-28 text-right">
-                                                                    <div className="text-sm font-black tracking-tight text-foreground/80">${group.totalCost.toLocaleString('en-AU')}</div>
-                                                                    <div className="text-[8px] font-bold uppercase text-muted-foreground/20 tracking-tighter">Estimated</div>
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
-                                        </AnimatePresence>
+                                                );
+                                            })}
+                                        </div>
 
                                             {/* Coverage Gaps Card */}
                                             {result.uncoveredAudit && result.uncoveredAudit.length > 0 && (
@@ -1660,7 +1139,7 @@ export function AutoSchedulerModal({
                             {phase === 'idle' && (
                                 <Button 
                                     onClick={handleRun}
-                                    disabled={!health?.available || filteredShifts.length === 0}
+                                    disabled={!health?.available || filteredShifts.length === 0 || !!validationError}
                                     className="rounded-full px-10 h-14 bg-primary hover:bg-primary/90 text-white font-black uppercase tracking-widest text-[10px] gap-3 shadow-lg shadow-primary/30 group"
                                 >
                                     <Zap className="h-4 w-4 fill-current group-hover:scale-125 transition-transform" />
