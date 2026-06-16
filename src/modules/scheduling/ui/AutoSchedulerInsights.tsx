@@ -26,46 +26,61 @@ import type {
 } from '../types';
 
 // ── pillar score → semantic colour band ──────────────────────────────────────
-function band(score: number): { text: string; bar: string; ring: string } {
-    if (score >= 85) return { text: 'text-emerald-600 dark:text-emerald-400', bar: 'bg-emerald-500', ring: 'stroke-emerald-500' };
-    if (score >= 65) return { text: 'text-amber-600 dark:text-amber-400', bar: 'bg-amber-500', ring: 'stroke-amber-500' };
-    return { text: 'text-rose-600 dark:text-rose-400', bar: 'bg-rose-500', ring: 'stroke-rose-500' };
+function band(score: number): { text: string; bar: string; chip: string } {
+    if (score >= 85) return { text: 'text-emerald-600 dark:text-emerald-400', bar: 'bg-emerald-500', chip: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' };
+    if (score >= 65) return { text: 'text-amber-600 dark:text-amber-400', bar: 'bg-amber-500', chip: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' };
+    return { text: 'text-rose-600 dark:text-rose-400', bar: 'bg-rose-500', chip: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' };
 }
+
+// Cost is a $ value, not a 0-100 score — give it a neutral (non-graded) treatment
+// so it reads as "a figure", not "a passing grade".
+const NEUTRAL_BAND = { text: 'text-sky-600 dark:text-sky-400', bar: 'bg-sky-500', chip: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' };
 
 const fmtMoney = (n: number) =>
     new Intl.NumberFormat(undefined, { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(n);
 
-// ── one pillar card ───────────────────────────────────────────────────────────
+// ── one pillar card — the SINGLE uniform metric card used across the scorecard ──
+// `score` (0-100) drives the colour band, the "/100" chip and the bar fill.
+// `unit` (e.g. "AUD") opts a card out of grading: neutral band, full bar, the
+// unit shown in place of the score chip. Every card shares identical chrome so
+// the row reads as one coherent set, not competing widgets.
 function PillarCard({
-    icon, label, score, value, sub, index,
+    icon, label, value, sub, score, unit, index,
 }: {
-    icon: React.ReactNode; label: string; score: number; value: string; sub: string; index: number;
+    icon: React.ReactNode; label: string; value: string; sub: string;
+    score?: number; unit?: string; index: number;
 }) {
-    const c = band(score);
+    const c = unit ? NEUTRAL_BAND : band(score ?? 0);
+    const fill = unit ? 100 : Math.max(2, Math.min(100, score ?? 0));
     return (
         <motion.div
-            initial={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.06, duration: 0.25 }}
+            transition={{ delay: index * 0.06, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
         >
-            <Card className="p-4 h-full flex flex-col gap-2 bg-card border-border">
-                <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                        {icon}{label}
+            <div className="group relative h-full overflow-hidden rounded-2xl border border-border/60 bg-card/70 dark:bg-card/40 p-4 shadow-sm transition-colors hover:border-border">
+                {/* score-coloured accent hairline */}
+                <div className={`absolute inset-x-0 top-0 h-px ${c.bar} opacity-70`} />
+                <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${c.chip}`}>{icon}</span>
+                        <span className="truncate">{label}</span>
                     </span>
-                    <span className={`text-xs font-semibold ${c.text}`}>{score}<span className="text-muted-foreground">/100</span></span>
+                    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-black tabular-nums ${c.chip}`}>
+                        {unit ?? `${score}/100`}
+                    </span>
                 </div>
-                <div className="text-2xl font-bold text-foreground tabular-nums">{value}</div>
-                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div className="mt-3 text-2xl font-black tracking-tight tabular-nums text-foreground">{value}</div>
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted/70">
                     <motion.div
                         className={`h-full rounded-full ${c.bar}`}
                         initial={{ width: 0 }}
-                        animate={{ width: `${Math.max(2, Math.min(100, score))}%` }}
-                        transition={{ delay: index * 0.06 + 0.1, duration: 0.4 }}
+                        animate={{ width: `${fill}%` }}
+                        transition={{ delay: index * 0.06 + 0.15, duration: 0.5, ease: 'easeOut' }}
                     />
                 </div>
-                <div className="text-xs text-muted-foreground">{sub}</div>
-            </Card>
+                <div className="mt-2 truncate text-[11px] text-muted-foreground/80 tabular-nums">{sub}</div>
+            </div>
         </motion.div>
     );
 }
@@ -109,6 +124,12 @@ export function AutoSchedulerInsights({ result }: { result: AutoSchedulerResult 
     const costDelta = cheapest ? pillars.cost.total - cheapest.pillars.cost.total : 0;
     const fairnessDelta = cheapest ? pillars.fairness.score - cheapest.pillars.fairness.score : 0;
 
+    // Compliance pass-rate — folded into the single scorecard as a 5th pillar
+    // (was a separate, redundant stats tile). One source of truth per metric.
+    const compliancePct = result.totalProposals > 0
+        ? Math.round((result.passing / result.totalProposals) * 100)
+        : 100;
+
     const radarColors: Record<string, string> = {
         chosen: '#10b981', cheapest: '#f59e0b', fairest: '#6366f1',
     };
@@ -124,8 +145,12 @@ export function AutoSchedulerInsights({ result }: { result: AutoSchedulerResult 
                 </span>
             </div>
 
-            {/* U2 — four-pillar scorecard */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* THE scorecard — one uniform card per headline metric. This is the
+                single source of truth: the old second stats grid (Total Cost /
+                Avg Fatigue / Uncovered / Coverage / Compliance) duplicated four of
+                these and split fatigue into two conflicting numbers, so it was
+                removed. Per-person fatigue/cost live in the staff table below. */}
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                 <PillarCard
                     index={0}
                     icon={<CalendarCheck className="h-3.5 w-3.5" />}
@@ -136,14 +161,6 @@ export function AutoSchedulerInsights({ result }: { result: AutoSchedulerResult 
                 />
                 <PillarCard
                     index={1}
-                    icon={<Scale className="h-3.5 w-3.5" />}
-                    label="Fairness"
-                    score={pillars.fairness.score}
-                    value={`${pillars.fairness.score}`}
-                    sub={`${pillars.fairness.employees_used} staff · ${Math.round(pillars.fairness.spread_minutes / 60)}h spread`}
-                />
-                <PillarCard
-                    index={2}
                     icon={<BatteryCharging className="h-3.5 w-3.5" />}
                     label="Wellbeing"
                     score={pillars.fatigue.score}
@@ -155,10 +172,26 @@ export function AutoSchedulerInsights({ result }: { result: AutoSchedulerResult 
                             : 'all well-rested'}
                 />
                 <PillarCard
+                    index={2}
+                    icon={<Scale className="h-3.5 w-3.5" />}
+                    label="Fairness"
+                    score={pillars.fairness.score}
+                    value={`${pillars.fairness.score}`}
+                    sub={`${pillars.fairness.employees_used} staff · ${Math.round(pillars.fairness.spread_minutes / 60)}h spread`}
+                />
+                <PillarCard
                     index={3}
+                    icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                    label="Compliance"
+                    score={compliancePct}
+                    value={`${compliancePct}%`}
+                    sub={`${result.passing}/${result.totalProposals} passing`}
+                />
+                <PillarCard
+                    index={4}
                     icon={<DollarSign className="h-3.5 w-3.5" />}
                     label="Labour cost"
-                    score={100}
+                    unit="AUD"
                     value={fmtMoney(pillars.cost.total)}
                     sub={`${fmtMoney(pillars.cost.avg_per_shift)}/shift avg`}
                 />

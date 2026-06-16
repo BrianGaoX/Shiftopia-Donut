@@ -749,40 +749,13 @@ export function AutoSchedulerModal({
                                             constraint banner, and Pareto trade-off explorer. */}
                                         <AutoSchedulerInsights result={result} />
 
-                                        {/* Result Stats Grid — Fix 1: replaced "Success Rate" (compliance pass-rate)
-                                            with "Coverage" (assigned / total shifts asked). Added "Compliance Pass-Rate"
-                                            as a 5th tile; used grid-cols-5 with tighter padding so all fit at xl width. */}
-                                        <div className="grid grid-cols-5 gap-3">
-                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
-                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Total Cost</span>
-                                                <span className="text-2xl font-black text-blue-600 dark:text-blue-400 tracking-tighter">${totals.cost.toLocaleString('en-AU', { maximumFractionDigits: 0 })}</span>
-                                            </div>
-                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
-                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Avg Fatigue</span>
-                                                <span className="text-2xl font-black text-amber-600 dark:text-amber-400 tracking-tighter">{totals.fatigue.toFixed(1)}</span>
-                                                <span className="text-[8px] font-bold text-muted-foreground/30 uppercase tracking-widest">p95 {totals.p95Fatigue.toFixed(1)}</span>
-                                            </div>
-                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
-                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Uncovered</span>
-                                                <span className="text-2xl font-black text-muted-foreground/40 tracking-tighter">{result.uncoveredV8ShiftIds.length}</span>
-                                            </div>
-                                            {/* Fix 1: Coverage = (assigned / total) — primary signal for how many shifts got staffed */}
-                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
-                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Coverage</span>
-                                                {(() => {
-                                                    const totalShifts = result.proposals.length + result.uncoveredV8ShiftIds.length;
-                                                    const covered = result.proposals.length;
-                                                    const pct = totalShifts > 0 ? Math.round((covered / totalShifts) * 100) : 0;
-                                                    return <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 tracking-tighter">{pct}%</span>;
-                                                })()}
-                                            </div>
-                                            {/* Fix 1: Compliance pass-rate retained as separate tile — still useful but no longer the headline */}
-                                            <div className="p-5 rounded-[2rem] bg-muted/20 border border-border flex flex-col gap-1 shadow-lg">
-                                                <span className="text-[9px] font-black uppercase text-muted-foreground/50 tracking-widest mb-1">Compliance</span>
-                                                <span className="text-2xl font-black text-violet-600 dark:text-violet-400 tracking-tighter">{((result.passing / result.totalProposals) * 100 || 0).toFixed(0)}%</span>
-                                                <span className="text-[8px] font-bold text-muted-foreground/30 uppercase tracking-widest">Pass Rate</span>
-                                            </div>
-                                        </div>
+                                        {/* The second stats grid (Total Cost / Avg Fatigue / Uncovered /
+                                            Coverage / Compliance) was removed: it duplicated Coverage and
+                                            Cost from the scorecard above, restated Uncovered as the inverse
+                                            of Coverage, and showed a SECOND, conflicting fatigue number
+                                            (avg 14.0) next to the Wellbeing pillar (62). Compliance is now a
+                                            pillar in AutoSchedulerInsights; per-person fatigue/cost live in
+                                            the staff table below. One uniform scorecard = one source of truth. */}
 
                                         {/* Objective breakdown — shows which strategy term drove the solver's score */}
                                         {(() => {
