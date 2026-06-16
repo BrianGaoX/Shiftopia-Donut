@@ -800,18 +800,67 @@ export class AutoSchedulerController {
             }
         }
 
-        const passing = validatedProposals.filter(p => p.passing).length;
-        const failing = validatedProposals.length - passing;
+        // ── Compliance is a HARD gate ─────────────────────────────────────────
+        // A non-compliant assignment is NEVER applied (commit() drops it at the
+        // recheck step), so it must not be presented as a "proposal" either —
+        // otherwise the scorecard shows <100% compliance for a roster we would
+        // never actually book. Reclassify every failing proposal as an UNCOVERED
+        // shift: the applied roster is then 100% compliant BY CONSTRUCTION, and
+        // coverage honestly reflects the compliant maximum the solver reached.
+        const compliantProposals = validatedProposals.filter(p => p.passing);
+        const droppedForCompliance = validatedProposals.filter(p => !p.passing);
+        uncoveredV8ShiftIds = Array.from(
+            new Set([...uncoveredV8ShiftIds, ...droppedForCompliance.map(p => p.shiftId)]),
+        );
+
+        const passing = compliantProposals.length;
+        const failing = 0; // by construction — nothing non-compliant reaches the roster
+
+        // Recompute coverage + cost pillars over the COMPLIANT set so the
+        // scorecard matches what will actually be booked (the solver computed
+        // them over every proposal, including the ones we just uncovered).
+        // Fairness/wellbeing move only marginally and need solver-side
+        // effective-minute state to recompute, so they are left as reported.
+        let pillars = optimizerPillars;
+        if (pillars) {
+            const total = pillars.coverage?.total ?? (passing + uncoveredV8ShiftIds.length);
+            const compliantCost = compliantProposals.reduce((s, p) => s + (p.optimizerCost || 0), 0);
+            pillars = {
+                ...pillars,
+                coverage: {
+                    ...pillars.coverage,
+                    score: total > 0 ? Math.round((passing / total) * 1000) / 10 : 100,
+                    covered: passing,
+                    total,
+                },
+                cost: {
+                    ...pillars.cost,
+                    total: Math.round(compliantCost * 100) / 100,
+                    avg_per_shift: passing > 0 ? Math.round((compliantCost / passing) * 100) / 100 : 0,
+                },
+            };
+        }
+
+        // Tell the U5 banner WHY each compliance-dropped shift is uncovered (the
+        // solver's own binding list only covers shifts it couldn't place at all).
+        const complianceBinding = droppedForCompliance
+            .filter(p => p.violations?.length)
+            .map(p => ({
+                shift_id: p.shiftId,
+                eligible_count: 0,
+                reason: (p.violations.find(v => v.blocking) ?? p.violations[0])?.description
+                    ?? 'Left uncovered to keep the roster 100% compliant',
+            }));
 
         const result: AutoSchedulerResult = {
             optimizerStatus,
             solveTimeMs,
             validationTimeMs,
-            totalProposals: validatedProposals.length,
+            totalProposals: passing,        // compliant-only → compliance pillar reads 100%
             passing,
             failing,
             uncoveredV8ShiftIds,
-            proposals: validatedProposals,
+            proposals: compliantProposals,  // only assignments we will actually book
             canCommit: passing > 0,
             usedFallback,
             capacityCheck,
@@ -822,8 +871,8 @@ export class AutoSchedulerController {
             organizationId: input.organizationId,
             // B3/B5/B4 — single-mode transparency for the scorecard, constraint
             // banner, trade-off explorer, and per-shift "why" panel.
-            pillars: optimizerPillars,
-            bindingConstraints: optimizerBinding,
+            pillars,
+            bindingConstraints: [...(optimizerBinding ?? []), ...complianceBinding],
             alternatives: optimizerAlternatives,
             rationaleByShift: optimizerRationaleByShift,
         };
@@ -931,7 +980,7 @@ export class AutoSchedulerController {
                     }
 
                     if (freshResult.passedV8ShiftIds.length === 0) {
-                        console.warn('[AutoScheduler] All shifts failed recheck for', employeeId);
+                        console.debug('[AutoScheduler] All shifts failed recheck for', employeeId);
                         return {
                             employeeId,
                             passingShiftIds: [],
@@ -940,13 +989,8 @@ export class AutoSchedulerController {
                         };
                     }
 
-                    if (freshResult.failedV8ShiftIds.length > 0) {
-                        console.warn(
-                            '[AutoScheduler] Concurrency: %d shifts newly failed recheck for %s',
-                            freshResult.failedV8ShiftIds.length, employeeId,
-                        );
-                    }
-
+                    // Per-employee conflicts are aggregated into ONE summary after
+                    // the recheck loop (see below) — no per-employee warn flood.
                     return {
                         employeeId,
                         passingShiftIds: freshResult.passedV8ShiftIds,
@@ -956,6 +1000,16 @@ export class AutoSchedulerController {
                 }),
             );
             recheckOutcomes.push(...chunkResults);
+        }
+
+        // One aggregated recheck summary instead of a per-employee warn flood.
+        const recheckNewlyFailed = recheckOutcomes.reduce((s, o) => s + o.recheckConflicts.length, 0);
+        const recheckAffected = recheckOutcomes.filter(o => o.recheckConflicts.length > 0).length;
+        if (recheckNewlyFailed > 0) {
+            console.warn(
+                '[AutoScheduler] Concurrency recheck: %d shift(s) across %d staff newly failed and were skipped from the commit',
+                recheckNewlyFailed, recheckAffected,
+            );
         }
 
         // Employees whose recheck entirely failed — they will not be in the
@@ -1148,6 +1202,13 @@ export class AutoSchedulerController {
     ): Promise<ValidatedProposal[]> {
         const all: ValidatedProposal[] = [];
 
+        // Aggregate compliance-failure diagnostics into ONE summary log at the
+        // end, instead of one noisy console line per employee (100+ staff floods
+        // the console and reads like an error storm).
+        let failTotal = 0;
+        const failedStaff = new Set<string>();
+        const failByRule: Record<string, number> = {};
+
         for (const group of groups) {
             let bulkResult: BulkAssignmentResult;
             try {
@@ -1211,23 +1272,19 @@ export class AutoSchedulerController {
 
             const resultByShift = new Map(bulkResult.results.map(r => [r.shiftId, r]));
 
-            // Diagnostic: surface why proposals are flunking validation. The
-            // optimizer can return 100% coverage while the validator marks
-            // every proposal as failing, leaving the UI showing 0 success.
-            // This log lets us see *which* rule disagrees with the solver.
-            const groupPass = bulkResult.results.filter(r => r.passing).length;
+            // Diagnostic: accumulate WHICH rule disagrees with the solver, so the
+            // single end-of-pass summary can report it. (The optimizer can return
+            // 100% coverage while the validator rejects some proposals; those are
+            // then left uncovered to keep the roster compliant.)
             const groupFail = bulkResult.results.filter(r => !r.passing).length;
             if (groupFail > 0) {
-                const violationCounts: Record<string, number> = {};
+                failTotal += groupFail;
+                failedStaff.add(group.employeeName);
                 for (const r of bulkResult.results) {
                     for (const v of r.violations ?? []) {
-                        violationCounts[v.violation_type] = (violationCounts[v.violation_type] ?? 0) + 1;
+                        failByRule[v.violation_type] = (failByRule[v.violation_type] ?? 0) + 1;
                     }
                 }
-                console.warn(
-                    '[AutoScheduler] Validation: %s passing=%d failing=%d violations=%o',
-                    group.employeeName, groupPass, groupFail, violationCounts,
-                );
             }
 
             for (const p of group.proposals) {
@@ -1245,6 +1302,13 @@ export class AutoSchedulerController {
                     passing: cr?.passing ?? false,
                 });
             }
+        }
+
+        if (failTotal > 0) {
+            console.warn(
+                '[AutoScheduler] Validation: %d assignment(s) across %d staff failed compliance and will be left uncovered — by rule: %o',
+                failTotal, failedStaff.size, failByRule,
+            );
         }
 
         return all;
