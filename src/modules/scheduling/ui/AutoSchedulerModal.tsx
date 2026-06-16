@@ -202,8 +202,11 @@ export function AutoSchedulerModal({
     }, [rawShifts, startDate, endDate, validationError]);
 
     const ESTIMATED_TOTAL_SECONDS = useMemo(() => {
+        // Must stay in sync with dynamicBudget in auto-scheduler.controller.ts.
+        // Largest bucket gets extra headroom for big monthly rosters; this
+        // composes with the solver's front-loaded per-tier time allocation.
         const rawPairs = filteredShifts.length * employees.length;
-        if (rawPairs > 30000) return 90;
+        if (rawPairs > 30000) return 120;
         if (rawPairs > 10000) return 60;
         return 30;
     }, [filteredShifts.length, employees.length]);

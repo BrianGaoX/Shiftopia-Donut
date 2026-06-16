@@ -574,6 +574,11 @@ class ScheduleModelBuilder:
         # B3 — lexicographic objective tiers, populated by _add_objective() and
         # optimised in strict priority order by _solve(). See _add_objective.
         self._objective_tiers: list[tuple[str, object]] = []
+        # FIX (B) — the greedy warm-start roster, stashed by _apply_greedy_hint
+        # so _solve() can materialise it as a FALLBACK INCUMBENT when CP-SAT
+        # times out with no incumbent on a large model. Keys are the trusted
+        # (emp_id, shift_id) pairs the greedy engine assigned (value == 1).
+        self._greedy_hint: dict[tuple[str, str], int] = {}
         # B4 — tier ordering profile. 'balanced' is the live single-mode policy
         # (coverage > guardrails > cost); 'cheapest' / 'fairest' are used only to
         # generate Pareto "what-if" alternatives for the UI trade-off explorer.
@@ -1876,6 +1881,17 @@ class ScheduleModelBuilder:
         # Modern OR-Tools guidance: only hint the assignments we trust.
         # Setting non-hinted vars to 0 over-constrains search.
 
+        # FIX (B): stash the greedy roster so _solve() can fall back to it as a
+        # feasible incumbent if CP-SAT times out with no solution on a large
+        # model. Only retain the pairs that correspond to a real variable AND
+        # were actually assigned (value == 1) — these are the trusted, rest- and
+        # eligibility-respecting assignments computed by compute_greedy_hint.
+        self._greedy_hint = {
+            (emp_id, shift_id): value
+            for (emp_id, shift_id), value in hints.items()
+            if value == 1 and (emp_id, shift_id) in self._x
+        }
+
         self._metrics.greedy_hint_applied = True
 
     # -- F: Solve --------------------------------------------------------------
@@ -1924,6 +1940,30 @@ class ScheduleModelBuilder:
         # would have honored only the first declared strategy and starved
         # the LNS workers, contributing to UNKNOWN time-outs on busy days.
         solver.parameters.search_branching = cp_model.AUTOMATIC_SEARCH
+        # FIX (B): make the greedy warm-start a USABLE incumbent.
+        #
+        # The greedy hint (`_apply_greedy_hint` -> AddHint) only pins the
+        # assignments we trust, leaving the rest of the hint partial. On a large
+        # model where tier-1 can't prove feasibility inside the budget, CP-SAT
+        # can run the clock out with NO incumbent at all -> status UNKNOWN with 0
+        # assignments, and the TS controller then falls back to its own greedy
+        # first-fit engine (never taking the optimizer path).
+        #
+        # The textbook fix is `solver.parameters.repair_hint = True` (repair the
+        # partial hint into a complete feasible incumbent). On THIS OR-Tools
+        # build (9.15.6755) repair_hint triggers a native LOG(FATAL) abort in
+        # MinimizeL1DistanceWithHint / ConfigureSearchHeuristics on the *second*
+        # solve in a process -- it crashes the whole worker, which is fatal for
+        # the long-lived uvicorn service. So we DO NOT set repair_hint.
+        #
+        # Instead we keep the greedy roster as an explicit FALLBACK INCUMBENT:
+        # the greedy hint is stashed in `_apply_greedy_hint`, and the
+        # lexicographic loop below materialises a solution from it if the
+        # feasibility-critical FIRST tier ever returns a non-(OPTIMAL|FEASIBLE)
+        # status with no incumbent -- reporting FEASIBLE with the greedy roster
+        # rather than UNKNOWN/0. Combined with the front-loaded budget (FIX A),
+        # this guarantees the solver never silently degrades to UNKNOWN/0 when a
+        # greedy-feasible roster exists.
 
         # -- B3: Lexicographic (preemptive) optimisation ----------------------
         # Optimise each tier in strict priority order, locking it at its optimum
@@ -1937,18 +1977,70 @@ class ScheduleModelBuilder:
                 [t for lst in self._term_categories.values() for t in lst]))
         ]
         n_tiers = len(tiers)
-        per_tier_wall = max(0.05, params.max_time_seconds / n_tiers)
+
+        # FIX (A): front-load the per-tier budget instead of splitting it evenly.
+        # The first tier (coverage) is the feasibility-critical one: it must find
+        # a first feasible solution for the WHOLE model. An even split (e.g. 90s/3
+        # = 30s) starves it on large production problems (806 shifts / 103 staff),
+        # so tier-1 returns UNKNOWN and the lexicographic loop breaks with 0
+        # assignments. We give the first tier the bulk of the budget and split the
+        # remainder evenly across the lower-priority refinement tiers.
+        #
+        # Allocation is a PURE FUNCTION of params.max_time_seconds and tier index
+        # (no wall-clock carry-over) so the deterministic budget — and therefore
+        # the regression suite's reproducibility — is preserved. The weights sum
+        # to 1.0, so the total across tiers stays <= params.max_time_seconds and
+        # the TS client's `solverBudgetSec*1000 + 30_000` timeout is never blown.
+        FIRST_TIER_FRACTION = 0.7  # tier-1 gets 70% of the budget
+        if n_tiers <= 1:
+            tier_weights = [1.0]
+        else:
+            rest = (1.0 - FIRST_TIER_FRACTION) / (n_tiers - 1)
+            tier_weights = [FIRST_TIER_FRACTION] + [rest] * (n_tiers - 1)
+
         status_code = cp_model.UNKNOWN
         self._tier_values: dict[str, float] = {}
+        # FIX (B) — best feasible solution found across the tiers. A LATER tier
+        # timing out (UNKNOWN) must NOT discard the feasible solution a PRIOR
+        # tier already proved: on this large production model tier-1 (coverage)
+        # reaches OPTIMAL but tier-2 (guardrail) then times out, and reading
+        # solver.value() after that failed solve would lose tier-1's roster. We
+        # therefore snapshot the (emp_id,shift_id) assignment values and the set
+        # of uncovered shifts after every OPTIMAL/FEASIBLE tier, and report the
+        # most-refined snapshot. `best_status_code` is the status of that
+        # snapshot (the prior good tier), not the failed final solve.
+        best_solution: Optional[dict[tuple[str, str], int]] = None
+        best_uncovered: Optional[set[str]] = None
+        best_status_code = cp_model.UNKNOWN
+        completed_all_tiers = True
         for idx, (tier_name, tier_expr) in enumerate(tiers):
+            per_tier_wall = max(0.05, params.max_time_seconds * tier_weights[idx])
             solver.parameters.max_time_in_seconds = per_tier_wall
             solver.parameters.max_deterministic_time = per_tier_wall * 1000
             self.model.Minimize(tier_expr)
             status_code = solver.solve(self.model)
             if status_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                # Tier 1 failing means no coverage-feasible roster exists; report
-                # that status and stop (upstream greedy fallback handles it).
+                # This tier produced no usable solution within its budget.
+                #   - If a PRIOR tier already found one (best_solution is set),
+                #     stop refining and keep that feasible roster — the
+                #     lexicographic guarantee (coverage locked first) still holds.
+                #   - If this is the FIRST tier and it found nothing, CP-SAT has
+                #     no incumbent at all (a time-out on a huge model, NOT a proof
+                #     of infeasibility). We leave best_solution=None and let the
+                #     greedy fallback (below) materialise an incumbent rather than
+                #     returning UNKNOWN/0 and forcing the controller off the
+                #     optimizer path.
+                completed_all_tiers = False
                 break
+            # Snapshot this tier's (more-refined) feasible solution.
+            best_solution = {
+                key: solver.value(var) for key, var in self._x.items()
+            }
+            best_uncovered = {
+                s.id for s in self.data.shifts
+                if solver.value(self._uncovered[s.id]) == 1
+            }
+            best_status_code = status_code
             opt_val = solver.objective_value
             self._tier_values[tier_name] = opt_val
             # Lock this tier at its optimum so lower-priority tiers cannot regress
@@ -1956,6 +2048,14 @@ class ScheduleModelBuilder:
             # are integer here, so round() is exact and keeps the optimum feasible.
             if idx < n_tiers - 1 and not isinstance(tier_expr, int):
                 self.model.Add(tier_expr <= int(round(opt_val)))
+        # Whether the FINAL solver.solve() call itself was feasible — captured
+        # BEFORE we overwrite status_code with the best-snapshot status. Only
+        # when this is true does the live solver still hold a solution we can
+        # read via solver.value() / objective_breakdown().
+        final_solve_feasible = status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+        # The reported status is that of the best snapshot we actually kept (a
+        # later tier may have timed out after an earlier tier solved).
+        status_code = best_status_code
 
         STATUS = {
             cp_model.OPTIMAL:    'OPTIMAL',
@@ -1966,36 +2066,83 @@ class ScheduleModelBuilder:
         }
         status = STATUS.get(status_code, 'UNKNOWN')
 
+        # `solver_solved` == we kept a real CP-SAT solution snapshot (from this
+        # tier or a prior one). `last_solve_feasible` == the FINAL solve call
+        # itself was feasible, so the live solver state still holds a solution and
+        # solver.value()/objective_breakdown() are safe to read directly.
+        solver_solved = best_solution is not None
+        last_solve_feasible = final_solve_feasible
+
+        # FIX (B) — greedy fallback incumbent. Only when CP-SAT found NOTHING at
+        # all (no snapshot from any tier) AND the model wasn't proven INFEASIBLE
+        # / MODEL_INVALID: a tier-1 time-out (UNKNOWN) on a huge model. Rather
+        # than degrading to UNKNOWN/0 (which makes the controller discard the
+        # optimizer entirely), materialise the greedy warm-start roster — a real,
+        # rest-/eligibility-respecting assignment — and report FEASIBLE.
+        used_greedy_fallback = (
+            not solver_solved
+            and status_code not in (cp_model.INFEASIBLE, cp_model.MODEL_INVALID)
+            and bool(self._greedy_hint)
+        )
+        if used_greedy_fallback:
+            logger.warning(
+                '[ModelBuilder] CP-SAT found no incumbent (%s); falling back to '
+                'greedy warm-start roster (%d assignments).',
+                status, len(self._greedy_hint),
+            )
+            status = 'FEASIBLE'
+        elif solver_solved:
+            # Report the kept snapshot's status (OPTIMAL/FEASIBLE), which may
+            # differ from the final tier's UNKNOWN time-out.
+            status = STATUS.get(best_status_code, status)
+
         assignments: list[AssignmentProposal] = []
         unassigned: list[str] = []
 
-        if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if solver_solved or used_greedy_fallback:
             emp_map = {e.id: e for e in self.data.employees}
             shift_map = {s.id: s for s in self.data.shifts}
-            for (emp_id, shift_id), var in self._x.items():
-                if solver.value(var) == 1:
-                    emp = emp_map[emp_id]
-                    shift = shift_map[shift_id]
-                    cost = (shift.duration_minutes / 60.0) * emp.hourly_rate
-                    assignments.append(AssignmentProposal(
-                        shift_id=shift_id,
-                        employee_id=emp_id,
-                        employment_type=emp.employment_type,
-                        cost=round(cost, 2),
-                        rationale=self._assignment_rationale(emp, shift),
-                    ))
-            for shift in self.data.shifts:
-                if solver.value(self._uncovered[shift.id]) == 1:
-                    unassigned.append(shift.id)
+            # Source of the roster: the best CP-SAT snapshot when one exists,
+            # otherwise the stashed greedy roster.
+            assigned_shift_ids: set[str] = set()
+            if solver_solved:
+                pairs = [key for key, v in best_solution.items() if v == 1]
+            else:
+                pairs = list(self._greedy_hint.keys())
+            for emp_id, shift_id in pairs:
+                emp = emp_map[emp_id]
+                shift = shift_map[shift_id]
+                cost = (shift.duration_minutes / 60.0) * emp.hourly_rate
+                assignments.append(AssignmentProposal(
+                    shift_id=shift_id,
+                    employee_id=emp_id,
+                    employment_type=emp.employment_type,
+                    cost=round(cost, 2),
+                    rationale=self._assignment_rationale(emp, shift),
+                ))
+                assigned_shift_ids.add(shift_id)
+            if solver_solved:
+                unassigned = sorted(best_uncovered or set())
+            else:
+                unassigned = [
+                    s.id for s in self.data.shifts
+                    if s.id not in assigned_shift_ids
+                ]
 
         breakdown: Optional[dict[str, int]] = None
         pillars: Optional[dict] = None
         binding: Optional[list] = None
-        if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if last_solve_feasible:
+            # objective_breakdown evaluates the term expressions against the LIVE
+            # solver solution; only valid when the final solve itself was
+            # feasible (i.e. the solver still holds that solution).
             try:
                 breakdown = self.objective_breakdown(solver)
             except Exception as _exc:
                 logger.warning('[ModelBuilder] objective_breakdown failed: %s', _exc)
+        if solver_solved or used_greedy_fallback:
+            # Pillars/binding derive purely from the assignment + unassigned
+            # lists, so they are valid for the greedy-fallback roster too.
             try:
                 pillars = self._compute_pillars(assignments, unassigned)
                 binding = self._compute_binding(unassigned)
@@ -2006,11 +2153,17 @@ class ScheduleModelBuilder:
             status=status,
             assignments=assignments,
             unassigned_shift_ids=unassigned,
+            # solver.objective_value / best_objective_bound are only valid when
+            # the final solve itself was feasible. If we kept an earlier-tier
+            # snapshot (or the greedy fallback) they would read stale, so fall
+            # back to 0.0 in those cases.
             objective_value=(float(sum(breakdown.values())) if breakdown is not None
-                             else (solver.objective_value
-                                   if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0.0)),
-            best_objective_bound=solver.best_objective_bound if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0.0,
-            proven_optimal=(status_code == cp_model.OPTIMAL),
+                             else (solver.objective_value if last_solve_feasible else 0.0)),
+            best_objective_bound=solver.best_objective_bound if last_solve_feasible else 0.0,
+            # Truly proven optimal only if EVERY tier completed and the final one
+            # was OPTIMAL — a prior-tier OPTIMAL with a later-tier time-out does
+            # NOT prove the whole lexicographic objective optimal.
+            proven_optimal=(completed_all_tiers and best_status_code == cp_model.OPTIMAL),
             metrics=self._metrics,
             objective_breakdown=breakdown,
             tier_values=(getattr(self, '_tier_values', None) or None),

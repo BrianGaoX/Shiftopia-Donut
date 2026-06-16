@@ -605,8 +605,11 @@ export class AutoSchedulerController {
         // ~7-8s of preprocess + adequate solve time on top. A flat 30s cap
         // forces those runs to time out and engage greedy unnecessarily.
         const rawPairs = optimizerShifts.length * optimizerEmployees.length;
+        // Extra wall-clock headroom for the largest monthly rosters. This
+        // composes with the solver's front-loaded per-tier time allocation,
+        // giving heavy runs enough budget to finish instead of timing out.
         const dynamicBudget = rawPairs > 30_000
-            ? 90       // big problems: 90s
+            ? 120      // big problems (large monthly rosters): 120s
             : rawPairs > 10_000
                 ? 60   // medium: 60s
                 : 30;  // small: 30s default

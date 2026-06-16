@@ -815,6 +815,58 @@ def test_fatigue_single_week_overload_trips_critical():
     assert fat["score"] == 0  # only one person used, and they are critical
 
 
+def test_large_multiweek_never_returns_unknown_zero():
+    """Regression (solver budget + greedy fallback): on a LARGE multi-week
+    problem solved under a TIGHT budget, the lexicographic solver used to split
+    the wall/deterministic budget EVENLY across its 3 tiers, starving the
+    feasibility-critical first (coverage) tier so it returned UNKNOWN — the loop
+    then broke with ZERO assignments and the controller silently fell back to
+    its own greedy engine (the optimizer path was discarded).
+
+    Two fixes guard against that here:
+      A. The per-tier budget is front-loaded (first tier gets the majority), so
+         coverage has time to find a first feasible solution.
+      B. The greedy warm-start is stashed and materialised as a fallback
+         incumbent, so even if CP-SAT times out with no incumbent the solver
+         reports FEASIBLE with the greedy roster rather than UNKNOWN/0.
+
+    The contract: a large multi-week problem with a coverable (greedy-feasible)
+    roster must NEVER return UNKNOWN with 0 assignments. It must return a
+    non-UNKNOWN status with len(assignments) > 0.
+    """
+    # ~30 days, 6 shifts/day = 180 shifts; 40 employees. Deliberately bigger than
+    # the micro-cases and run on a tight budget to provoke a tier-1 time-out on
+    # slower machines — the path that previously produced UNKNOWN/0.
+    shifts = []
+    idx = 0
+    for day in range(30):  # 2026-05-01 .. 2026-05-30
+        date = f"2026-05-{day + 1:02d}"
+        for slot in range(6):
+            start_h = 6 + slot * 2  # 06,08,10,12,14,16
+            shifts.append(
+                make_shift(
+                    f"s{idx}", date,
+                    f"{start_h:02d}:00", f"{start_h + 8:02d}:00"
+                    if start_h + 8 <= 23 else "23:00",
+                )
+            )
+            idx += 1
+    employees = [
+        make_employee(f"e{i}", max_weekly_minutes=10000) for i in range(40)
+    ]
+    out = solve(shifts, employees, max_time_seconds=8.0)
+    assert out.status != "UNKNOWN", (
+        f"Large multi-week solve returned UNKNOWN — the per-tier budget split or "
+        f"the greedy fallback incumbent has regressed. status={out.status}"
+    )
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) > 0, (
+        "Large multi-week solve returned 0 assignments while a greedy-feasible "
+        "roster exists — the solver silently degraded to the controller's greedy "
+        "fallback (the bug this guards)."
+    )
+
+
 def test_fatigue_mixed_roster_produces_gradient():
     """With one overloaded employee in a single week and several light employees,
     the headcount-normalized wellbeing score is a gradient — neither pinned at 0
