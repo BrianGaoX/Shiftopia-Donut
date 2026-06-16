@@ -182,6 +182,16 @@ class SolverParameters:
     # alternatives (cheapest / most-balanced) for the trade-off explorer UI.
     # Off by default so the normal solve path is never slowed.
     compute_alternatives: bool = False
+    # Month-long rosters: solve each ISO week in sequence, pinning each week's
+    # assignments as existing_shifts for later weeks. One monolithic month-long
+    # model is large enough that the lexicographic solver spends its whole budget
+    # on tier-1 (coverage) and time-starves the fairness/cost tiers. Each weekly
+    # subproblem is ~1/n the size, so every tier solves to optimality — much
+    # better fairness/cost — while pinning preserves ALL cross-week guarantees
+    # (rest-gap, 28-day/14-day caps, daily spread, min-contract) and cumulative
+    # fairness (the workload accumulator counts existing minutes). Off by
+    # default; auto-skipped (falls back to monolithic) when <2 ISO weeks.
+    decompose_by_week: bool = False
 
 
 @dataclass
@@ -749,9 +759,145 @@ class ScheduleModelBuilder:
                 logger.warning('[ModelBuilder] alternative %s failed: %s', key, exc)
         return alts
 
+    def _solve_weekly_decomposition(self) -> Optional[OptimizerOutput]:
+        """Month-long rosters: solve each ISO week in sequence, pinning each
+        week's assignments as `existing_shifts` for all later weeks.
+
+        Pinning is what makes this safe: every cross-week hard constraint
+        (rest-gap via existing_blocks_proposal, no-overlap intervals, the
+        28-day/14-day rolling caps, daily spread, min-contract) already accounts
+        for existing_shifts, and the workload accumulator adds existing minutes —
+        so cumulative fairness carries forward too. No global constraint is lost;
+        each week is just small enough that all three lexicographic tiers reach
+        optimality inside the budget instead of the fairness/cost tiers being
+        time-starved on one monolithic month-long solve.
+
+        Returns None when the horizon spans <2 ISO weeks, so the caller falls
+        back to the normal monolithic solve."""
+        weeks: dict[tuple[int, int], list] = {}
+        for s in self.data.shifts:
+            weeks.setdefault(_iso_week_key(s.shift_date), []).append(s)
+        if len(weeks) < 2:
+            return None
+
+        t_start = time.perf_counter()
+        n_weeks = len(weeks)
+        # Even split of the wall budget across weeks; each week is small so this
+        # is ample. The per-week solver still front-loads its own tiers and keeps
+        # the greedy-incumbent safety net.
+        per_week_budget = max(1.0, self.data.solver_params.max_time_seconds / n_weeks)
+
+        # Carry-forward: seed with each employee's REAL pinned shifts, then append
+        # every solved week's assignments so later weeks see (and respect) them.
+        carried: dict[str, list] = {
+            e.id: list(e.existing_shifts) for e in self.data.employees
+        }
+
+        all_assignments: list[AssignmentProposal] = []
+        all_unassigned: list[str] = []
+        all_binding: list[dict] = []
+        week_statuses: list[str] = []
+        agg_breakdown: dict[str, int] = {}
+
+        for wk in sorted(weeks):
+            wk_shifts = weeks[wk]
+            sub_emps = [replace(e, existing_shifts=carried[e.id])
+                        for e in self.data.employees]
+            sub_params = replace(
+                self.data.solver_params,
+                max_time_seconds=per_week_budget,
+                compute_alternatives=False,
+                decompose_by_week=False,  # never recurse
+            )
+            sub_data = replace(self.data, shifts=wk_shifts,
+                               employees=sub_emps, solver_params=sub_params)
+            try:
+                out = type(self)(sub_data).build_and_solve()
+            except Exception as exc:
+                logger.warning('[ModelBuilder] decomposition: week %s failed (%s); '
+                               'its shifts are left uncovered', wk, exc)
+                all_unassigned.extend(s.id for s in wk_shifts)
+                week_statuses.append('UNKNOWN')
+                continue
+
+            week_statuses.append(out.status)
+            all_assignments.extend(out.assignments)
+            all_unassigned.extend(out.unassigned_shift_ids)
+            if out.binding_constraints:
+                all_binding.extend(out.binding_constraints)
+            if out.objective_breakdown:
+                for k, v in out.objective_breakdown.items():
+                    agg_breakdown[k] = agg_breakdown.get(k, 0) + v
+
+            # Pin this week's assignments for every later week.
+            by_id = {s.id: s for s in wk_shifts}
+            for a in out.assignments:
+                s = by_id.get(a.shift_id)
+                if s is None:
+                    continue
+                s_abs, e_abs = shift_window(s)
+                carried[a.employee_id].append(ExistingShiftInput(
+                    id=s.id, shift_date=s.shift_date, start_time=s.start_time,
+                    end_time=s.end_time, duration_minutes=s.duration_minutes,
+                    unpaid_break_minutes=getattr(s, 'unpaid_break_minutes', 0),
+                    start_abs=s_abs, end_abs=e_abs,
+                ))
+
+        # Aggregate status: OPTIMAL only if every week proved optimal; FEASIBLE if
+        # we covered anything; else UNKNOWN. proven_optimal stays False — a
+        # per-week sequential optimum is not a proven GLOBAL month-long optimum.
+        if week_statuses and all(st == 'OPTIMAL' for st in week_statuses):
+            status = 'OPTIMAL'
+        elif all_assignments:
+            status = 'FEASIBLE'
+        else:
+            status = 'UNKNOWN'
+
+        # Pillars/binding over the FULL horizon (cumulative fairness + per-week
+        # fatigue). self.data holds the whole month, so _compute_pillars sees
+        # every shift; it needs no model state.
+        pillars = None
+        try:
+            pillars = self._compute_pillars(all_assignments, all_unassigned)
+        except Exception as exc:
+            logger.warning('[ModelBuilder] decomposed pillar computation failed: %s', exc)
+
+        self._metrics.raw_pairs = len(self.data.employees) * len(self.data.shifts)
+        self._metrics.solve_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        logger.info('[ModelBuilder] weekly-decomposition: weeks=%d status=%s '
+                    'assignments=%d/%d (%.0f%% coverage) per_week_budget=%.1fs',
+                    n_weeks, status, len(all_assignments), len(self.data.shifts),
+                    100 * len(all_assignments) / max(len(self.data.shifts), 1),
+                    per_week_budget)
+
+        return OptimizerOutput(
+            status=status,
+            assignments=all_assignments,
+            unassigned_shift_ids=all_unassigned,
+            objective_value=float(sum(agg_breakdown.values())) if agg_breakdown else 0.0,
+            best_objective_bound=0.0,
+            proven_optimal=False,
+            metrics=self._metrics,
+            objective_breakdown=(agg_breakdown or None),
+            tier_values=None,
+            pillars=pillars,
+            binding_constraints=(all_binding or None),
+        )
+
     # -- Public entry ----------------------------------------------------------
 
     def build_and_solve(self) -> OptimizerOutput:
+        # Month-long decomposition: when enabled AND the horizon spans >=2 ISO
+        # weeks, solve each week in sequence (see _solve_weekly_decomposition).
+        # Only for the live 'balanced' profile — the Pareto sub-profiles
+        # (cheapest/fairest) always solve monolithically so they never recurse.
+        if (self.data.solver_params.decompose_by_week
+                and self.tier_profile == 'balanced'):
+            decomposed = self._solve_weekly_decomposition()
+            if decomposed is not None:
+                return decomposed
+
         t_pre = time.perf_counter()
 
         # A: Compute eligible pairs

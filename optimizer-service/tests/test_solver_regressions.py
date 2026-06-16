@@ -906,3 +906,76 @@ def test_fatigue_mixed_roster_produces_gradient():
     assert 0 < fat["score"] < 100, (
         f"Mixed roster should give a graded wellbeing score, got {fat}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Weekly decomposition — month-long rosters are solved one ISO week at a time
+# (pinning prior weeks as existing_shifts) so the fairness/cost tiers aren't
+# time-starved on one monolithic solve. The contract: cross-week guarantees
+# (rest-gap, hour caps, cumulative fairness) MUST survive the decomposition.
+# ---------------------------------------------------------------------------
+
+def _solve_decomposed(shifts, employees, *, max_time_seconds=4.0, constraints=None):
+    from model_builder import (
+        ScheduleModelBuilder, OptimizerInput, OptimizerConstraints, SolverParameters,
+    )
+    data = OptimizerInput(
+        shifts=shifts, employees=employees,
+        constraints=constraints or OptimizerConstraints(
+            min_rest_minutes=600, enforce_role_match=False, enforce_skill_match=False,
+            allow_partial=True, relax_constraints=False,
+        ),
+        solver_params=SolverParameters(max_time_seconds=max_time_seconds, num_workers=2,
+                                       decompose_by_week=True),
+    )
+    return ScheduleModelBuilder(data).build_and_solve()
+
+
+def test_decomposition_preserves_cross_week_rest_gap():
+    """The headline safety claim. A Sunday-late shift and a Monday-early shift
+    sit in DIFFERENT ISO weeks; their gap (240m) violates the 600m rest rule.
+    Naive independent per-week solving would happily give both to the only
+    eligible employee. Because prior weeks are pinned as existing_shifts, the
+    Monday shift is filtered out for that employee — so they are NEVER assigned
+    both. (2026-07-05 = Sun, ISO wk 27; 2026-07-06 = Mon, ISO wk 28.)"""
+    sun = make_shift("sun", "2026-07-05", "16:00", "22:00")
+    mon = make_shift("mon", "2026-07-06", "02:00", "08:00")  # 240m gap < 600m
+    emp = make_employee("only")
+    out = _solve_decomposed([sun, mon], [emp])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    by_emp: dict[str, set[str]] = {}
+    for a in out.assignments:
+        by_emp.setdefault(a.employee_id, set()).add(a.shift_id)
+    # No employee may hold BOTH the Sunday and the Monday shift.
+    assert not any({"sun", "mon"} <= got for got in by_emp.values()), (
+        f"Cross-week rest gap violated by decomposition: {by_emp}"
+    )
+
+
+def test_decomposition_covers_multiweek_roster():
+    """With ample capacity across two ISO weeks, decomposition still reaches
+    full coverage — it must not lose shifts relative to a monolithic solve."""
+    shifts = [
+        make_shift("w1a", "2026-07-01", "09:00", "13:00"),  # ISO wk 27
+        make_shift("w1b", "2026-07-02", "09:00", "13:00"),
+        make_shift("w2a", "2026-07-08", "09:00", "13:00"),  # ISO wk 28
+        make_shift("w2b", "2026-07-09", "09:00", "13:00"),
+    ]
+    emps = [make_employee(f"e{i}") for i in range(4)]
+    out = _solve_decomposed(shifts, emps)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 4 and not out.unassigned_shift_ids
+    # Pillars are computed over the full horizon even in decomposed mode.
+    assert out.pillars is not None and out.pillars["coverage"]["score"] == 100.0
+
+
+def test_decomposition_single_week_falls_back_to_monolithic():
+    """<2 ISO weeks → _solve_weekly_decomposition returns None and the normal
+    monolithic solve runs. The result must still be a correct full solve
+    (proven_optimal can be True here, unlike the multi-week decomposed path)."""
+    shifts = [make_shift("a", "2026-07-06", "09:00", "13:00"),  # both ISO wk 28
+              make_shift("b", "2026-07-07", "09:00", "13:00")]
+    emps = [make_employee("e0"), make_employee("e1")]
+    out = _solve_decomposed(shifts, emps)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 2 and not out.unassigned_shift_ids

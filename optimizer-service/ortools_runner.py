@@ -190,6 +190,10 @@ class SolverParamsReq(BaseModel):
     # B4 — also compute Pareto "what-if" alternatives (cheapest / most-balanced)
     # for the trade-off explorer. Off by default (adds extra solves).
     compute_alternatives: bool = False
+    # Month-long rosters: solve each ISO week in sequence (pinning prior weeks as
+    # existing_shifts) so the fairness/cost tiers aren't time-starved on one
+    # large monolithic solve. Auto-skipped (monolithic) when <2 ISO weeks.
+    decompose_by_week: bool = False
 
 
 class OptimizeReq(BaseModel):

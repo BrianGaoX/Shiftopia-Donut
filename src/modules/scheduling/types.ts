@@ -131,6 +131,12 @@ export interface OptimizeRequest {
         enable_greedy_hint?: boolean;
         /** B4 — also compute Pareto "what-if" alternatives for the explorer. */
         compute_alternatives?: boolean;
+        /**
+         * Month-long rosters: solve each ISO week in sequence so the
+         * fairness/cost tiers aren't time-starved on one large monolithic solve.
+         * Auto-skipped (monolithic) by the solver when the horizon is <2 ISO weeks.
+         */
+        decompose_by_week?: boolean;
     };
 }
 

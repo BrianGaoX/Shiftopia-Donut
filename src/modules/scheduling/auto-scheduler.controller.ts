@@ -632,6 +632,13 @@ export class AutoSchedulerController {
                     max_time_seconds: solverBudget,
                     num_workers: input.numWorkers ?? 8,
                     compute_alternatives: input.computeAlternatives ?? false,
+                    // Large month-long rosters time-starve the fairness/cost
+                    // tiers on one monolithic solve. For big problems, decompose
+                    // by ISO week (solver pins prior weeks → cross-week rest,
+                    // hour caps and cumulative fairness are preserved). The
+                    // solver auto-skips to monolithic when the range is <2 weeks,
+                    // so this is safe for any large single-week problem too.
+                    decompose_by_week: rawPairs > 30_000,
                 },
             };
 
