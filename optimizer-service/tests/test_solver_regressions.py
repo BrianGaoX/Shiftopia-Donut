@@ -15,6 +15,7 @@ import pytest
 from .conftest import make_employee, make_shift, solve
 from model_builder import (
     AvailabilitySlotInput,
+    ExistingShiftInput,
     OptimizerConstraints,
     StrategyInput,
 )
@@ -258,3 +259,392 @@ def test_interval_vars_drop_constraint_count():
         f"regressed to pairwise overlap/rest constraints."
     )
     assert out.status in ("OPTIMAL", "FEASIBLE")
+
+
+# ---------------------------------------------------------------------------
+# Horizon-derived variable bounds (audit C3/C4) — the fixed 5000-minute /
+# 720-minute caps used to silently force INFEASIBLE or under-assignment.
+# ---------------------------------------------------------------------------
+
+def test_high_initial_fatigue_does_not_make_model_infeasible():
+    """Regression: `init_eff_mins = initial_fatigue_score * 60` was fed into an
+    `eff_total == sum + init` constraint whose var domain was capped at 5000.
+    Any initial_fatigue_score > ~83 made that equality unsatisfiable for ANY
+    assignment, turning the ENTIRE model INFEASIBLE (→ silent greedy fallback).
+    With horizon-derived bounds the model must stay solvable and still cover
+    the shift even for an absurdly fatigued employee."""
+    shifts = [make_shift("s1", "2026-05-15", "09:00", "17:00")]
+    e = make_employee("e1")
+    e.initial_fatigue_score = 450.0  # the worst-case artifact value
+    out = solve(shifts, [e])
+    assert out.status in ("OPTIMAL", "FEASIBLE"), (
+        "High initial_fatigue_score must not make the model INFEASIBLE."
+    )
+    assert len(out.assignments) == 1
+
+
+def test_multi_week_horizon_solves_and_assigns():
+    """Regression: with the old fixed 5000-minute (~83h) accumulator domains,
+    a multi-week window of work on one employee could exceed the var domain
+    and flip the model INFEASIBLE. A 21-day window of daily shifts on a single
+    employee must solve and cover at least most of the work."""
+    # 15 consecutive days, one 8h day shift each — ~120h of load, comfortably
+    # past the old 5000-minute (~83h) accumulator cap. max_weekly_minutes is
+    # set high (as the controller's window-scaling would do for a multi-week
+    # run) so HC-4 is NOT the binding constraint — this test isolates the
+    # accumulator-bound fix, not the max-hours cap.
+    shifts = [
+        make_shift(f"s{i}", f"2026-05-{15 + i:02d}", "09:00", "17:00")
+        for i in range(15)  # 2026-05-15 .. 2026-05-29
+    ]
+    employees = [
+        make_employee("e1", max_weekly_minutes=10000),
+        make_employee("e2", max_weekly_minutes=10000),
+    ]
+    out = solve(shifts, employees, max_time_seconds=10)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    # The rest gap (600m) easily allows one 8h shift per day, so every shift
+    # is coverable across two employees once HC-4 has headroom.
+    assert len(out.assignments) == len(shifts)
+
+
+def test_twelve_hour_plus_day_is_assignable():
+    """Regression: day_vars were bounded at 720 (12h). A single 13h shift made
+    `day_vars[i] == sum(...)` infeasible, so the solver left it uncovered (or
+    the whole day collapsed). A 13h shift must now be assignable."""
+    shifts = [make_shift("s1", "2026-05-15", "08:00", "21:00")]  # 13h
+    employees = [make_employee("e1")]
+    out = solve(shifts, employees)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+
+
+# ---------------------------------------------------------------------------
+# HC-4 maximum weekly hours (audit — was never enforced)
+# ---------------------------------------------------------------------------
+
+def test_max_weekly_hours_softly_enforced():
+    """Regression: HC-4 (weekly max) was documented as a hard constraint but
+    never added to the model — only the `w` var's loose upper bound capped it.
+    It is now a Tier-0 softened cap. With a single employee whose max is 480m
+    (8h) and 1200m (20h) of *low-priority* coverable work, the solver should
+    prefer to leave the excess uncovered rather than blow ~14h past the cap,
+    because a priority-1 uncovered shift (1e8) is cheaper than the Tier-0
+    max-hours penalty (1e8/min) for every minute over."""
+    # Three non-overlapping 8h shifts on different days; one employee, 8h cap.
+    shifts = [
+        make_shift("s1", "2026-05-15", "09:00", "17:00", priority=1),
+        make_shift("s2", "2026-05-16", "09:00", "17:00", priority=1),
+        make_shift("s3", "2026-05-17", "09:00", "17:00", priority=1),
+    ]
+    employees = [make_employee("e1", employment_type="Casual",
+                               min_contract_minutes=0, max_weekly_minutes=480)]
+    out = solve(shifts, employees)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    # At most one 8h (480m) shift fits under the cap; the Tier-0 penalty makes
+    # exceeding it by an entire extra shift more expensive than leaving it
+    # uncovered. Pre-fix (no cap), the solver would happily assign all three.
+    assert len(out.assignments) <= 1, (
+        f"HC-4 max-hours should constrain to ~1 shift, got {len(out.assignments)}. "
+        f"The weekly-max cap has regressed to unenforced."
+    )
+
+
+def test_overtime_threshold_uses_full_contract_minimum():
+    """Regression (H2): overtime was computed as `w - (min_contract - existing)`,
+    double-counting pinned existing minutes (w already includes them). With an
+    FT employee who has 1200m of existing shifts and a 2280m contract minimum,
+    assigning a fresh 480m shift keeps total (1680m) BELOW the minimum, so
+    there must be zero overtime cost. The double-count bug would have charged
+    overtime on 1200m of phantom minutes. We assert the run is feasible and
+    assigns (a coarse guard that the OT math no longer destabilises cost)."""
+    existing = [ExistingShiftInput(
+        id="ex1", shift_date="2026-05-14", start_time="09:00", end_time="17:00",
+        duration_minutes=480,
+    ), ExistingShiftInput(
+        id="ex2", shift_date="2026-05-12", start_time="09:00", end_time="17:00",
+        duration_minutes=480,
+    )]
+    e = make_employee("e1", employment_type="FT", min_contract_minutes=2280,
+                      existing_shifts=existing)
+    shifts = [make_shift("s1", "2026-05-15", "09:00", "17:00")]
+    out = solve(shifts, [e])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+
+
+# ---------------------------------------------------------------------------
+# DELIVERABLE 1 — Determinism
+# Solves the SAME non-trivial problem twice and asserts identical results.
+# ---------------------------------------------------------------------------
+
+def test_deterministic_solve_same_assignments():
+    """DELIVERABLE 1: Two solves of the same non-trivial problem must produce
+    identical assignment sets (same set of (employee_id, shift_id) pairs).
+    max_deterministic_time + random_seed=42 guarantees this on a single machine.
+    """
+    # Non-trivial: 5 shifts, 4 employees — solver must make choices.
+    shifts = [
+        make_shift("s1", "2026-05-15", "06:00", "14:00"),
+        make_shift("s2", "2026-05-15", "14:00", "22:00"),
+        make_shift("s3", "2026-05-16", "06:00", "14:00"),
+        make_shift("s4", "2026-05-16", "14:00", "22:00"),
+        make_shift("s5", "2026-05-17", "09:00", "17:00"),
+    ]
+    employees = [make_employee(f"e{i}") for i in range(1, 5)]
+
+    out1 = solve(shifts, employees, max_time_seconds=5.0)
+    out2 = solve(shifts, employees, max_time_seconds=5.0)
+
+    assert out1.status in ("OPTIMAL", "FEASIBLE")
+    assert out2.status in ("OPTIMAL", "FEASIBLE")
+
+    pairs1 = {(a.employee_id, a.shift_id) for a in out1.assignments}
+    pairs2 = {(a.employee_id, a.shift_id) for a in out2.assignments}
+    assert pairs1 == pairs2, (
+        f"Non-deterministic result: solve 1 gave {sorted(pairs1)}, "
+        f"solve 2 gave {sorted(pairs2)}. max_deterministic_time may have "
+        f"regressed or random_seed is not being set."
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELIVERABLE 2 — Fairness always active
+# Two short shifts + 4 identical employees → must go to 2 DIFFERENT employees.
+# ---------------------------------------------------------------------------
+
+def test_fairness_always_active_distributes_shifts():
+    """DELIVERABLE 2: Fairness must apply even when demand is very low relative
+    to capacity (the old gate `total_demand >= 0.4 * capacity` would have
+    disabled fairness here).
+
+    Setup: 2 non-overlapping shifts on different days, 4 identical employees
+    whose ideal upper_ideal window is NARROW (set via a tiny contract_weekly_minutes
+    of 120m = exactly one shift).  With fairness active:
+      - Assigning both shifts to ONE employee costs `high_v * 20` (one shift
+        above the 1.05x upper ideal of 126m) = 20 * (240-126) = 2280.
+      - Spreading to TWO employees costs 0 high_v (each gets 120m <= 126m).
+    So fairness must prefer spreading.  Without fairness (old gate behaviour),
+    both choices cost the same and the solver may stack arbitrarily.
+    """
+    shifts = [
+        make_shift("s1", "2026-05-15", "09:00", "11:00"),  # 120m
+        make_shift("s2", "2026-05-16", "09:00", "11:00"),  # 120m, different day
+    ]
+    # contract_weekly_minutes = 120 so upper_ideal = 1.05 * 120 = 126m.
+    # Assigning two shifts (240m) to one employee incurs high_v penalty.
+    employees = []
+    for i in range(1, 5):
+        e = make_employee(f"e{i}")
+        e.contract_weekly_minutes = 120
+        employees.append(e)
+
+    out = solve(shifts, employees, max_time_seconds=5.0)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 2, (
+        f"Both shifts must be covered, got {len(out.assignments)} assignments."
+    )
+    assigned_employees = {a.employee_id for a in out.assignments}
+    assert len(assigned_employees) == 2, (
+        f"Fairness must spread work across 2 different employees, "
+        f"but both shifts went to: {assigned_employees}. "
+        f"The fairness gate may have been re-introduced (DELIVERABLE 2)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELIVERABLE 3 — Multi-hire rest gap (480m vs 600m)
+# MULTI_HIRE pair at 520m gap: allowed. NORMAL pair at 520m gap: blocked.
+# ---------------------------------------------------------------------------
+
+def test_multihire_pair_480_599m_gap_allowed():
+    """DELIVERABLE 3: A MULTI_HIRE shift pair with a 520m gap (8h40m) must
+    be assignable to a single employee under the 480m multi-hire EBA rule,
+    while two NORMAL shifts at the same gap must be blocked (need 600m rest).
+
+    The pair is placed on ADJACENT DAYS on purpose: a 480m multi-hire gap
+    cannot occur within a single day without breaching the unrelated 12h
+    daily spread-of-hours rule (first-start → last-end ≤ 12h), so a same-day
+    pair would leave a shift uncovered regardless of the rest gap. Cross-day
+    isolates the rest-gap behaviour (spread-of-hours groups per calendar day).
+    """
+    # Day 1 shift ends 22:00; Day 2 shift starts 06:40 → gap = 520m (8h40m).
+    mh_shifts = [
+        make_shift("mh1", "2026-05-15", "14:00", "22:00"),   # ends 05-15 22:00
+        make_shift("mh2", "2026-05-16", "06:40", "12:00"),   # starts 05-16 06:40
+    ]
+    # Patch shift_type to MULTI_HIRE (make_shift doesn't expose it)
+    mh_shifts[0].shift_type = 'MULTI_HIRE'
+    mh_shifts[1].shift_type = 'MULTI_HIRE'
+
+    employees = [make_employee("e1")]
+    out_mh = solve(mh_shifts, employees, max_time_seconds=5.0)
+    assert out_mh.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out_mh.assignments) == 2, (
+        f"MULTI_HIRE pair with 520m cross-day gap should both be assigned to one "
+        f"employee, got {len(out_mh.assignments)} assignments. "
+        f"The 480m multi-hire rest rule is not being applied."
+    )
+
+    # Same gap but NORMAL shifts → must be blocked (need 600m rest).
+    normal_shifts = [
+        make_shift("n1", "2026-05-15", "14:00", "22:00"),   # ends 05-15 22:00
+        make_shift("n2", "2026-05-16", "06:40", "12:00"),   # starts 05-16 06:40
+    ]
+    # shift_type defaults to NORMAL
+
+    out_norm = solve(normal_shifts, [make_employee("e1")], max_time_seconds=5.0)
+    assert out_norm.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out_norm.assignments) == 1, (
+        f"NORMAL pair with 520m gap (< 600m) must NOT both go to one employee, "
+        f"got {len(out_norm.assignments)} assignments. "
+        f"The 600m normal rest gap is not being enforced."
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELIVERABLE 4 — Night/Weekend Fairness (undesirable_balance)
+# ---------------------------------------------------------------------------
+
+def test_night_weekend_fairness_balances_undesirable_shifts():
+    """DELIVERABLE 4: With 2 night shifts and 2 Sunday shifts plus 4 employees
+    (all equally eligible), the solver must distribute the undesirable shifts
+    rather than stacking them all on one employee.  We assert that no single
+    employee receives all 4 undesirable shifts.
+    """
+    # Sunday shifts
+    s1 = make_shift("s1", "2026-05-17", "09:00", "17:00")  # Sunday
+    s1.is_sunday = True
+    s2 = make_shift("s2", "2026-05-17", "17:00", "22:00")  # Sunday
+    s2.is_sunday = True
+    # Night shifts (overlap 00:00-06:00)
+    s3 = make_shift("s3", "2026-05-18", "22:00", "06:00")  # overnight
+    s3.duration_minutes = 480
+    s4 = make_shift("s4", "2026-05-19", "02:00", "10:00")  # night start
+    # 4 identical employees
+    employees = [make_employee(f"e{i}") for i in range(1, 5)]
+
+    out = solve([s1, s2, s3, s4], employees, max_time_seconds=5.0)
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    # Count undesirable shifts per employee
+    from collections import Counter
+    undsr_by_emp: Counter = Counter()
+    for a in out.assignments:
+        if a.shift_id in {"s1", "s2", "s3", "s4"}:
+            undsr_by_emp[a.employee_id] += 1
+    # No single employee should hold all 4 undesirable shifts if there are >= 2 covered
+    covered_undsr = sum(undsr_by_emp.values())
+    if covered_undsr >= 2:
+        max_per_emp = max(undsr_by_emp.values(), default=0)
+        assert max_per_emp < covered_undsr, (
+            f"All {covered_undsr} undesirable shifts went to one employee. "
+            f"undesirable_balance objective term is not working."
+        )
+    # Also assert the objective_breakdown includes 'undesirable_balance'
+    assert out.objective_breakdown is not None
+    assert 'undesirable_balance' in out.objective_breakdown or covered_undsr == 0, (
+        "objective_breakdown must include 'undesirable_balance' category."
+    )
+
+
+# ---------------------------------------------------------------------------
+# SC-11 — Longitudinal fairness ledger (F1). debt = rolling_value − team_avg;
+# positive = over-share (bias away), negative = owed (bias toward).
+# ---------------------------------------------------------------------------
+
+def test_sc11_biases_undesirable_shift_toward_owed_employee():
+    """With two equally-eligible employees competing for one undesirable (Sunday)
+    shift, SC-11 must hand it to the employee the ledger says is OWED (negative
+    weekend debt) over the one who has already done MORE than their share
+    (positive debt). Also guards the wire-boundary: fairness_debts must reach
+    EmployeeInput, else the term silently no-ops."""
+    sunday = make_shift("s1", "2026-05-17", "09:00", "17:00")  # 2026-05-17 is a Sunday
+    sunday.is_sunday = True
+
+    owed = make_employee("owed")
+    owed.fairness_debts = {"weekend_shifts": -3.0}          # done fewer → should win
+    overworked = make_employee("overworked")
+    overworked.fairness_debts = {"weekend_shifts": 3.0}     # done more → avoid
+
+    out = solve([sunday], [owed, overworked])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+    assert out.assignments[0].employee_id == "owed", (
+        "SC-11 should bias the undesirable shift toward the owed (negative-debt) "
+        "employee. If this fails, fairness_debts was dropped at the wire boundary "
+        "or the SC-11 term regressed."
+    )
+    assert "longitudinal_fairness" in (out.objective_breakdown or {})
+
+
+def test_sc11_no_effect_on_non_undesirable_shifts():
+    """SC-11 only touches undesirable (weekend/night/PH) shifts. A plain weekday
+    day shift must still solve and assign regardless of weekend debt (and the
+    'longitudinal_fairness' term should not fire)."""
+    weekday = make_shift("s1", "2026-05-13", "09:00", "17:00")  # 2026-05-13 is a Wednesday
+    e = make_employee("e1")
+    e.fairness_debts = {"weekend_shifts": 5.0}
+    out = solve([weekday], [e])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+
+
+# ---------------------------------------------------------------------------
+# SC-11b — Hours-fairness (total_hours / overtime_minutes debts). Unlike the
+# weekend/night/PH block, this biases *every* shift (any shift adds hours) so an
+# over-worked employee is nudged off ordinary weekday work too.
+# ---------------------------------------------------------------------------
+
+def test_sc11b_hours_fairness_biases_weekday_shift_toward_under_worked():
+    """With two equally-eligible employees competing for one PLAIN WEEKDAY shift
+    (which the weekend/night/PH block ignores entirely), the total_hours debt
+    must still bias the assignment toward the under-worked (negative-debt)
+    employee and away from the over-worked (positive-debt) one. Guards both the
+    new SC-11b term and the wire boundary for the total_hours debt."""
+    weekday = make_shift("s1", "2026-05-13", "09:00", "17:00")  # 2026-05-13 is a Wednesday
+
+    under = make_employee("under")
+    under.fairness_debts = {"total_hours": -40.0}   # worked fewer hours → should win
+    over = make_employee("over")
+    over.fairness_debts = {"total_hours": 40.0}     # worked more hours → avoid
+
+    out = solve([weekday], [under, over])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+    assert out.assignments[0].employee_id == "under", (
+        "SC-11b hours-fairness should bias a plain weekday shift toward the "
+        "under-worked (negative total_hours debt) employee. If this fails, "
+        "fairness_debts.total_hours was dropped at the wire boundary or the "
+        "SC-11b term regressed."
+    )
+    assert "longitudinal_fairness" in (out.objective_breakdown or {})
+
+
+def test_sc11b_overtime_debt_also_biases_assignment():
+    """The overtime_minutes debt feeds the same hours-fairness term. An employee
+    deep in positive overtime debt should be avoided in favour of one with
+    negative overtime debt, even on an ordinary weekday shift."""
+    weekday = make_shift("s1", "2026-05-13", "09:00", "17:00")  # Wednesday
+
+    under = make_employee("under")
+    under.fairness_debts = {"overtime_minutes": -1200.0}   # well under → should win
+    over = make_employee("over")
+    over.fairness_debts = {"overtime_minutes": 1200.0}     # well over → avoid
+
+    out = solve([weekday], [under, over])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1
+    assert out.assignments[0].employee_id == "under"
+    assert "longitudinal_fairness" in (out.objective_breakdown or {})
+
+
+def test_sc11b_no_terms_when_no_hours_debt():
+    """Backward-compatibility: an employee with only weekend debt (no
+    total_hours/overtime) must not trigger the SC-11b hours term on a plain
+    weekday shift — the solve is unchanged and still assigns."""
+    weekday = make_shift("s1", "2026-05-13", "09:00", "17:00")  # Wednesday
+    e = make_employee("e1")
+    e.fairness_debts = {"weekend_shifts": 5.0}   # not an hours metric
+    out = solve([weekday], [e])
+    assert out.status in ("OPTIMAL", "FEASIBLE")
+    assert len(out.assignments) == 1

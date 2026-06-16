@@ -13,6 +13,8 @@ import {
     BulkPublishResponseSchema,
     BulkAssignResponse,
     BulkAssignResponseSchema,
+    BulkAssignAtomicResponse,
+    BulkAssignAtomicResponseSchema,
     BulkDeleteResponse,
     BulkDeleteResponseSchema,
     DeleteShiftResponseSchema,
@@ -305,6 +307,52 @@ export const shiftsCommands = {
             'sm_bulk_assign',
             (userId) => ({ p_shift_ids: shiftIds, p_employee_id: employeeId, p_user_id: userId }),
             BulkAssignResponseSchema,
+        );
+    },
+
+    /* ============================================================
+       ATOMIC BULK ASSIGN SHIFTS (multi-employee, idempotent)
+       ============================================================ */
+
+    /**
+     * Assign multiple (employee → shifts[]) pairs in a single atomic DB
+     * transaction via the sm_bulk_assign_atomic RPC.
+     *
+     * @param assignments     Array of { employeeId, shiftIds } pairs.
+     * @param idempotencyKey  Optional UUID — if supplied and the key already
+     *                        exists in bulk_assign_idempotency, the stored
+     *                        result is returned without re-applying anything.
+     */
+    async bulkAssignShiftsAtomic(
+        assignments: { employeeId: string; shiftIds: string[] }[],
+        idempotencyKey?: string,
+    ): Promise<BulkAssignAtomicResponse> {
+        if (assignments.length === 0) {
+            return {
+                success: true,
+                total_requested: 0,
+                success_count: 0,
+                conflict_count: 0,
+                conflicts: [],
+                per_employee: [],
+            };
+        }
+
+        // Build the JSONB array the RPC expects:
+        // [{ "employee_id": uuid, "shift_ids": [uuid, ...] }, ...]
+        const p_assignments = assignments.map(a => ({
+            employee_id: a.employeeId,
+            shift_ids: a.shiftIds,
+        }));
+
+        return callAuthenticatedRpc(
+            'sm_bulk_assign_atomic',
+            (userId) => ({
+                p_assignments,
+                p_user_id:         userId,
+                p_idempotency_key: idempotencyKey ?? null,
+            }),
+            BulkAssignAtomicResponseSchema,
         );
     },
 

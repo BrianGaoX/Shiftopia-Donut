@@ -18,12 +18,15 @@ Or via Docker:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+import anyio
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from model_builder import (
@@ -49,6 +52,16 @@ from security import (
     RATE_OPTIMIZE,
     RATE_AUDIT,
 )
+from metrics import (
+    optimize_requests_total,
+    optimize_solve_seconds,
+    optimize_coverage_rate,
+    optimize_infeasible_total,
+    optimize_unknown_total,
+    optimize_in_progress,
+    audit_requests_total,
+    metrics_response,
+)
 
 # =============================================================================
 # LOGGING
@@ -59,6 +72,17 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
 )
 logger = logging.getLogger('ortools_runner')
+
+# =============================================================================
+# CONCURRENCY CAP
+# =============================================================================
+# Each CP-SAT solve is CPU-bound and can run 30–90 s. Without a cap, N
+# simultaneous requests would each spin up `num_workers` OS threads (default 8),
+# thrashing the CPU and slowing every solve. The semaphore limits parallel solves
+# to OPTIMIZER_MAX_CONCURRENT_SOLVES per process. With gunicorn multi-worker the
+# effective cluster-wide cap = WEB_CONCURRENCY × OPTIMIZER_MAX_CONCURRENT_SOLVES.
+_MAX_CONCURRENT_SOLVES = int(os.environ.get('OPTIMIZER_MAX_CONCURRENT_SOLVES', '2'))
+_solve_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SOLVES)
 
 # =============================================================================
 # PYDANTIC SCHEMAS
@@ -134,6 +158,10 @@ class EmployeeReq(BaseModel):
     is_student: bool = False
     visa_limit: int = 2880
     contract_weekly_minutes: int = 2280
+    # F1 fairness-ledger debts per metric. Declared so it survives the wire and
+    # reaches EmployeeInput.fairness_debts (consumed by SC-11). Without this the
+    # controller's debts are silently dropped here.
+    fairness_debts: dict[str, float] = Field(default_factory=dict)
 
 
 class ConstraintsReq(BaseModel):
@@ -270,6 +298,18 @@ install_security(app)
 # ROUTES
 # =============================================================================
 
+@app.get('/metrics', include_in_schema=False)
+def prometheus_metrics():
+    """Prometheus scrape endpoint — no auth required (standard scraper contract).
+
+    Returns all registered metrics in the Prometheus text exposition format.
+    Should be scraped by your Prometheus/VictoriaMetrics instance, NOT
+    exposed to the public internet — protect it at the network/firewall layer.
+    """
+    body, content_type = metrics_response()
+    return Response(content=body, media_type=content_type)
+
+
 @app.get('/health')
 def health_check():
     """Liveness probe — process is up. Cheap; no auth, no rate limit.
@@ -313,8 +353,15 @@ async def optimize(
     Run the CP-SAT optimizer and return proposed shift assignments.
 
     Requires a valid Supabase JWT in `Authorization: Bearer <token>`
-    (or OPTIMIZER_AUTH_DISABLED=true for dev). Rate-limited per IP via
-    OPTIMIZER_RATE_OPTIMIZE (default 30/minute).
+    (or OPTIMIZER_AUTH_DISABLED=true for dev). Rate-limited per principal
+    (JWT sub, falling back to IP) via OPTIMIZER_RATE_OPTIMIZE (default
+    30/minute). Concurrency-capped per process via
+    OPTIMIZER_MAX_CONCURRENT_SOLVES (default 2); returns 429 when
+    saturated so the caller can retry or fall back to greedy.
+
+    The CP-SAT solve is offloaded to a worker thread via
+    anyio.to_thread.run_sync so the event loop remains responsive to
+    /health, /ready, and /metrics during a long 30–90 s solve.
     """
     # Correlation ID — accept the client's X-Request-ID and prefix every
     # log line for this request. When a user reports a bad run, grep this
@@ -347,57 +394,96 @@ async def optimize(
         req.solver_params.enable_greedy_hint,
     )
 
-    try:
-        def _build_employee(e: EmployeeReq) -> EmployeeInput:
-            payload = e.model_dump()
-            existing = [
-                ExistingShiftInput(**{
-                    k: v for k, v in es.items()
-                    if k in ExistingShiftInput.__dataclass_fields__
-                })
-                for es in payload.pop('existing_shifts', []) or []
-            ]
-            slots = [
-                AvailabilitySlotInput(**{
-                    k: v for k, v in s.items()
-                    if k in AvailabilitySlotInput.__dataclass_fields__
-                })
-                for s in payload.pop('availability_slots', []) or []
-            ]
-            return EmployeeInput(
-                **{
-                    k: v for k, v in payload.items()
-                    if k in EmployeeInput.__dataclass_fields__
-                    and k not in ('existing_shifts', 'availability_slots')
-                },
-                existing_shifts=existing,
-                availability_slots=slots,
-            )
-
-        data = OptimizerInput(
-            shifts=[ShiftInput(**{k: v for k, v in s.model_dump().items() if k in ShiftInput.__dataclass_fields__}) for s in req.shifts],
-            employees=[_build_employee(e) for e in req.employees],
-            constraints=OptimizerConstraints(**{k: v for k, v in req.constraints.model_dump().items() if k in OptimizerConstraints.__dataclass_fields__}),
-            strategy=StrategyInput(**{k: v for k, v in req.strategy.model_dump().items() if k in StrategyInput.__dataclass_fields__}) if hasattr(req, 'strategy') else StrategyInput(),
-            solver_params=SolverParameters(**{k: v for k, v in req.solver_params.model_dump().items() if k in SolverParameters.__dataclass_fields__}),
+    # ── Concurrency cap ─────────────────────────────────────────────────────
+    # Try to acquire immediately (non-blocking). If the semaphore is
+    # saturated, return 429 so the caller can retry or fall back to greedy.
+    if _solve_semaphore.locked():
+        optimize_requests_total.labels(status='rejected_capacity').inc()
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f'Optimizer at capacity ({_MAX_CONCURRENT_SOLVES} concurrent solves). '
+                'Retry after the current solves complete.'
+            ),
         )
-        builder = ScheduleModelBuilder(data)
-        output = builder.build_and_solve()
+
+    def _build_employee(e: EmployeeReq) -> EmployeeInput:
+        payload = e.model_dump()
+        existing = [
+            ExistingShiftInput(**{
+                k: v for k, v in es.items()
+                if k in ExistingShiftInput.__dataclass_fields__
+            })
+            for es in payload.pop('existing_shifts', []) or []
+        ]
+        slots = [
+            AvailabilitySlotInput(**{
+                k: v for k, v in s.items()
+                if k in AvailabilitySlotInput.__dataclass_fields__
+            })
+            for s in payload.pop('availability_slots', []) or []
+        ]
+        return EmployeeInput(
+            **{
+                k: v for k, v in payload.items()
+                if k in EmployeeInput.__dataclass_fields__
+                and k not in ('existing_shifts', 'availability_slots')
+            },
+            existing_shifts=existing,
+            availability_slots=slots,
+        )
+
+    data = OptimizerInput(
+        shifts=[ShiftInput(**{k: v for k, v in s.model_dump().items() if k in ShiftInput.__dataclass_fields__}) for s in req.shifts],
+        employees=[_build_employee(e) for e in req.employees],
+        constraints=OptimizerConstraints(**{k: v for k, v in req.constraints.model_dump().items() if k in OptimizerConstraints.__dataclass_fields__}),
+        strategy=StrategyInput(**{k: v for k, v in req.strategy.model_dump().items() if k in StrategyInput.__dataclass_fields__}) if hasattr(req, 'strategy') else StrategyInput(),
+        solver_params=SolverParameters(**{k: v for k, v in req.solver_params.model_dump().items() if k in SolverParameters.__dataclass_fields__}),
+    )
+
+    # ── Offload CPU-bound solve to a worker thread ───────────────────────────
+    # anyio.to_thread.run_sync releases the event loop for the entire
+    # duration of build_and_solve (30–90 s), keeping /health, /ready, and
+    # /metrics responsive under load.
+    t_start = time.perf_counter()
+    try:
+        async with _solve_semaphore:
+            optimize_in_progress.inc()
+            try:
+                builder = ScheduleModelBuilder(data)
+                output = await anyio.to_thread.run_sync(
+                    builder.build_and_solve,
+                    abandon_on_cancel=False,  # CP-SAT manages its own timeout
+                )
+            finally:
+                optimize_in_progress.dec()
     except Exception as exc:
         logger.exception('%s [optimize] Unexpected error: %s', rid, exc)
+        optimize_requests_total.labels(status='error').inc()
         raise HTTPException(status_code=500, detail=f'Solver error: {exc}')
+
+    solve_wall_seconds = time.perf_counter() - t_start
 
     m = output.metrics
     coverage_rate = len(output.assignments) / max(len(req.shifts), 1)
 
+    # ── Record Prometheus metrics ────────────────────────────────────────────
+    optimize_requests_total.labels(status=output.status).inc()
+    optimize_solve_seconds.observe(solve_wall_seconds)
+    optimize_coverage_rate.observe(coverage_rate)
+    if output.status == 'INFEASIBLE':
+        optimize_infeasible_total.inc()
+    elif output.status == 'UNKNOWN':
+        optimize_unknown_total.inc()
+
     logger.info(
         '%s [optimize] status=%s assignments=%d unassigned=%d coverage=%.0f%% '
-        'vars=%d constraints=%d pre=%.1fms solve=%.1fms obj=%.1f',
+        'vars=%d constraints=%d pre=%.1fms solve=%.1fms wall=%.1fs obj=%.1f',
         rid,
         output.status, len(output.assignments), len(output.unassigned_shift_ids),
         coverage_rate * 100,
         m.final_variables, m.num_constraints,
-        m.preprocess_ms, m.solve_ms, output.objective_value,
+        m.preprocess_ms, m.solve_ms, solve_wall_seconds, output.objective_value,
     )
 
     return OptimizeRes(
@@ -531,7 +617,12 @@ async def audit(
     employee in the candidate pool plus the specific rejection reason(s).
 
     Auth: same Supabase JWT contract as /optimize. Rate limit:
-    OPTIMIZER_RATE_AUDIT (default 60/minute per IP).
+    OPTIMIZER_RATE_AUDIT (default 60/minute per principal).
+
+    For large payloads (50 shifts × 1000 employees = 50 000 comparisons)
+    the Python loop can occupy the thread for tens of milliseconds. The
+    computation is offloaded to a worker thread so the event loop stays
+    responsive.
     """
     request_id = request.headers.get('X-Request-ID') or '-'
     rid = f'[rid={request_id[:8]} sub={auth.subject[:8]}]'
@@ -592,33 +683,44 @@ async def audit(
     target_ids = set(req.target_shift_ids) if req.target_shift_ids else None
     targets = [s for s in shifts_dc if target_ids is None or s.id in target_ids]
 
-    t0 = time.perf_counter()
-    rows: list[AuditShiftRow] = []
-    for shift in targets:
-        summary: dict[str, int] = {}
-        emp_rows: list[AuditEmployeeRow] = []
-        for emp in employees_dc:
-            reasons = _explain_eligibility(emp, shift, constraints_dc)
-            if reasons:
-                for r in reasons:
-                    summary[r] = summary.get(r, 0) + 1
-                emp_rows.append(AuditEmployeeRow(
-                    employee_id=emp.id, status='FAIL', rejection_reasons=reasons,
-                ))
-            else:
-                # Pass at the eligibility level — solver still chose not
-                # to assign, which is recorded by the controller as
-                # OPTIMIZER_TRADEOFF in the final UI summary.
-                emp_rows.append(AuditEmployeeRow(
-                    employee_id=emp.id, status='PASS', rejection_reasons=[],
-                ))
-        rows.append(AuditShiftRow(
-            shift_id=shift.id,
-            rejection_summary=summary,
-            employees=emp_rows,
-        ))
+    def _run_audit() -> tuple[list[AuditShiftRow], float]:
+        """Pure-Python eligibility loop — runs in a worker thread."""
+        t0 = time.perf_counter()
+        rows: list[AuditShiftRow] = []
+        for shift in targets:
+            summary: dict[str, int] = {}
+            emp_rows: list[AuditEmployeeRow] = []
+            for emp in employees_dc:
+                reasons = _explain_eligibility(emp, shift, constraints_dc)
+                if reasons:
+                    for r in reasons:
+                        summary[r] = summary.get(r, 0) + 1
+                    emp_rows.append(AuditEmployeeRow(
+                        employee_id=emp.id, status='FAIL', rejection_reasons=reasons,
+                    ))
+                else:
+                    # Pass at the eligibility level — solver still chose not
+                    # to assign, which is recorded by the controller as
+                    # OPTIMIZER_TRADEOFF in the final UI summary.
+                    emp_rows.append(AuditEmployeeRow(
+                        employee_id=emp.id, status='PASS', rejection_reasons=[],
+                    ))
+            rows.append(AuditShiftRow(
+                shift_id=shift.id,
+                rejection_summary=summary,
+                employees=emp_rows,
+            ))
+        elapsed = round((time.perf_counter() - t0) * 1000, 2)
+        return rows, elapsed
 
-    elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    try:
+        rows, elapsed_ms = await anyio.to_thread.run_sync(_run_audit, abandon_on_cancel=False)
+        audit_requests_total.labels(status='ok').inc()
+    except Exception as exc:
+        logger.exception('%s [audit] Unexpected error: %s', rid, exc)
+        audit_requests_total.labels(status='error').inc()
+        raise HTTPException(status_code=500, detail=f'Audit error: {exc}')
+
     logger.info(
         '%s [audit] %d targets × %d employees → %d rows in %.1fms',
         rid, len(targets), len(employees_dc), len(rows), elapsed_ms,

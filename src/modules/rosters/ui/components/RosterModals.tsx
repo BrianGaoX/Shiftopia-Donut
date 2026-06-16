@@ -66,6 +66,8 @@ interface RosterModalsProps {
     onAssignComplete: () => void;
     /** Called after auto-scheduler finishes. */
     onAutoScheduleComplete: () => void;
+    /** Org scope forwarded to the auto-scheduler for the F1 fairness ledger. */
+    organizationId?: string;
 }
 
 /** Imperative handle — parent calls these to open modals. */
@@ -90,6 +92,7 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
         onShiftSaved,
         onAssignComplete,
         onAutoScheduleComplete,
+        organizationId,
     },
     ref,
 ) => {
@@ -121,6 +124,7 @@ export const RosterModals = forwardRef<RosterModalsHandle, RosterModalsProps>((
                         shifts={autoSchedulerShifts}
                         employees={autoSchedulerEmployees}
                         onComplete={onAutoScheduleComplete}
+                        organizationId={organizationId}
                     />
                 </Suspense>
             )}

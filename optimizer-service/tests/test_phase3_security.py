@@ -51,6 +51,34 @@ def make_jwt(secret: str, sub: str = 'user-uuid-1', exp_offset: int = 3600,
     return jwt.encode(payload, secret, algorithm='HS256')
 
 
+@pytest.fixture(autouse=True)
+def _restore_security_state():
+    """Test isolation guard.
+
+    Every test in this module calls reload_app(), which MUTATES os.environ
+    (AUTH_DISABLED, JWT_SECRET, rate limits) and reload()s the `security` +
+    `ortools_runner` modules in place. Without teardown the LAST test leaves
+    auth ENABLED with a secret set — and because `importlib.reload` re-executes
+    into the SAME module dict, every other test module that built a TestClient
+    against the shared app (e.g. test_audit_endpoint) then sees auth enabled
+    and gets 401s. That made the full suite pass only by collection-order luck.
+
+    Snapshot the env before each test; afterwards restore it and reload both
+    modules so module-level config (AUTH_DISABLED, JWT_SECRET, the slowapi
+    limiter, the app) returns to the suite baseline.
+    """
+    import security
+    import ortools_runner
+    saved_env = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+        importlib.reload(security)
+        importlib.reload(ortools_runner)
+
+
 # ---------------------------------------------------------------------------
 # /health and /ready
 # ---------------------------------------------------------------------------

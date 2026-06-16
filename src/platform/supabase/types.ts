@@ -1178,7 +1178,9 @@ export type Database = {
         Row: {
           baseline: number
           binding_constraint: string | null
+          coverage_confidence: number | null
           created_at: string
+          demand_buffer: number | null
           event_id: string | null
           execution_timestamp: string
           explanation: Json
@@ -1188,6 +1190,7 @@ export type Database = {
           id: string
           level: number
           rule_version_id: string | null
+          service_level: number | null
           slice_idx: number
           synthesis_run_id: string | null
           timecard_ratio_used: number
@@ -1195,7 +1198,9 @@ export type Database = {
         Insert: {
           baseline: number
           binding_constraint?: string | null
+          coverage_confidence?: number | null
           created_at?: string
+          demand_buffer?: number | null
           event_id?: string | null
           execution_timestamp?: string
           explanation?: Json
@@ -1205,6 +1210,7 @@ export type Database = {
           id?: string
           level: number
           rule_version_id?: string | null
+          service_level?: number | null
           slice_idx: number
           synthesis_run_id?: string | null
           timecard_ratio_used: number
@@ -1212,7 +1218,9 @@ export type Database = {
         Update: {
           baseline?: number
           binding_constraint?: string | null
+          coverage_confidence?: number | null
           created_at?: string
+          demand_buffer?: number | null
           event_id?: string | null
           execution_timestamp?: string
           explanation?: Json
@@ -1222,6 +1230,7 @@ export type Database = {
           id?: string
           level?: number
           rule_version_id?: string | null
+          service_level?: number | null
           slice_idx?: number
           synthesis_run_id?: string | null
           timecard_ratio_used?: number

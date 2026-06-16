@@ -115,6 +115,7 @@ export function scoreOperations(
     existing_shifts_map:  Map<V8EmpId, V8OrchestratorShift[]>,
     config:               ConflictResolverConfig,
     employee_hours_28d?:  Map<V8EmpId, number>,
+    fairness_debts?:      Map<V8EmpId, Record<string, number>>,
 ): ScoredOperation[] {
     return operations.map(op => {
         const pre_compliance_status = standaloneComplianceStatus(
@@ -163,6 +164,41 @@ export function scoreOperations(
             // fairness_weight × 100 points of reduction.
             const penalty = Math.min(1, max_load_ratio) * config.fairness_weight * 100;
             composite_score = Math.max(0, composite_score - penalty);
+
+            // F1: Longitudinal Fairness Ledger
+            if (fairness_debts) {
+                for (const change of op.schedule_changes) {
+                    if (change.add_shift_ids.length === 0) continue;
+                    const debts = fairness_debts.get(change.employee_id);
+                    if (!debts) continue;
+
+                    // Sum all POSITIVE debts (meaning they've done more than average)
+                    // We don't bonus negative debt here, we only penalise greedy assignments
+                    // to over-worked people.
+                    const totalDebt = Object.entries(debts)
+                        .filter(([k]) => k !== 'denied_preferences')
+                        .reduce((a, [_, b]) => a + Math.max(0, b as number), 0);
+                    // 5 units of debt = max penalty (100% of fairness weight)
+                    const ledgerPenalty = Math.min(1, totalDebt / 5) * config.fairness_weight * 50;
+                    composite_score = Math.max(0, composite_score - ledgerPenalty);
+                }
+            }
+        }
+
+        // F3: Preference Equity Bonus
+        if (fairness_debts && op.type === 'BID_ACCEPT') {
+            for (const change of op.schedule_changes) {
+                if (change.add_shift_ids.length === 0) continue;
+                const debts = fairness_debts.get(change.employee_id);
+                if (!debts || !debts.denied_preferences) continue;
+
+                if (debts.denied_preferences > 0) {
+                    // Add up to 50 points of bonus for satisfying a preference for an employee
+                    // who has been denied frequently.
+                    const prefBonus = Math.min(1, debts.denied_preferences / 5) * config.fairness_weight * 50;
+                    composite_score = Math.min(100, composite_score + prefBonus);
+                }
+            }
         }
 
         return { op, composite_score, pre_compliance_status };

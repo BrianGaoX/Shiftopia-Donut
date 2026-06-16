@@ -100,6 +100,8 @@ export interface OptimizerEmployee {
      * forward-compat the Python service.
      */
     availability_overrides?: Array<[string, string, 'HARD' | 'SOFT' | 'PREFERENCE']>;
+    /** F1: Ledger debts. Positive = penalty for assigning more, Negative = bonus. */
+    fairness_debts?: Record<string, number>;
 }
 
 export interface OptimizerStrategy {
@@ -276,6 +278,9 @@ export interface AutoSchedulerResult {
      *  Null/undefined when the optimizer was unreachable or returned no solution
      *  (greedy fallback path). Safe to access with optional-chaining. */
     objective_breakdown?: Record<string, number> | null;
+    /** Org scope echoed from the run input, so commit() can write the F1
+     *  fairness ledger back. Undefined when no org was supplied (ledger off). */
+    organizationId?: string;
 }
 
 // =============================================================================

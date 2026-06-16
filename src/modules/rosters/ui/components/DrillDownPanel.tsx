@@ -463,7 +463,7 @@ export const DrillDownPanel: React.FC<DrillDownPanelProps> = ({
                       <SmartShiftCard
                         shift={shift}
                         variant="compact"
-                        groupColor="blue" // simplified
+                        groupColor={groupType}
                         isLocked={isPast}
                         isPast={isPast}
                         isDnDActive={false}

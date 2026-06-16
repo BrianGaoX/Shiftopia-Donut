@@ -1257,6 +1257,7 @@ const NewRostersPage: React.FC = () => {
       {/* Modals (add/edit shift, bulk assign, auto-scheduler) */}
       <RosterModals
         ref={modalsRef}
+        organizationId={selectedOrganizationId || undefined}
         selectedV8ShiftIds={selectedV8ShiftIdsArray}
         employees={employees.map((e) => ({
           id: e.id,

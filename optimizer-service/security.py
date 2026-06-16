@@ -14,9 +14,10 @@ Design notes:
   - **Dev bypass** — when `OPTIMIZER_AUTH_DISABLED=true`, every request
     is treated as authenticated. Used for local development and the
     pytest TestClient. **Must NOT be set in production.**
-  - **Rate limit** is per-IP, default 30 optimize / 60 audit per minute.
-    Tunable via env. Per-tenant limiting requires a tenant resolver and
-    is deferred — by then we'd want a sidecar (envoy / nginx) anyway.
+  - **Rate limit** is per-principal (JWT `sub`), falling back to client
+    IP when the request is unauthenticated. This prevents multiple
+    tenants behind the same NAT from sharing a rate-limit bucket.
+    Default: 30 optimize / 60 audit per minute. Tunable via env.
   - **CORS** allowlist comes from env. No more `*` defaults.
   - **OpenTelemetry** is no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is
     unset. Adding a collector later is purely a deploy-time concern.
@@ -127,13 +128,39 @@ def require_auth(
 
 
 # ---------------------------------------------------------------------------
-# Rate limiter
+# Rate limiter — per-principal key function
 # ---------------------------------------------------------------------------
 
-# slowapi uses a Limiter instance attached to the FastAPI app. Routes
-# decorate themselves with @limiter.limit(...). Default key function is
-# the client IP — simple and sufficient for now.
-limiter = Limiter(key_func=get_remote_address)
+def _get_rate_limit_key(request: Request) -> str:
+    """Rate-limit key: JWT `sub` when present, client IP as fallback.
+
+    Multiple tenants behind the same corporate NAT would otherwise all
+    share one IP bucket and starve each other. Extracting the `sub` from
+    the bearer token gives us a per-tenant bucket for free.
+
+    This function MUST never raise — slowapi calls it for every request
+    and an exception would kill the response. Any decode failure falls
+    back to the remote IP silently.
+    """
+    try:
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.lower().startswith('bearer '):
+            token = auth_header.split(' ', 1)[1].strip()
+            # Decode without verification — we only need the `sub` claim
+            # for the bucket key; full verification happens in require_auth.
+            claims = jwt.decode(
+                token, options={'verify_signature': False},
+                algorithms=['HS256'],
+            )
+            sub = claims.get('sub')
+            if sub:
+                return f'sub:{sub}'
+    except Exception:
+        pass  # fall through to IP
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_get_rate_limit_key)
 
 
 # ---------------------------------------------------------------------------

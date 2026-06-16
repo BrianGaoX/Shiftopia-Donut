@@ -74,6 +74,8 @@ interface AutoSchedulerModalProps {
     shifts: ShiftMeta[];
     employees: EmployeeMeta[];
     onComplete: () => void;
+    /** Org scope for the F1 fairness ledger. When omitted, the ledger is skipped. */
+    organizationId?: string;
 }
 
 type PipelinePhase = 'idle' | 'optimizing' | 'validating' | 'reviewing' | 'done';
@@ -119,6 +121,7 @@ export function AutoSchedulerModal({
     shifts,
     employees,
     onComplete,
+    organizationId,
 }: AutoSchedulerModalProps) {
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -312,6 +315,7 @@ export function AutoSchedulerModal({
             const schedResult = await autoSchedulerController.run({
                 shifts: filteredShifts,
                 employees,
+                organizationId,
                 signal: ac.signal,
                 timeLimitSeconds: ESTIMATED_TOTAL_SECONDS,
                 strategy: {

@@ -191,6 +191,91 @@ describe('finalizeDemand — provenance', () => {
     });
 });
 
+describe('finalizeDemand — C2 service-level buffer', () => {
+    it('no serviceLevel param → headcount unchanged (backward-compatible)', () => {
+        const result = finalizeDemand({
+            synthesis_run_id: null,
+            event_id: 'e1',
+            baselineCells: [baseline(32, 'F&B', 1, 16)],
+            feedbackByBucket: new Map(),
+        });
+        expect(result.rows[0].headcount).toBe(16);
+        const exp = result.rows[0].explanation as string[];
+        expect(exp.some((e) => e.includes('service_level'))).toBe(false);
+    });
+
+    it('serviceLevel 0.5 → no buffer (explicit median)', () => {
+        const result = finalizeDemand({
+            synthesis_run_id: null,
+            event_id: 'e1',
+            baselineCells: [baseline(32, 'F&B', 1, 16)],
+            feedbackByBucket: new Map(),
+            serviceLevel: 0.5,
+        });
+        expect(result.rows[0].headcount).toBe(16);
+    });
+
+    it('serviceLevel 0.95 (poisson) buffers above the point estimate and records provenance', () => {
+        const result = finalizeDemand({
+            synthesis_run_id: null,
+            event_id: 'e1',
+            baselineCells: [baseline(32, 'F&B', 1, 16)], // σ=√16=4, z(0.95)≈1.645 → +6.58 → 23
+            feedbackByBucket: new Map(),
+            serviceLevel: 0.95,
+        });
+        expect(result.rows[0].headcount).toBeGreaterThan(16);
+        expect(result.rows[0].headcount).toBe(23);
+        // baseline column still records the pre-multiplier L3 value
+        expect(result.rows[0].baseline).toBe(16);
+        const exp = result.rows[0].explanation as string[];
+        expect(exp.some((e) => e.includes('service_level:0.95') && e.includes('buffer:+'))).toBe(true);
+        // C2 first-class columns populated
+        expect(result.rows[0].service_level).toBe(0.95);
+        expect(result.rows[0].demand_buffer).toBe(7); // 23 - 16
+        expect(result.rows[0].coverage_confidence).toBeGreaterThanOrEqual(0.95);
+    });
+
+    it('no-buffer rows leave the C2 columns null (backward-compatible)', () => {
+        const result = finalizeDemand({
+            synthesis_run_id: null,
+            event_id: 'e1',
+            baselineCells: [baseline(32, 'F&B', 1, 16)],
+            feedbackByBucket: new Map(),
+        });
+        expect(result.rows[0].service_level ?? null).toBeNull();
+        expect(result.rows[0].demand_buffer ?? null).toBeNull();
+        expect(result.rows[0].coverage_confidence ?? null).toBeNull();
+    });
+
+    it('higher service level never reduces headcount (monotonic)', () => {
+        const mk = (sl: number) =>
+            finalizeDemand({
+                synthesis_run_id: null,
+                event_id: 'e1',
+                baselineCells: [baseline(32, 'F&B', 1, 16)],
+                feedbackByBucket: new Map(),
+                serviceLevel: sl,
+            }).rows[0].headcount;
+        expect(mk(0.8)).toBeGreaterThanOrEqual(mk(0.5));
+        expect(mk(0.99)).toBeGreaterThanOrEqual(mk(0.8));
+    });
+
+    it('a binding L6 floor still wins over a smaller buffered demand', () => {
+        const result = finalizeDemand({
+            synthesis_run_id: null,
+            event_id: 'e1',
+            baselineCells: [baseline(32, 'Security', 3, 1)], // mean 1, poisson buffer tiny
+            feedbackByBucket: new Map(),
+            serviceLevel: 0.9,
+            constraintFloors: [
+                { function_code: 'Security', level: 3, floor: 5, rule_code: 'min_security_alcohol' },
+            ],
+        });
+        expect(result.rows[0].headcount).toBe(5);
+        expect(result.rows[0].binding_constraint).toBe('min_security_alcohol');
+    });
+});
+
 describe('finalizeDemand — ordering', () => {
     it('output rows are sorted by slice → function → level', () => {
         const result = finalizeDemand({

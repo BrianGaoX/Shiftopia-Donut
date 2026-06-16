@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 ROLES = ['Usher', 'Security', 'Food Staff', 'Supervisor']
 
+# Quantiles predicted by the multi-quantile models (must match train_model.py).
+# Models trained with objective='reg:quantileerror' and quantile_alpha=QUANTILES
+# emit one column per quantile; legacy point models emit a single column and are
+# handled via a Poisson fallback so the quantile contract is always populated.
+QUANTILES = [0.5, 0.9]
+# z-score for the 0.9 quantile of a standard normal (Poisson fallback).
+_Z_P90 = 1.2815515655446004
+
 # ---------------------------------------------------------------------------
 # Feature schema — single source of truth shared with train_model.py.
 # Fail loudly at import time if the contract file is absent.
@@ -249,12 +257,35 @@ def predict_demand(features: dict) -> dict:
 
         try:
             X = pipeline.transform(features)
-            predicted = float(model.predict(X)[0])
-            corrected, factor = correction.apply(features['event_type'], role, predicted)
+            raw = np.asarray(model.predict(X))
+            # Multi-quantile model → a row of quantile predictions aligned with
+            # QUANTILES; legacy point model → 1-D. Backward-compatible: existing
+            # on-disk point models keep working until they're retrained.
+            if raw.ndim == 2 and raw.shape[1] >= len(QUANTILES):
+                q_row = raw[0]
+                p50_raw = float(q_row[QUANTILES.index(0.5)])
+                p90_raw = float(q_row[QUANTILES.index(0.9)])
+                quantile_source = 'model'
+            else:
+                p50_raw = float(raw.reshape(-1)[0])
+                # Poisson-style fallback (σ≈√mean) so the P90 contract is always
+                # populated even for point models — same approximation the demand
+                # buffer used to assume, now isolated to legacy artifacts only.
+                p90_raw = p50_raw + _Z_P90 * float(np.sqrt(max(0.0, p50_raw)))
+                quantile_source = 'approx'
+
+            corrected, factor = correction.apply(features['event_type'], role, p50_raw)
+            p50_final = max(0, round(corrected))
+            # Scale P90 by the same correction factor; clamp >= P50 so the
+            # quantiles never cross after rounding.
+            p90_final = max(p50_final, round(max(0.0, p90_raw * factor)))
             results[role] = {
-                'predicted': max(0, round(predicted)),
-                'corrected': max(0, round(corrected)),
-                'correction_factor': factor
+                'predicted': max(0, round(p50_raw)),
+                'corrected': p50_final,
+                'correction_factor': factor,
+                'p50': p50_final,
+                'p90': p90_final,
+                'quantile_source': quantile_source,
             }
         except PredictionError:
             raise

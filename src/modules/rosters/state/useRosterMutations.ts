@@ -16,6 +16,7 @@ import { useToast } from '@/modules/core/hooks/use-toast';
 import { ROSTER_STRUCTURE_KEY } from './useRosterStructure';
 import { shiftKeys, rosterKeys } from '@/modules/rosters/api/queryKeys';
 import { templateKeys } from '@/modules/templates/hooks/queries/useTemplateQueries';
+import { fairnessLedgerService } from '@/modules/rosters/services/fairnessLedger.service';
 
 // ── Helper to extract a user-facing message from any thrown value ─────────────
 
@@ -334,10 +335,27 @@ export function usePublishRoster() {
       return data;
     },
 
-    onSuccess: (data) => {
+    onSuccess: (data, vars) => {
       // Publishing changes lifecycle_status on many shifts — must refresh lists
       queryClient.invalidateQueries({ queryKey: shiftKeys.lists });
       queryClient.invalidateQueries({ queryKey: rosterKeys.all });
+
+      // F1 fairness-ledger refresh. Publishing is the natural cadence at which
+      // assignments become authoritative, so rebuild the rolling-window ledger
+      // for this org against today's window_end. This keeps debts fresh without
+      // a separate cron: the incremental updateAfterCommit handles the solver's
+      // own commits, and this covers manual edits + the daily window roll-forward
+      // (getEmployeeDebts reads `window_end = today`, which only exists once a
+      // recompute has run for today). Org-wide (no dept filter) so the team
+      // average matches the org-wide read path. Fire-and-forget: a ledger hiccup
+      // must never surface as a publish failure.
+      if (vars?.organizationId) {
+        fairnessLedgerService
+          .recomputeLedger(vars.organizationId, new Date())
+          .catch(err =>
+            console.error('[usePublishRoster] Fairness ledger recompute failed:', err),
+          );
+      }
 
       const rosters = (data?.rosters_published as number | undefined) ?? 0;
       const shifts  = (data?.shifts_published  as number | undefined) ?? 0;

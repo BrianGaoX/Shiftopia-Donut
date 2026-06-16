@@ -26,6 +26,7 @@
 import { optimizerClient, OptimizerError } from './optimizer/optimizer.client';
 import { solutionParser } from './optimizer/solution-parser';
 import { bulkAssignmentController, type BulkAssignmentResult } from '@/modules/rosters/bulk-assignment';
+import { assignmentCommitter } from '@/modules/rosters/bulk-assignment/engine/assignment-committer';
 import { format } from 'date-fns';
 import { estimateShiftCost, extractLevel } from '../rosters/domain/projections/utils/cost';
 import { calculateFatigueWithRecovery } from '../rosters/domain/projections/utils/fatigue';
@@ -34,6 +35,8 @@ import type { ShiftMeta, EmployeeMeta } from './optimizer/solution-parser';
 import type { ExistingShiftRef } from './types';
 import { auditor } from './audit/auditor';
 import { rosterFetcher, durationMinutes } from './data/roster-fetcher';
+import { fairnessLedgerService } from '@/modules/rosters/services/fairnessLedger.service';
+import { debtsToMap, type ShiftForFairness } from '@/modules/rosters/domain/fairness-ledger';
 import type {
     OptimizeRequest,
     OptimizerEmployee,
@@ -52,6 +55,16 @@ import type {
 // Default per-employee daily working-minute cap used by the capacity pre-check
 // when employee.max_daily_minutes is not supplied. 10h = 600m.
 const DEFAULT_MAX_DAILY_MINUTES = 600;
+
+// Upper bound on the initial fatigue score handed to the optimizer. The raw
+// score is unbounded — a single near-38h shift yields ~450 from the
+// -76·ln(1-h/38) curve near its asymptote — and a huge value distorts the
+// solver's fatigue objective (and previously, with the solver's old fixed
+// 5000-minute var domains, could force the whole model INFEASIBLE → silent
+// greedy fallback). The solver's accumulator domains are now horizon-derived
+// so this no longer risks infeasibility, but clamping keeps the penalty
+// meaningful and bounded. (audit fix C4)
+const MAX_INITIAL_FATIGUE_SCORE = 60;
 
 // Mirrors the Python service guards (ortools_runner.py). Surface to the user
 // before we serialize a giant payload and round-trip to the optimizer.
@@ -79,6 +92,14 @@ export interface AutoSchedulerInput {
     numWorkers?: number;
     /** Allows the caller to abort an in-flight run before it overwrites state. */
     signal?: AbortSignal;
+    /**
+     * Org scope for the F1 fairness ledger. When provided, the optimizer reads
+     * each employee's cumulative fairness debts and biases the roster toward
+     * whoever is "owed" undesirable shifts, then writes the committed shifts
+     * back to the ledger. When ABSENT, the ledger is cleanly skipped (no debts,
+     * no write-back) — the feature is purely additive.
+     */
+    organizationId?: string;
 }
 
 export interface CommitResult {
@@ -126,6 +147,12 @@ async function greedyFallback(
 
     for (const shift of shifts) {
         let assigned = false;
+        const shift_is_weekend = [0, 6].includes(new Date(shift.shift_date).getDay());
+        // Simple night check: overlaps 00:00-06:00
+        const startH = parseInt(shift.start_time.split(':')[0]);
+        const endH = parseInt(shift.end_time.split(':')[0]);
+        const isCrossMidnight = endH <= startH;
+        const shift_is_night = startH < 6 || isCrossMidnight;
 
         // Score each employee for this shift
         const candidateScores = employees.map(emp => {
@@ -177,7 +204,35 @@ async function greedyFallback(
             // Under-utilization (< 80%) gets a fairness bonus, scaled by fairness_weight
             const fairnessBonus = utl < 80 ? (80 - utl) * 5 * fairnessMult : 0;
 
-            const score = 1000 - fatiguePenalty - utilizationPenalty + fairnessBonus;
+            // F1 Ledger Bonus/Penalty
+            let debtBonus = 0;
+            const debts = details?.fairness_debts;
+            if (debts) {
+                if (shift_is_weekend) {
+                    if (debts.weekend_shifts < 0) debtBonus += Math.abs(debts.weekend_shifts) * 50; // owed weekend off -> bonus for this shift? No, wait.
+                    // If they are owed a weekend off (positive debt), we want to PENALIZE assigning them this weekend shift.
+                    // If they owe a weekend shift (negative debt), we want to BONUS assigning them.
+                    if (debts.weekend_shifts > 0) debtBonus -= debts.weekend_shifts * 50;
+                    if (debts.weekend_shifts < 0) debtBonus += Math.abs(debts.weekend_shifts) * 50;
+                }
+                if (shift_is_night) {
+                    if (debts.night_shifts > 0) debtBonus -= debts.night_shifts * 50;
+                    if (debts.night_shifts < 0) debtBonus += Math.abs(debts.night_shifts) * 50;
+                }
+            }
+
+            // Preference discount/bonus
+            const pref = new Set(details?.preferred_shift_ids || []);
+            let preferenceBonus = 0;
+            if (pref.has(shift.id)) {
+                preferenceBonus += 50; // base preference bonus ($5.00 equivalent)
+                if (debts && debts.denied_preferences > 0) {
+                    // boost preference bonus based on denied_preferences debt
+                    preferenceBonus += debts.denied_preferences * 20 * fairnessMult; 
+                }
+            }
+
+            const score = 1000 - fatiguePenalty - utilizationPenalty + fairnessBonus + debtBonus + preferenceBonus;
 
             return { 
                 emp, 
@@ -441,6 +496,26 @@ export class AutoSchedulerController {
             0,
         );
         const employeeCount = Math.max(1, input.employees.length);
+        const fairShareCap = (totalDemandMinutes / employeeCount) * 1.2;
+
+        // F1 Ledger: fetch cumulative fairness debts for the optimizer run.
+        // Requires a real org scope. When absent we SKIP entirely rather than
+        // invent one — the ledger's organization_id is a uuid, so a fabricated
+        // value would error and silently disable the feature anyway.
+        const orgId = input.organizationId;
+        let debtsMap: Map<string, Record<string, number>> | null = null;
+        if (orgId) {
+            try {
+                const rawDebts = await fairnessLedgerService.getEmployeeDebts(
+                    orgId,
+                    input.employees.map(e => e.id),
+                );
+                debtsMap = debtsToMap(rawDebts);
+                console.debug('[AutoScheduler] Fetched fairness debts for %d employees', debtsMap?.size ?? 0);
+            } catch (err) {
+                console.warn('[AutoScheduler] Failed to fetch fairness ledger, continuing without it:', err);
+            }
+        }
 
         const optimizerEmployees: OptimizerEmployee[] = input.employees.map(e => {
             const det = input.employeeDetails?.get(e.id);
@@ -457,7 +532,6 @@ export class AutoSchedulerController {
             // "leave shifts uncovered" over "violate min-contract slack" when
             // the window has more obligation than work.
             const scaledMin = (det?.min_contract_minutes ?? baseMin) * weekScale;
-            const fairShareCap = (totalDemandMinutes / employeeCount) * 1.2;
             const cappedMin = Math.min(scaledMin, fairShareCap);
 
             return {
@@ -475,11 +549,15 @@ export class AutoSchedulerController {
                 is_student: det?.is_student ?? false,
                 visa_limit: (det as any)?.visa_limit ?? 2880,
                 employment_type: /casual/i.test(e.contract_type || '') ? 'Casual' : isPT ? 'Part-Time' : 'Full-Time',
-                initial_fatigue_score: calculateFatigueWithRecovery(
-                  existingRoster.get(e.id) ?? [],
-                  format(new Date(), 'yyyy-MM-dd') // Today's fatigue as baseline
-                ).current,
+                initial_fatigue_score: Math.min(
+                  MAX_INITIAL_FATIGUE_SCORE,
+                  calculateFatigueWithRecovery(
+                    existingRoster.get(e.id) ?? [],
+                    format(new Date(), 'yyyy-MM-dd') // Today's fatigue as baseline
+                  ).current,
+                ),
                 ...det,
+                fairness_debts: debtsMap?.get(e.id) ?? {},
                 existing_shifts: existingRoster.get(e.id) ?? [],
                 availability_slots: availabilityData.get(e.id)?.slots ?? [],
                 has_availability_data: availabilityData.get(e.id)?.hasAnyData ?? false,
@@ -681,6 +759,7 @@ export class AutoSchedulerController {
             // Null when the greedy fallback path was taken (usedFallback=true)
             // because greedyFallback never calls the optimizer.
             objective_breakdown: optimizerObjectiveBreakdown,
+            organizationId: input.organizationId,
         };
 
 
@@ -726,11 +805,24 @@ export class AutoSchedulerController {
     }
 
     /**
-     * Commit passing proposals with concurrency recheck.
+     * Commit passing proposals with concurrency recheck — atomic multi-pair path.
      *
-     * CRITICAL: Re-runs simulate() with fresh DB state per employee group
-     * before calling commit(). Catches races where another user assigned
-     * one of the target shifts between preview and confirm.
+     * Flow:
+     *   1. Group passing proposals by employee (same as before).
+     *   2. Re-run simulate() in parallel chunks per employee to refresh
+     *      compliance against current DB state (TOCTOU guard — same as before).
+     *   3. Collect ALL freshly-passing (employeeId → shiftIds) pairs from the
+     *      recheck step into a single list.
+     *   4. Send the entire list to sm_bulk_assign_atomic via ONE RPC call, with
+     *      a per-attempt idempotency key (crypto.randomUUID). This makes the
+     *      commit atomic across all employees: if the DB throws a hard error
+     *      nothing is written; if the tab closes after the RPC was dispatched a
+     *      retry with the same key is a no-op.
+     *   5. Map the RPC's per_employee breakdown back to CommitResult shape.
+     *
+     * Idempotency key is generated fresh per commit attempt so a manager
+     * clicking Apply twice gets two independent attempts — each is idempotent
+     * within itself (retry-safe) but does not deduplicate across attempts.
      */
     async commit(result: AutoSchedulerResult): Promise<CommitResult> {
         const byEmployee = new Map<string, string[]>();
@@ -741,18 +833,27 @@ export class AutoSchedulerController {
             byEmployee.set(p.employeeId, list);
         }
 
-        // ── Per-employee commits run in chunks ─────────────────────────────
-        // We process in small batches (e.g., 5 at a time) to avoid browser lock
-        // contention during the massive recheck/commit phase.
-        type EmpOutcome = { employeeId: string; committed: number; failed: boolean; conflicts: string[] };
-        const outcomes: EmpOutcome[] = [];
+        if (byEmployee.size === 0) {
+            return { success: true, totalCommitted: 0, failedEmployees: [], concurrencyConflicts: [] };
+        }
+
+        // ── Step 1: Per-employee compliance recheck (TOCTOU guard) ────────────
+        // Run in chunks of 5 to avoid browser lock contention.
+        type RecheckOutcome = {
+            employeeId: string;
+            passingShiftIds: string[];
+            recheckFailed: boolean;
+            recheckConflicts: string[]; // shifts that newly-failed recheck
+        };
+
         const entries = Array.from(byEmployee.entries());
         const CHUNK_SIZE = 5;
+        const recheckOutcomes: RecheckOutcome[] = [];
 
         for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
             const chunk = entries.slice(i, i + CHUNK_SIZE);
-            const chunkOutcomes = await Promise.all(
-                chunk.map(async ([employeeId, shiftIds]): Promise<EmpOutcome> => {
+            const chunkResults = await Promise.all(
+                chunk.map(async ([employeeId, shiftIds]): Promise<RecheckOutcome> => {
                     let freshResult: BulkAssignmentResult;
                     try {
                         freshResult = await bulkAssignmentController.simulate(
@@ -760,44 +861,120 @@ export class AutoSchedulerController {
                         );
                     } catch (err) {
                         console.error('[AutoScheduler] Recheck failed for employee', employeeId, err);
-                        return { employeeId, committed: 0, failed: true, conflicts: [] };
+                        return { employeeId, passingShiftIds: [], recheckFailed: true, recheckConflicts: shiftIds };
                     }
 
-                    const nowFailing = freshResult.failedV8ShiftIds;
                     if (freshResult.passedV8ShiftIds.length === 0) {
                         console.warn('[AutoScheduler] All shifts failed recheck for', employeeId);
-                        return { employeeId, committed: 0, failed: true, conflicts: nowFailing };
+                        return {
+                            employeeId,
+                            passingShiftIds: [],
+                            recheckFailed: true,
+                            recheckConflicts: freshResult.failedV8ShiftIds,
+                        };
                     }
 
-                    try {
-                        const commitResult = await bulkAssignmentController.commit(freshResult, employeeId);
-                        if (commitResult.success) {
-                            if (nowFailing.length > 0) {
-                                console.warn('[AutoScheduler] Concurrency: skipped %d shifts for %s', nowFailing.length, employeeId);
-                            }
-                            return { employeeId, committed: commitResult.committed.length, failed: false, conflicts: nowFailing };
-                        }
-                        return { employeeId, committed: 0, failed: true, conflicts: nowFailing };
-                    } catch (err) {
-                        console.error('[AutoScheduler] Commit error for', employeeId, err);
-                        return { employeeId, committed: 0, failed: true, conflicts: nowFailing };
+                    if (freshResult.failedV8ShiftIds.length > 0) {
+                        console.warn(
+                            '[AutoScheduler] Concurrency: %d shifts newly failed recheck for %s',
+                            freshResult.failedV8ShiftIds.length, employeeId,
+                        );
                     }
-                })
+
+                    return {
+                        employeeId,
+                        passingShiftIds: freshResult.passedV8ShiftIds,
+                        recheckFailed: false,
+                        recheckConflicts: freshResult.failedV8ShiftIds,
+                    };
+                }),
             );
-            outcomes.push(...chunkOutcomes);
+            recheckOutcomes.push(...chunkResults);
         }
 
-        const totalCommitted = outcomes.reduce((acc, o) => acc + o.committed, 0);
-        const failedEmployees = outcomes.filter(o => o.failed).map(o => o.employeeId);
-        const concurrencyConflicts = outcomes.flatMap(o => o.conflicts);
+        // Employees whose recheck entirely failed — they will not be in the
+        // atomic commit at all and are reported as failedEmployees.
+        const recheckFailedEmployees = recheckOutcomes
+            .filter(o => o.recheckFailed)
+            .map(o => o.employeeId);
 
-        console.debug('[AutoScheduler] Commit complete:', { totalCommitted, failedEmployees, concurrencyConflicts });
+        // Shifts that newly-failed compliance recheck → concurrency conflicts.
+        const recheckConflicts = recheckOutcomes.flatMap(o => o.recheckConflicts);
+
+        // Build the assignment list for the atomic RPC — only employees with
+        // at least one passing shift.
+        const atomicAssignments = recheckOutcomes
+            .filter(o => !o.recheckFailed && o.passingShiftIds.length > 0)
+            .map(o => ({ employeeId: o.employeeId, shiftIds: o.passingShiftIds }));
+
+        if (atomicAssignments.length === 0) {
+            return {
+                success: recheckFailedEmployees.length === 0,
+                totalCommitted: 0,
+                failedEmployees: recheckFailedEmployees,
+                concurrencyConflicts: recheckConflicts,
+            };
+        }
+
+        // ── Step 2: ONE atomic RPC call for all employee pairs ────────────────
+        const idempotencyKey = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+            ? crypto.randomUUID()
+            : undefined;
+
+        const atomicResult = await assignmentCommitter.commitAtomic(atomicAssignments, idempotencyKey);
+
+        // Merge recheck-failed employees with any DB-level failures reported by
+        // the atomic committer (e.g. employee had 0 committed after RPC).
+        const allFailedEmployees = Array.from(
+            new Set([...recheckFailedEmployees, ...atomicResult.failedEmployees]),
+        );
+        const allConflicts = Array.from(
+            new Set([...recheckConflicts, ...atomicResult.concurrencyConflicts]),
+        );
+
+        console.debug('[AutoScheduler] Atomic commit complete:', {
+            totalCommitted: atomicResult.totalCommitted,
+            failedEmployees: allFailedEmployees,
+            concurrencyConflicts: allConflicts,
+            idempotencyKey: idempotencyKey ?? 'none',
+        });
+
+        // ── F1 fairness-ledger write-back ─────────────────────────────────────
+        // Record the shifts we actually committed so future runs see updated
+        // weekend/night/PH/hours debts. Fire-and-forget: a ledger hiccup must
+        // never fail an already-committed roster. Skipped when no org scope.
+        if (result.organizationId && atomicResult.totalCommitted > 0) {
+            const conflictSet = new Set(allConflicts);
+            const proposalById = new Map(result.proposals.map(p => [p.shiftId, p]));
+            const committedShifts: ShiftForFairness[] = [];
+            for (const pair of atomicAssignments) {
+                for (const shiftId of pair.shiftIds) {
+                    if (conflictSet.has(shiftId)) continue;
+                    const p = proposalById.get(shiftId);
+                    if (!p) continue;
+                    committedShifts.push({
+                        id: shiftId,
+                        employeeId: pair.employeeId,
+                        shiftDate: p.shiftDate,
+                        startTime: p.startTime,
+                        endTime: p.endTime,
+                    });
+                }
+            }
+            if (committedShifts.length > 0) {
+                fairnessLedgerService
+                    .updateAfterCommit(result.organizationId, committedShifts)
+                    .catch(err =>
+                        console.error('[AutoScheduler] Fairness ledger write-back failed:', err),
+                    );
+            }
+        }
 
         return {
-            success: failedEmployees.length === 0 && concurrencyConflicts.length === 0,
-            totalCommitted,
-            failedEmployees,
-            concurrencyConflicts,
+            success: atomicResult.success && allFailedEmployees.length === 0 && allConflicts.length === 0,
+            totalCommitted: atomicResult.totalCommitted,
+            failedEmployees: allFailedEmployees,
+            concurrencyConflicts: allConflicts,
         };
     }
 

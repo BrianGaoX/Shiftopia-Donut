@@ -59,6 +59,18 @@ export function getDemandEngineMode(): DemandEngineMode {
   return 'ml_only'; // safe default — no behavior change
 }
 
+/**
+ * Default C2 service level (coverage confidence) for demand buffering.
+ * Single source of truth — read from VITE_DEMAND_SERVICE_LEVEL, clamped to a
+ * sane range. Defaults to 0.5 (median / no buffer) so behaviour is unchanged
+ * until an operator opts in via the slider or env. Callers may override per run.
+ */
+export function getDefaultServiceLevel(): number {
+  const raw = Number(import.meta.env.VITE_DEMAND_SERVICE_LEVEL);
+  if (!Number.isFinite(raw)) return 0.5;
+  return Math.min(0.999, Math.max(0, raw));
+}
+
 const FUNCTION_CODES: FunctionCode[] = ['F&B', 'Logistics', 'AV', 'FOH', 'Security'];
 
 export interface BuildScopeDemandParams {
@@ -84,6 +96,15 @@ export interface BuildScopeDemandParams {
   synthesisRunId?: string;
   /** Optional scenario context forwarded to ML service. */
   scenarioId?: string;
+  /**
+   * C2 service level (coverage confidence) for demand buffering, 0..1.
+   * Defaults to getDefaultServiceLevel() (env / 0.5). 0.5 ⇒ no buffer.
+   */
+  serviceLevel?: number;
+  /** Dispersion model for the C2 buffer when only a point estimate exists. Default 'poisson'. */
+  demandDispersion?: import('../domain/demand-uncertainty').DispersionModel;
+  /** Coefficient of variation for the 'normal' dispersion model. */
+  demandCv?: number;
 }
 
 export interface ScopeDemandResult {
@@ -486,6 +507,10 @@ export async function buildScopeDemand(
           timecardMultByBucket,
           constraintFloors: localFloors,
           globalFloors,
+          // C2: apply the requested service-level demand buffer (default = env/0.5).
+          serviceLevel: params.serviceLevel ?? getDefaultServiceLevel(),
+          demandDispersion: params.demandDispersion,
+          demandCv: params.demandCv,
         });
 
         allFinalizedRows.push(...finResult.rows);
@@ -608,6 +633,9 @@ export async function buildScopeDemand(
             eventInput,
             mlRolesForLiveCall,
             (sliceIndex) => derivePerSliceFlags(sliceIndex, eventStartMs, eventEndMs),
+            // C2: ML path uses model-derived σ (from predicted quantiles) at the
+            // requested service level instead of the Poisson approximation.
+            params.serviceLevel ?? getDefaultServiceLevel(),
           );
           mlCallCount++;
           for (let i = 0; i < mlRolesForLiveCall.length; i++) {

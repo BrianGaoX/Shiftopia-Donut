@@ -7,6 +7,7 @@ import { useToast } from '@/modules/core/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/platform/supabase/client';
 import { shiftKeys } from '@/modules/rosters/api/queryKeys';
+import { fairnessLedgerService } from '@/modules/rosters/services/fairnessLedger.service';
 import { cn } from '@/modules/core/lib/utils';
 import { useIsMobile } from '@/modules/core/hooks/use-mobile';
 import { Drawer, DrawerContent } from '@/modules/core/ui/primitives/drawer';
@@ -815,6 +816,32 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
 
         if (!allBids || allBids.length === 0) { skipped++; continue; }
 
+        // F3 — Preference equity: the loop below awards the shift to the FIRST
+        // compliance-clear bidder, so order bidders the fairness ledger says are
+        // "owed" (highest denied-preference debt) ahead of the rest. Stable sort
+        // preserves FIFO within equal debt. Falls back to plain FIFO when there
+        // is no org scope or no ledger data.
+        let orderedBids = allBids;
+        if (organizationId && allBids.length > 1) {
+          try {
+            const debts = await fairnessLedgerService.getEmployeeDebts(
+              organizationId,
+              allBids.map(b => b.employee_id),
+            );
+            const owed = new Map<string, number>();
+            for (const d of debts) {
+              if (d.metric === 'denied_preferences') owed.set(d.employeeId, d.debt);
+            }
+            if (owed.size > 0) {
+              orderedBids = [...allBids].sort(
+                (a, b) => (owed.get(b.employee_id) ?? 0) - (owed.get(a.employee_id) ?? 0),
+              );
+            }
+          } catch (err) {
+            console.warn('[Bidding] F3 preference-equity ordering skipped:', err);
+          }
+        }
+
         // D-30: covers D-27 lookback for WORKING_DAYS_CAP / AVG_FOUR_WEEK_CYCLE,
         // plus one extra day for cross-midnight shifts (MIN_REST_GAP / NO_OVERLAP).
         // D+14: catches next-shift rest-gap.
@@ -826,7 +853,7 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
 
         let winnerBid: { id: string; employee_id: string } | null = null;
 
-        for (const bid of allBids) {
+        for (const bid of orderedBids) {
           const { data: existingRaw } = await supabase
             .from('shifts')
             .select('id, start_time, end_time, shift_date, unpaid_break_minutes')

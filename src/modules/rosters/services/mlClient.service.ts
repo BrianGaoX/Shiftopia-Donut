@@ -4,6 +4,10 @@ import {
   DemandTensor,
 } from '@/modules/rosters/domain/shiftSynthesizer.policy';
 import type { TemplateGroupType } from '../domain/shift.entity';
+import {
+  serviceLevelHeadcount,
+  sigmaFromQuantiles,
+} from '../domain/demand-uncertainty';
 
 const ML_URL = (import.meta.env.VITE_ML_URL as string | undefined) || 'http://localhost:8000';
 type EventType =
@@ -49,6 +53,12 @@ export interface EventInput {
 interface RoleResult {
   predicted: number;
   corrected: number;
+  // C2 — quantile predictions (present when the model was trained with
+  // quantile loss; see ml/predict.py). p50 === corrected. Optional so legacy
+  // point-model responses still type-check.
+  p50?: number;
+  p90?: number;
+  quantile_source?: 'model' | 'approx';
 }
 
 /**
@@ -190,6 +200,13 @@ export async function buildDemandAnalysisForRoles(
     exitPeakFlag: boolean;
     mealWindowFlag: boolean;
   },
+  /**
+   * C2 service level (0..1). When > 0.5 and the model returned quantiles, each
+   * slot is staffed at that coverage confidence using a model-derived σ
+   * (P50/P90), replacing the old Poisson approximation. Defaults to 0.5 (no
+   * buffer → requiredHeadcount = corrected, the legacy behaviour).
+   */
+  serviceLevel = 0.5,
 ): Promise<DemandTensor[]> {
   const sliceRequests: EventInput[] = Array.from({ length: event.timeSliceCount }, (_, i) => {
     const flagOverrides = derivePerSliceFlags ? derivePerSliceFlags(i) : {};
@@ -214,13 +231,23 @@ export async function buildDemandAnalysisForRoles(
     }
 
     const packingSlots: DemandSlot[] = slices.map((slice, i) => {
-      const corrected = (slice as unknown as Record<string, RoleResult>)[role].corrected;
+      const result = (slice as unknown as Record<string, RoleResult>)[role];
+      const corrected = result.corrected;
+
+      // C2: buffer to the requested service level using model-derived σ when
+      // the model emitted quantiles; otherwise fall back to the point estimate.
+      let required = corrected;
+      if (serviceLevel > 0.5 && typeof result.p50 === 'number' && typeof result.p90 === 'number') {
+        const sigma = sigmaFromQuantiles(result.p50, result.p90, 0.5, 0.9);
+        required = serviceLevelHeadcount({ serviceLevel, mean: result.p50, sigma }).required;
+      }
+
       return {
         slotStart: i,
         slotEnd: i + 1,
-        requiredHeadcount: corrected,
-        residualHeadcount: corrected,
-        residualHeadcountInt: Math.round(corrected),
+        requiredHeadcount: required,
+        residualHeadcount: required,
+        residualHeadcountInt: Math.round(required),
       };
     });
 

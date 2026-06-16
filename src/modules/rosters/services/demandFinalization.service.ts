@@ -36,6 +36,11 @@ import type { RuleBaselineCell } from '../domain/ruleEngine.types';
 import type { SupervisorFeedbackRow } from '../api/supervisorFeedback.dto';
 import { computeFeedbackMultiplier } from '../domain/feedbackMultiplier';
 import type { DemandTensorInsertRow } from '../api/demandTensor.queries';
+import {
+    serviceLevelHeadcount,
+    DEFAULT_SERVICE_LEVEL,
+    type DispersionModel,
+} from '../domain/demand-uncertainty';
 
 // ── L6 constraint floor (Phase-1 minimal) ─────────────────────────────────
 
@@ -77,6 +82,17 @@ export interface FinalizeParams {
     constraintFloors?: readonly L6ConstraintFloor[];
     /** L6 global floors (across multiple buckets). */
     globalFloors?: readonly L6GlobalFloor[];
+    /**
+     * Service level (feature C2) — target P(scheduled >= demand). Each cell's
+     * post-formula headcount is buffered to this confidence using a count
+     * dispersion model. Default 0.5 → no buffer (legacy behaviour). Raise to
+     * e.g. 0.9 to protect against demand-forecast variance.
+     */
+    serviceLevel?: number;
+    /** Dispersion model for the C2 buffer. Default 'poisson' (σ=√mean). */
+    demandDispersion?: DispersionModel;
+    /** Coefficient of variation for the 'normal' dispersion model. Default 0.5. */
+    demandCv?: number;
 }
 
 export interface FinalizeResult {
@@ -140,12 +156,25 @@ export function finalizeDemand(params: FinalizeParams): FinalizeResult {
             cell.headcount * timecardMult * feedbackMult,
         );
 
+        // C2: service-level demand buffer. Staffs above the point estimate so
+        // demand <= scheduled with probability `serviceLevel`. SL <= 0.5 → no-op
+        // (buffer 0), preserving legacy behaviour. Poisson dispersion (σ=√mean)
+        // is the default for integer count demand. Applied BEFORE the L6 floor
+        // so a binding floor still wins.
+        const slBuffer = serviceLevelHeadcount({
+            serviceLevel: params.serviceLevel ?? DEFAULT_SERVICE_LEVEL,
+            mean: formulaResult,
+            dispersion: params.demandDispersion ?? 'poisson',
+            cv: params.demandCv,
+        });
+        const bufferedResult = slBuffer.required;
+
         const floor = floorMap.get(bucketKey);
         const finalHeadcount = floor
-            ? Math.max(formulaResult, floor.floor)
-            : formulaResult;
+            ? Math.max(bufferedResult, floor.floor)
+            : bufferedResult;
 
-        const isFloorBinding = floor !== undefined && finalHeadcount > formulaResult;
+        const isFloorBinding = floor !== undefined && finalHeadcount > bufferedResult;
         if (isFloorBinding) {
             bindingConstraints.push({
                 slice_idx: cell.slice_idx,
@@ -164,6 +193,13 @@ export function finalizeDemand(params: FinalizeParams): FinalizeResult {
                 ? `feedback_mult:1.000 (cold_start)`
                 : `feedback_mult:${feedbackMult.toFixed(3)} (n=${feedbackResult.feedbackIds.length})`,
         ];
+        if (slBuffer.buffer > 0) {
+            explanation.push(
+                `service_level:${slBuffer.serviceLevel.toFixed(2)} ` +
+                `buffer:+${slBuffer.buffer} (${slBuffer.method}, ` +
+                `coverage_conf:${(slBuffer.coverageConfidence * 100).toFixed(0)}%)`,
+            );
+        }
         if (isFloorBinding) {
             explanation.push(`constraint_floor:${floor!.rule_code} raised to ${finalHeadcount}`);
         }
@@ -181,6 +217,11 @@ export function finalizeDemand(params: FinalizeParams): FinalizeResult {
             timecard_ratio_used: timecardMult,
             feedback_multiplier_used: feedbackMult,
             execution_timestamp: new Date().toISOString(),
+            // C2 — first-class buffering columns. Null when no buffer applied
+            // (serviceLevel <= 0.5) so the legacy/no-op path stays clean.
+            service_level: slBuffer.buffer > 0 ? slBuffer.serviceLevel : null,
+            demand_buffer: slBuffer.buffer > 0 ? slBuffer.buffer : null,
+            coverage_confidence: slBuffer.buffer > 0 ? slBuffer.coverageConfidence : null,
         });
     }
 

@@ -26,6 +26,14 @@ export interface DemandTensorInsertRow {
     feedback_multiplier_used: number;
     rule_version_id?: string | null;
     execution_timestamp?: string;
+
+    // C2 — service-level buffering (nullable; NULL = no buffer / median staffing).
+    /** Target P(scheduled >= demand) used to buffer this cell (0..1). */
+    service_level?: number | null;
+    /** Extra headcount added above the point estimate to hit service_level (>= 0). */
+    demand_buffer?: number | null;
+    /** Modelled P(demand <= headcount) for this cell (0..1). */
+    coverage_confidence?: number | null;
 }
 
 export const demandTensorDbQueries = {

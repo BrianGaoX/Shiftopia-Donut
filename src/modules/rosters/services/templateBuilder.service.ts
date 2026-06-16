@@ -5,6 +5,10 @@ import {
     type DemandTemplateRow,
     type TemplateShiftCell,
 } from '@/modules/rosters/api/demandTemplates.queries';
+import {
+    serviceLevelHeadcount,
+    DEFAULT_SERVICE_LEVEL,
+} from '@/modules/rosters/domain/demand-uncertainty';
 
 /**
  * Demand Engine L9 — Template Builder
@@ -111,6 +115,14 @@ interface EventRow {
 export interface TryAutoBuildOptions {
     /** Minimum number of distinct events required before a template is emitted. Default 10. */
     minSampleSize?: number;
+    /**
+     * Service level (feature C2) — target probability that template headcount
+     * covers historical demand. Each cell is staffed at the empirical quantile
+     * of its observed headcounts instead of the median. Default 0.5 (median),
+     * which reproduces the legacy behaviour exactly. Raise (e.g. 0.85) to build
+     * buffered templates that prevent chronic under-staffing.
+     */
+    serviceLevel?: number;
 }
 
 /**
@@ -186,14 +198,20 @@ export async function tryAutoBuildTemplate(
         }
     }
 
+    // C2: staff each cell at the service-level quantile of its observed
+    // headcounts. At the default 0.5 this is Math.round(median) — identical to
+    // the legacy template. Higher levels build under-staffing-resistant
+    // templates straight from the historical distribution.
+    const serviceLevel = options?.serviceLevel ?? DEFAULT_SERVICE_LEVEL;
     const shifts: TemplateShiftCell[] = [];
     for (const [key, headcounts] of cellMap.entries()) {
         const [sliceStr, functionCode, levelStr] = key.split('|');
+        const { required } = serviceLevelHeadcount({ serviceLevel, samples: headcounts });
         shifts.push({
             slice_idx:     Number(sliceStr),
             function_code: functionCode,
             level:         Number(levelStr),
-            headcount:     Math.round(computeMedian(headcounts)),
+            headcount:     required,
             sample_size:   headcounts.length,
         });
     }

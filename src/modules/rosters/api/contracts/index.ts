@@ -167,6 +167,24 @@ export const BulkAssignResponseSchema = z.object({
 });
 export type BulkAssignResponse = z.infer<typeof BulkAssignResponseSchema>;
 
+// sm_bulk_assign_atomic
+const BulkAssignAtomicPerEmployeeSchema = z.object({
+  employee_id: z.string().uuid(),
+  committed: z.number().int(),
+  conflicts: z.array(z.string().uuid()),
+});
+
+export const BulkAssignAtomicResponseSchema = z.object({
+  success: z.boolean(),
+  total_requested: z.number().int().optional(),
+  success_count: z.number().int().optional(),
+  conflict_count: z.number().int().optional(),
+  conflicts: z.array(z.string().uuid()).optional(),
+  per_employee: z.array(BulkAssignAtomicPerEmployeeSchema).optional(),
+  error: z.string().optional(),
+});
+export type BulkAssignAtomicResponse = z.infer<typeof BulkAssignAtomicResponseSchema>;
+
 // sm_bulk_delete_shifts
 export const BulkDeleteResponseSchema = z.object({
   success: z.boolean(),

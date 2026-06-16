@@ -861,6 +861,10 @@ const LaborDemandForecastingPage: React.FC = () => {
   const [fatigueWeight, setFatigueWeight] = useState(
     STRATEGY_PRESETS.balanced.fatigue,
   );
+  // C2: target coverage confidence (%) for demand buffering. 50 = median (no
+  // buffer); raising it staffs above the point estimate to absorb demand
+  // variance. Passed to buildScopeDemand as serviceLevel = pct / 100.
+  const [coverageConfidence, setCoverageConfidence] = useState(50);
 
   const handleStrategyChange = (mode: StrategyMode) => {
     setStrategyMode(mode);
@@ -941,6 +945,7 @@ const LaborDemandForecastingPage: React.FC = () => {
       subDepartmentId,
       selectedDate,
       rolesInScope.map((r) => r.id).join(","),
+      coverageConfidence,
     ],
     queryFn: () =>
       buildScopeDemand({
@@ -951,6 +956,8 @@ const LaborDemandForecastingPage: React.FC = () => {
         roles: rolesInScope,
         existingShifts: shifts,
         buildingType: "convention_centre",
+        // C2: coverage-confidence slider → service-level demand buffer.
+        serviceLevel: coverageConfidence / 100,
       }),
     enabled:
       isRequested &&
@@ -2364,6 +2371,34 @@ const LaborDemandForecastingPage: React.FC = () => {
                       onChange={setFatigueWeight}
                       color="#a78bfa"
                     />
+                    {/* C2 — coverage confidence (service level) for demand buffering */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground font-medium">
+                          Coverage Confidence
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold" style={{ color: "#f59e0b" }}>
+                            {coverageConfidence <= 50 ? "Median" : `P${coverageConfidence}`}
+                          </span>
+                          <span className="text-muted-foreground/60 tabular-nums">
+                            {coverageConfidence}%
+                          </span>
+                        </div>
+                      </div>
+                      <Slider
+                        value={[coverageConfidence]}
+                        onValueChange={(v) => setCoverageConfidence(v[0])}
+                        min={50}
+                        max={95}
+                        step={5}
+                        className="w-full"
+                      />
+                      <p className="text-[10px] text-muted-foreground/70">
+                        Staff so demand is covered ~{coverageConfidence}% of the time.
+                        50% = median (no buffer).
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>

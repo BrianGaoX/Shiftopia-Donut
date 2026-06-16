@@ -157,6 +157,44 @@ def test_predict_demand_unknown_event_type_no_exception(patched_predict, sample_
     assert any('MadeUpType' in m for m in caplog.messages)
 
 
+# ---------------------------------------------------------------------------
+# C2 — quantile predictions (multi-quantile model + legacy point fallback)
+# ---------------------------------------------------------------------------
+class MultiQuantileStub:
+    """Stand-in for a multi-quantile XGBRegressor — returns [[p50, p90]] per row."""
+
+    def __init__(self, p50, p90):
+        self.p50 = float(p50)
+        self.p90 = float(p90)
+
+    def predict(self, X):
+        return np.array([[self.p50, self.p90]] * len(X))
+
+
+def test_predict_demand_multiquantile_model_returns_quantiles(patched_predict, sample_features):
+    """A model emitting a 2-D (P50, P90) row → quantile_source='model' with both
+    quantiles surfaced (no correction data in the fixture → factor 1.0)."""
+    patched_predict._MODEL_CACHE['Usher'] = MultiQuantileStub(8, 12)
+    result = patched_predict.predict_demand(sample_features)
+    usher = result['Usher']
+    assert usher['quantile_source'] == 'model'
+    assert usher['p50'] == 8
+    assert usher['p90'] == 12
+    assert usher['corrected'] == usher['p50']
+    assert usher['p90'] >= usher['p50']
+
+
+def test_predict_demand_legacy_point_model_approximates_p90(patched_predict, sample_features):
+    """A legacy 1-D point model → quantile_source='approx' with a Poisson P90
+    (>= P50), so the quantile contract is always populated."""
+    result = patched_predict.predict_demand(sample_features)  # fixture stub = 1-D
+    usher = result['Usher']  # StubRegressor(10.0)
+    assert usher['quantile_source'] == 'approx'
+    assert usher['p50'] == 10
+    assert usher['p90'] >= usher['p50']  # 10 + 1.28·√10 ≈ 14
+    assert 'predicted' in usher and 'corrected' in usher
+
+
 def test_manifest_loadable_and_contains_all_roles(patched_predict, fake_models_dir):
     """MANIFEST.json written by the fixture must carry version entries for every role."""
     import json, os

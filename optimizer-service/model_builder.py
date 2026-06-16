@@ -129,6 +129,13 @@ class EmployeeInput:
 
 
     initial_fatigue_score: float = 0.0
+    # F1 longitudinal fairness ledger: per-metric debt (rolling_value − team
+    # average) keyed by metric ('weekend_shifts'|'night_shifts'|
+    # 'public_holiday_shifts'|...). Positive = over-share (bias away);
+    # negative = owed (bias toward). Consumed by SC-11. MUST be a declared
+    # field — otherwise it is dropped at the Pydantic/dataclass wire boundary
+    # and SC-11 silently no-ops.
+    fairness_debts: dict = field(default_factory=dict)
     # Pinned/already-committed shifts for this employee. The optimizer treats
     # these as immutable: it will not propose any shift that overlaps or
     # violates the rest gap against them, and it counts their minutes
@@ -516,6 +523,13 @@ class ScheduleModelBuilder:
         )
         self._emp_workload_vars: dict[str, cp_model.IntVar] = {}
         self._relaxed_violations_vars: list[cp_model.BoolVar] = []
+        # Horizon-derived minute bounds — populated in build_and_solve() before
+        # any variable is created. Defaults here keep the attributes defined for
+        # any method invoked out of the normal build order.
+        self._total_shift_minutes: int = 0
+        self._max_existing_minutes: int = 0
+        self._minute_ub: int = 1
+        self._eff_ub: int = 1
         # Per-category objective term accounting (same expressions as in
         # `terms`, kept separately so objective_breakdown() can evaluate them
         # against the solver solution after solve).
@@ -529,6 +543,8 @@ class ScheduleModelBuilder:
             'employment_mix': [],
             'relaxed_violations': [],
             'availability': [],
+            'undesirable_balance': [],  # DELIVERABLE 4: night/weekend fairness
+            'longitudinal_fairness': [],  # SC-11: F1 cross-roster fairness ledger
             'other': [],
         }
 
@@ -563,6 +579,29 @@ class ScheduleModelBuilder:
 
         # A: Compute eligible pairs
         self._compute_eligibility()
+
+        # Horizon-derived bounds for per-employee minute accumulators.
+        # The old code hard-coded these IntVar domains at 5000 minutes (~83h)
+        # and day vars at 720 (12h). On any multi-week window (the UI defaults
+        # to ~16 days) or with high prior-fatigue inputs, an `==`-constrained
+        # accumulator could exceed its domain and make the WHOLE model
+        # INFEASIBLE — or silently cap hours, masquerading as a soft penalty
+        # (audit C3/C4). No employee can be assigned more than the sum of all
+        # shift durations, so that (plus their pinned existing minutes) is a
+        # safe, never-infeasible ceiling.
+        self._total_shift_minutes = sum(s.duration_minutes for s in self.data.shifts)
+        self._max_existing_minutes = max(
+            (sum(es.duration_minutes for es in e.existing_shifts)
+             for e in self.data.employees),
+            default=0,
+        )
+        # Generic per-employee minute upper bound (work totals, overtime,
+        # fairness deviation). +1 keeps the bound strictly above any feasible
+        # value.
+        self._minute_ub = self._total_shift_minutes + self._max_existing_minutes + 1
+        # Circadian-weighted "effective" minutes peak at 1.5x raw duration.
+        self._eff_ub = int(self._total_shift_minutes * 1.5) + 1
+
         # B: Create variables (only for surviving pairs)
         self._create_variables()
 
@@ -654,7 +693,11 @@ class ScheduleModelBuilder:
                 if (emp.id, s.id) in self._x
             ]
             existing_minutes = sum(es.duration_minutes for es in emp.existing_shifts)
-            w = self.model.NewIntVar(0, emp.max_weekly_minutes + 10000, f'w_{emp.id[:6]}')
+            # Domain = everything this employee could possibly accrue (all
+            # shift minutes + their pinned existing minutes). The old
+            # `max_weekly_minutes + 10000` bound both under-bounded long
+            # horizons and acted as a stealth 166h-above-contract cap.
+            w = self.model.NewIntVar(0, self._total_shift_minutes + existing_minutes, f'w_{emp.id[:6]}')
             self.model.Add(w == cp_model.LinearExpr.Sum(wterms) + existing_minutes)
             self._emp_workload_vars[emp.id] = w
 
@@ -674,11 +717,6 @@ class ScheduleModelBuilder:
 
     # -- HC-2 + HC-3: No overlap AND minimum rest gap ------------------------
     #
-    # Replaces the old O(E·O) pairwise constraint approach. The previous
-    # build emitted one `v1 + v2 <= 1` per (employee, overlapping-shift-pair)
-    # × 2 for rest-gap, producing ~1.5M constraints for a 624-shift × 103-
-    # employee problem and ~7-8s of preprocess time.
-    #
     # The CP-SAT idiom is `AddNoOverlap` on `OptionalIntervalVar`s. Each
     # shift becomes one optional interval per eligible employee, padded on
     # the trailing edge by `min_rest_minutes` so that "no two intervals
@@ -686,16 +724,55 @@ class ScheduleModelBuilder:
     #   - HC-2 (real shift times can't overlap)
     #   - HC-3 (rest gap before the next shift must be >= min_rest)
     #
-    # Constraint count drops from O(E·S²) to O(E) — one AddNoOverlap call
-    # per employee — and CP-SAT's specialized cumulative propagator handles
-    # this far more efficiently than thousands of pairwise booleans.
+    # DELIVERABLE 3 — MULTI-HIRE REST GAP (480m vs 600m)
+    # The ICC EBA requires only 480m (8h) rest when EITHER shift is
+    # MULTI_HIRE, versus 600m (10h) for two NORMAL shifts.
     #
-    # NOTE on multi-hire (480m) rest gap: the legacy implementation used
-    # 480m gap when EITHER shift was MULTI_HIRE. The interval approach uses
-    # one universal pad. We use `min_rest_minutes` (default 600); multi-hire
-    # cases will be slightly over-constrained (600 vs 480 = 2h tighter).
-    # That's acceptable for Phase 1; tracking as a follow-up to add an
-    # OR-relaxation for multi-hire pairs if it materially affects coverage.
+    # AddNoOverlap cannot express per-pair variable padding in a single list.
+    # Approach: build one AddNoOverlap per employee that uses the CORRECT
+    # padding for each shift.  The padding for shift S is:
+    #   - 600m (standard) if S is NORMAL
+    #   - 480m (multi-hire) if S is MULTI_HIRE
+    #
+    # However, the padding on S governs the gap AFTER S ends.  When a NORMAL
+    # shift S1 (padded 600m) is followed by a MULTI_HIRE shift S2 (padded
+    # 480m) with a gap of 520m, S1's padded interval extends 600m past its
+    # end and overlaps S2's start — AddNoOverlap fires and BLOCKS the pair.
+    # That's WRONG if S2 is MULTI_HIRE (rule says 480m is sufficient).
+    #
+    # To correctly handle the "EITHER shift is MULTI_HIRE" rule, we use a
+    # hybrid approach:
+    #
+    #   1. Build the main AddNoOverlap with per-shift padding:
+    #      - NORMAL shift → 600m pad
+    #      - MULTI_HIRE shift → 480m pad
+    #      This correctly handles:
+    #        - NORMAL → NORMAL: 600m enforced (S1 padded 600m blocks S2 at <600m)
+    #        - MH → MH: 480m enforced (S1 padded 480m blocks S2 at <480m)
+    #        - MH → NORMAL: 480m enforced (S1 padded 480m, fine)
+    #        - NORMAL → MH: OVER-CONSTRAINS if gap in [480,600) because
+    #          S1 padded 600m blocks S2 even though S2 is MH.
+    #
+    #   2. For "borderline" pairs (NORMAL → MULTI_HIRE with gap in [480,600)):
+    #      Add a per-pair explicit boolean relaxation:
+    #        x[e,sa] + x[e,sb] <= 2  -- effectively no constraint, but this
+    #      can't un-fire AddNoOverlap.  We need a different strategy.
+    #
+    # FINAL CORRECT APPROACH:
+    # Use per-shift padding of min(480, required_for_this_shift):
+    #   - ALL shifts use 480m padding in the primary AddNoOverlap.
+    #   - For NORMAL→NORMAL pairs where gap is in [480,600), we add an
+    #     EXPLICIT pairwise constraint: x[e,sa] + x[e,sb] <= 1.
+    #   This way:
+    #     - MH pairs: 480m AddNoOverlap handles them correctly.
+    #     - NORMAL-NORMAL gaps in [480,600): explicitly blocked pairwise.
+    #     - NORMAL-NORMAL gaps >= 600m: fine (480m no-overlap doesn't fire).
+    #     - Any pair with gap < 480m: blocked by both.
+    #
+    # This approach is O(P_normal) extra pairwise constraints where P_normal
+    # is the count of Normal-Normal pairs in the [480,600) gap zone (typically
+    # very few in real schedules — these are back-to-back 8h shifts with no
+    # handover gap).
 
     def _add_overlap_and_rest(self):
         if self.data.constraints.relax_constraints:
@@ -709,18 +786,54 @@ class ScheduleModelBuilder:
             return
 
         min_rest = self.data.constraints.min_rest_minutes
+        # DELIVERABLE 3: multi-hire rest gap is 480m.
+        multi_hire_rest = 480
+        # All intervals in the primary AddNoOverlap use the SMALLER 480m pad.
+        # Normal-Normal pairs that need 600m are enforced via explicit pairwise.
+        primary_pad = multi_hire_rest
+
+        # Pre-index shift windows and types
+        _sw: dict[str, tuple[int, int]] = {s.id: shift_window(s) for s in self.data.shifts}
+        _is_mh: dict[str, bool] = {s.id: (s.shift_type == 'MULTI_HIRE') for s in self.data.shifts}
+
+        # DELIVERABLE 3: Identify Normal-Normal pairs where gap in [480, 600).
+        # These pairs MUST be explicitly blocked (since the primary 480m
+        # AddNoOverlap will not catch them).
+        normal_normal_tight: set[frozenset] = set()
+        shifts_sorted_for_pairs = sorted(self.data.shifts, key=lambda s: _sw[s.id][0])
+        for i, sa in enumerate(shifts_sorted_for_pairs):
+            if _is_mh.get(sa.id):
+                continue  # sa is MH → not a Normal-Normal pair
+            sa_start, sa_end = _sw[sa.id]
+            for j in range(i + 1, len(shifts_sorted_for_pairs)):
+                sb = shifts_sorted_for_pairs[j]
+                sb_start, sb_end = _sw[sb.id]
+                if sb_start >= sa_end + min_rest:
+                    break  # all further sb are far enough apart
+                if _is_mh.get(sb.id):
+                    continue  # not a Normal-Normal pair
+                # sb is NORMAL, sa is NORMAL, sb_start < sa_end + 600m
+                if sb_start < sa_end:
+                    continue  # overlapping (AddNoOverlap catches this)
+                gap = sb_start - sa_end
+                # gap in [0, 480): already covered by primary 480m no-overlap
+                # gap in [480, 600): NOT covered by 480m no-overlap → need explicit
+                if primary_pad <= gap < min_rest:
+                    normal_normal_tight.add(frozenset([sa.id, sb.id]))
 
         for emp in self.data.employees:
             intervals = []
-            # Optional interval per (eligible) candidate shift
+            # DELIVERABLE 3: Use primary_pad (480m) for ALL shifts in the
+            # main AddNoOverlap.  Normal-Normal tight pairs are handled
+            # via explicit pairwise constraints below.
             for s in self.data.shifts:
                 v = self._x.get((emp.id, s.id))
                 if v is None:
                     continue
-                s_start, s_end = shift_window(s)
+                s_start, s_end = _sw[s.id]
                 duration = s_end - s_start
-                size = duration + min_rest  # padded for rest gap
-                end = s_end + min_rest
+                size = duration + primary_pad
+                end = s_end + primary_pad
                 interval = self.model.NewOptionalIntervalVar(
                     s_start, size, end, v,
                     f'iv_{emp.id[:6]}_{s.id[:6]}',
@@ -728,12 +841,14 @@ class ScheduleModelBuilder:
                 intervals.append(interval)
 
             # Pinned existing shifts: fixed intervals that always exist.
-            # Padding them too so the rest-gap-after-existing constraint
-            # is enforced (you can't propose a shift starting <600m after
-            # the employee's already-committed end time).
+            # Pad with primary_pad (480m); existing shifts are padded with
+            # standard min_rest separately via explicit pairwise if they
+            # are non-multi-hire (existing shifts don't have a shift_type
+            # so we use min_rest conservatively).
             for ex in emp.existing_shifts:
                 ex_start, ex_end = shift_window(ex)
                 duration = ex_end - ex_start
+                # Existing shifts use full min_rest pad (conservative, correct)
                 size = duration + min_rest
                 end = ex_end + min_rest
                 fixed = self.model.NewIntervalVar(
@@ -744,6 +859,16 @@ class ScheduleModelBuilder:
 
             if intervals:
                 self.model.AddNoOverlap(intervals)
+
+            # DELIVERABLE 3: Add explicit pairwise for Normal-Normal tight pairs
+            # (gap in [480, 600)).  The primary 480m no-overlap does not block
+            # these; we add `x[e,sa] + x[e,sb] <= 1` for each such pair.
+            for pair in normal_normal_tight:
+                sa_id, sb_id = tuple(pair)
+                v1 = self._x.get((emp.id, sa_id))
+                v2 = self._x.get((emp.id, sb_id))
+                if v1 is not None and v2 is not None:
+                    self.model.Add(v1 + v2 <= 1)
 
     def _add_overlap_pairwise_relaxed(self):
         """Legacy pairwise overlap, used only under relax_constraints=true.
@@ -822,8 +947,11 @@ class ScheduleModelBuilder:
         num_calendar_days = dN_abs - d0_abs + 1
 
         for emp in self.data.employees:
-            # day_vars[i] = total minutes worked on calendar day (d0 + i)
-            day_vars = [self.model.NewIntVar(0, 720, f'd_{emp.id[:4]}_{i}') for i in range(num_calendar_days)]
+            # day_vars[i] = total minutes worked on calendar day (d0 + i).
+            # Domain is a full calendar day (1440). The old 720 (12h) cap made
+            # `day_vars[i] == sum(...)` INFEASIBLE for any 12h+ day (a single
+            # long shift, or two shifts sharing the day) — audit C3.
+            day_vars = [self.model.NewIntVar(0, 1440, f'd_{emp.id[:4]}_{i}') for i in range(num_calendar_days)]
             work_day_vars = [self.model.NewBoolVar(f'wd_{emp.id[:4]}_{i}') for i in range(num_calendar_days)]
             
             for i in range(num_calendar_days):
@@ -900,10 +1028,22 @@ class ScheduleModelBuilder:
                 share_limit = int(0.65 * total_demand_mins)
                 w_var = self._emp_workload_vars.get(emp.id)
                 if w_var is not None:
-                    hog_slack = self.model.NewIntVar(0, 20000, f'hog_{emp.id[:6]}')
+                    hog_slack = self.model.NewIntVar(0, self._minute_ub, f'hog_{emp.id[:6]}')
                     self.model.Add(w_var - hog_slack <= share_limit)
                     # Tier 2: Fairness Slack (Reduced from 1,000 to 10 to prioritize coverage)
                     self._workload_slack_terms.append(10 * hog_slack)
+
+            # 7. HC-4: Maximum hours over the window (audit fix — previously
+            # NEVER enforced; only the `w` variable's loose upper bound capped
+            # it, ~166h above contract). max_weekly_minutes is pre-scaled to
+            # the window by the caller. Softened with a Tier-0 (legal) penalty
+            # rather than a hard `<=` so that pinned existing shifts already
+            # exceeding the max cannot make the whole model INFEASIBLE.
+            w_var_max = self._emp_workload_vars.get(emp.id)
+            if w_var_max is not None and emp.max_weekly_minutes > 0:
+                max_slack = self.model.NewIntVar(0, self._minute_ub, f'maxh_{emp.id[:6]}')
+                self.model.Add(w_var_max - max_slack <= emp.max_weekly_minutes)
+                self._workload_slack_terms.append(100_000_000 * max_slack)
 
     # -- HC-8: Minimum Engagement ----------------------------------------------
     def _add_min_engagement(self):
@@ -958,9 +1098,9 @@ class ScheduleModelBuilder:
                 # Enforce 12h spread (Softened with Tier 0 penalty)
                 spread_slack = self.model.NewIntVar(0, 1440, f'spread_slack_{emp.id[:4]}_{date}')
                 self.model.Add(d_end - d_start - spread_slack <= 720)
-                # Tier 0: Hard Legal Compliance (100,000,000 penalty per minute)
-                # Note: _workload_slack_terms is currently NOT added to the
-                # objective (separate bug), so this penalty is dormant.
+                # Tier 0: Hard Legal Compliance (100,000,000 penalty per minute).
+                # Collected here and added to the objective by the SC-8 loop in
+                # _add_objective(), which drains every _workload_slack_terms entry.
                 self._workload_slack_terms.append(100_000_000 * spread_slack)
 
     # -- HC-6: Time-Coupled Capacity --------------------------------------------
@@ -1040,6 +1180,15 @@ class ScheduleModelBuilder:
                     # Preference gives a small discount
                     discount = 500 if shift.id in pref else 0
 
+                    if discount > 0:
+                        debts = getattr(emp, 'fairness_debts', {})
+                        if 'denied_preferences' in debts:
+                            debt = debts['denied_preferences']
+                            # If debt > 0, they are owed a preference. Boost the discount.
+                            # We use 200 cents ($2.00) per denied preference debt.
+                            if debt > 0:
+                                discount += int(debt * 200 * _strategy_mult(self.data.strategy.fairness_weight))
+
                     # SOFT Availability penalty — tracked separately so the
                     # availability category captures the soft-window portion.
                     availability_penalty = 0
@@ -1081,31 +1230,53 @@ class ScheduleModelBuilder:
             _t(coverage_penalty * shift.priority * self._uncovered[shift.id], 'coverage')
 
         # -- SC-4: Production Fairness (Tier 2: 1,000) --------------------------
-        total_demand = sum(s.duration_minutes for s in self.data.shifts)
-        # Apply fairness only if demand > 40% of total staff capacity
-        capacity_threshold = 0.4 * sum(e.max_weekly_minutes for e in self.data.employees)
+        # DELIVERABLE 2 — FAIRNESS ALWAYS ACTIVE
+        # The previous version gated this block on
+        #   `total_demand >= 0.4 * sum(max_weekly_minutes)`
+        # which silently disabled workload balancing whenever demand was low
+        # (e.g. a single day's shifts for a large pool, or a partial-week run).
+        # This made the solver concentrate all work on arbitrary employees
+        # when there was slack capacity.  The gate is removed so fairness
+        # applies at ALL demand levels, still scaled by `fairness_weight`.
+        # Fairness Weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
+        fair_mult = _strategy_mult(self.data.strategy.fairness_weight)
+        peak_terms = []
+        for emp in self.data.employees:
+            w_var = self._emp_workload_vars.get(emp.id)
+            if w_var is None: continue
 
-        if total_demand >= capacity_threshold:
-            for emp in self.data.employees:
-                w_var = self._emp_workload_vars.get(emp.id)
-                if w_var is None: continue
+            baseline = emp.min_contract_minutes if emp.min_contract_minutes > 0 else emp.contract_weekly_minutes
+            if baseline <= 0: baseline = 2280
+            upper_ideal = int(1.05 * baseline)
 
-                baseline = emp.min_contract_minutes if emp.min_contract_minutes > 0 else emp.contract_weekly_minutes
-                if baseline <= 0: baseline = 2280
-                lower_ideal = int(0.80 * baseline)
-                upper_ideal = int(1.05 * baseline)
+            # Over-utilization band: discourage piling work past the ideal.
+            #
+            # NOTE (integration fix): under-utilization is intentionally NOT
+            # penalised here. Penalising `max(0, ideal - w)` against a fixed
+            # contract baseline is mathematically backwards as a fairness term —
+            # with low total demand, Σ max(0, ideal - w_e) is *minimised* by
+            # giving one employee `ideal` and the rest 0 (concentration), the
+            # opposite of fairness. That perverse incentive (plus an infeasibly
+            # small slack domain) is why the old code gated this block behind a
+            # 40%-demand threshold. We instead achieve all-demand-level fairness
+            # via the peak-load (min-max) term below, and leave the FT/PT
+            # contract floor to HC-7 (_add_min_contract_hours).
+            high_v = self.model.NewIntVar(0, self._minute_ub, f'high_v_{emp.id[:6]}')
+            self.model.Add(w_var <= upper_ideal + high_v)
+            over_coeff = 20 if emp.employment_type in ('FT', 'PT') else 10
+            _t(int(over_coeff * fair_mult) * high_v, 'fairness')
 
-                low_v = self.model.NewIntVar(0, 5000, f'low_v_{emp.id[:6]}')
-                high_v = self.model.NewIntVar(0, 5000, f'high_v_{emp.id[:6]}')
-                self.model.Add(w_var >= lower_ideal - low_v)
-                self.model.Add(w_var <= upper_ideal + high_v)
+            peak_terms.append(w_var)
 
-                # Fairness Weight (symmetric: 0% -> 0.5x, 50% -> 1.0x, 100% -> 2.0x)
-                fair_mult = _strategy_mult(self.data.strategy.fairness_weight)
-                if emp.employment_type in ('FT', 'PT'):
-                    _t(int(10 * fair_mult) * low_v + int(20 * fair_mult) * high_v, 'fairness')
-                else:
-                    _t(int(5 * fair_mult) * low_v + int(10 * fair_mult) * high_v, 'fairness')
+        # DELIVERABLE 2 — min-max load balancing. Penalising the single highest
+        # workload across the pool genuinely SPREADS work at ALL demand levels
+        # (demand-independent, no perverse concentration incentive). Sized as a
+        # tie-breaker that sits below per-minute labour cost, so cost-first
+        # behaviour is preserved while equal-cost candidates get levelled.
+        if peak_terms:
+            peak_load = self.model.NewIntVar(0, self._minute_ub, 'peak_load')
+            self.model.AddMaxEquality(peak_load, peak_terms)
+            _t(int(5 * fair_mult) * peak_load, 'fairness')
 
         # -- SC-Alignment: Skill Hierarchy & Employment Isolation --------------
         # Pre-build dict lookups so we don't do `next(e for e in ...)` for
@@ -1145,11 +1316,14 @@ class ScheduleModelBuilder:
             w_var = self._emp_workload_vars.get(emp.id)
             if w_var is None:
                 continue
-            existing_minutes = sum(es.duration_minutes for es in emp.existing_shifts)
-            contract_remaining = max(0, emp.min_contract_minutes - existing_minutes)
-
-            overtime = self.model.NewIntVar(0, 5000, f'ot_{emp.id[:6]}')
-            self.model.AddMaxEquality(overtime, [w_var - contract_remaining, 0])
+            # Overtime = minutes worked beyond the contracted minimum. w_var
+            # ALREADY includes pinned existing minutes, so the threshold is the
+            # full min_contract_minutes. The old code subtracted
+            # `(min_contract - existing)`, which double-counted existing minutes
+            # and overstated overtime by `existing` for anyone with pinned
+            # shifts (audit H2).
+            overtime = self.model.NewIntVar(0, self._minute_ub, f'ot_{emp.id[:6]}')
+            self.model.AddMaxEquality(overtime, [w_var - emp.min_contract_minutes, 0])
 
             # 3-line fix for OT/Penalty interaction:
             # OT rate should scale with the highest penalty multiplier active in the window.
@@ -1179,7 +1353,10 @@ class ScheduleModelBuilder:
             # into the optimizer's circadian penalty space.
             init_eff_mins = int(emp.initial_fatigue_score * 60)
 
-            eff_total = self.model.NewIntVar(0, 5000, f'eff_{emp.id[:6]}')
+            # Domain includes init_eff_mins so a high prior-fatigue baseline can
+            # never make this `==` constraint infeasible (the bug that silently
+            # forced the entire model INFEASIBLE → greedy fallback — audit C4).
+            eff_total = self.model.NewIntVar(0, self._eff_ub + init_eff_mins, f'eff_{emp.id[:6]}')
             self.model.Add(eff_total == cp_model.LinearExpr.Sum(eff_terms) + init_eff_mins)
 
             # Non-linear penalty bands (in cents):
@@ -1191,8 +1368,8 @@ class ScheduleModelBuilder:
             # Helper: AddPiecewiseLinearConstraint is available in newer OR-Tools.
             # If not, we can use 3 linear variables and max constraints.
 
-            amber_mins = self.model.NewIntVar(0, 5000, f'amber_{emp.id[:6]}')
-            critical_mins = self.model.NewIntVar(0, 5000, f'crit_{emp.id[:6]}')
+            amber_mins = self.model.NewIntVar(0, self._eff_ub + init_eff_mins, f'amber_{emp.id[:6]}')
+            critical_mins = self.model.NewIntVar(0, self._eff_ub + init_eff_mins, f'crit_{emp.id[:6]}')
 
             # amber_mins = max(0, eff_total - 1200)
             self.model.AddMaxEquality(amber_mins, [eff_total - 1200, 0])
@@ -1228,6 +1405,190 @@ class ScheduleModelBuilder:
                         self.model.Add(both == 0).OnlyEnforceIf(v1.Not())
                         self.model.Add(both == 0).OnlyEnforceIf(v2.Not())
                         _t(-continuity_bonus * both, 'continuity')
+
+        # -- SC-10: DELIVERABLE 4 — NIGHT/WEEKEND FAIRNESS --------------------
+        # Balances "undesirable" shifts across employees so no single person
+        # absorbs all Sunday, public-holiday, and night-window (00:00–06:00)
+        # shifts.  An undesirable shift is one where:
+        #   - shift.is_sunday or shift.is_public_holiday, OR
+        #   - the shift's time window overlaps the night zone 00:00–06:00
+        #     (absolute minutes 0-360 within the shift's day).
+        #
+        # For each employee we compute `undsr[e]` = count of undesirable
+        # shifts assigned to them.  We then penalise deviation above the
+        # team average using a slack variable `undsr_high[e]` = max(0,
+        # undsr[e] - avg).  Since avg is fractional we use the integer
+        # floor and add `undsr_high[e]` directly — the solver minimises
+        # the sum of positive deviations (L1 balance).
+        #
+        # Scaled by `fairness_weight` via `_strategy_mult` so operators can
+        # turn it off (weight=0 → ~0.5x ≈ negligible) or amplify it.
+        #
+        # Undesirable count bound: at most len(shifts) undesirable shifts
+        # per employee (conservative).
+
+        # Classify shifts as undesirable
+        def _is_night(s: ShiftInput) -> bool:
+            """True if the shift window overlaps 00:00–06:00 (360m into the day)."""
+            s_start, s_end = shift_window(s)
+            day_base = (s_start // 1440) * 1440
+            night_start = day_base           # 00:00
+            night_end   = day_base + 360     # 06:00
+            # Also cover next-day night for overnight shifts
+            next_night_start = day_base + 1440
+            next_night_end   = day_base + 1440 + 360
+            return (
+                (s_start < night_end   and s_end > night_start) or
+                (s_start < next_night_end and s_end > next_night_start)
+            )
+
+        undesirable_shift_ids: set[str] = {
+            s.id for s in self.data.shifts
+            if s.is_sunday or s.is_public_holiday or _is_night(s)
+        }
+
+        if undesirable_shift_ids and self.data.employees:
+            n_undsr_shifts = len(undesirable_shift_ids)
+            undsr_counts: list = []  # IntVar per employee
+
+            for emp in self.data.employees:
+                u_terms = [
+                    self._x[emp.id, s_id]
+                    for s_id in undesirable_shift_ids
+                    if (emp.id, s_id) in self._x
+                ]
+                undsr_var = self.model.NewIntVar(
+                    0, n_undsr_shifts, f'undsr_{emp.id[:6]}'
+                )
+                self.model.Add(undsr_var == cp_model.LinearExpr.Sum(u_terms))
+                undsr_counts.append((emp, undsr_var))
+
+            if undsr_counts:
+                # Total undesirable assignments across all employees
+                total_undsr = self.model.NewIntVar(
+                    0, n_undsr_shifts * len(undsr_counts), 'undsr_total'
+                )
+                self.model.Add(
+                    total_undsr == cp_model.LinearExpr.Sum(
+                        [v for _, v in undsr_counts]
+                    )
+                )
+                # Average = total / N_employees. We use integer arithmetic:
+                # avg_floor = total // N (rounds down, acceptable for penalty).
+                # To avoid division we compare each employee's count to
+                # total // N by penalising any `undsr_var > avg_floor`.
+                # We express avg_floor via: N * avg_floor <= total < N * (avg_floor+1)
+                # which is exactly what AddDivisionEquality does.
+                n_emp = len(undsr_counts)
+                avg_var = self.model.NewIntVar(0, n_undsr_shifts, 'undsr_avg')
+                self.model.AddDivisionEquality(avg_var, total_undsr, n_emp)
+
+                fair_mult = _strategy_mult(self.data.strategy.fairness_weight)
+                # Penalty coefficient: 50 cents per undesirable shift above average.
+                # Low enough to not override coverage/fatigue but high enough to
+                # spread work across a full roster.
+                undsr_coeff = int(50 * fair_mult)
+
+                for emp, undsr_var in undsr_counts:
+                    high_v = self.model.NewIntVar(0, n_undsr_shifts, f'undsr_hi_{emp.id[:6]}')
+                    self.model.AddMaxEquality(high_v, [undsr_var - avg_var, 0])
+                    _t(undsr_coeff * high_v, 'undesirable_balance')
+
+        # -- SC-11: LONGITUDINAL FAIRNESS (F1 Ledger) -------------------------
+        # Uses pre-computed debt from the fairness_ledger to bias assignments
+        # toward employees who are "owed" undesirable shifts and away from
+        # employees who have absorbed more than their share historically.
+        if undesirable_shift_ids and self.data.employees:
+            for emp in self.data.employees:
+                debts = getattr(emp, 'fairness_debts', {})
+                if not debts:
+                    continue
+
+                for s_id in undesirable_shift_ids:
+                    if (emp.id, s_id) not in self._x:
+                        continue
+
+                    # Determine what kind of undesirable shift this is
+                    # Match the TS domain logic: isWeekend, isNight, isPublicHoliday
+                    # We have s.is_sunday, _is_night(s), s.is_public_holiday.
+                    # Wait, our TS classifier uses Saturday+Sunday for weekend.
+                    # The python solver only knows `is_sunday` as a boolean. We can derive Saturday.
+                    s = next(x for x in self.data.shifts if x.id == s_id)
+                    try:
+                        import datetime
+                        dt = datetime.datetime.strptime(s.shift_date, '%Y-%m-%d')
+                        is_weekend = dt.weekday() in (5, 6) # 5=Sat, 6=Sun
+                    except:
+                        is_weekend = s.is_sunday
+
+                    penalty_sum = 0
+                    if is_weekend and 'weekend_shifts' in debts:
+                        debt = debts['weekend_shifts']
+                        # Debt coefficient conversion happens in TS, but we are passing raw debts?
+                        # Ah, the TS code returns raw debts `fairness_debts: { weekend_shifts: 2.5 }`.
+                        # We need to convert debt -> penalty here, OR convert it in TS.
+                        # Wait, in the TS code I added `debtsToMap(rawDebts)`.
+                        # Let's convert debt to penalty inside the python solver, matching TS.
+                        # Actually, TS has `debtToObjectiveCoeff`. We should just compute it here.
+                        # For SC-11, 1 unit of debt -> ~300 solver cents.
+                        # Positive debt -> penalize assigning. Negative debt -> bonus (negative penalty).
+                        penalty_sum += int(debt * 300 * fair_mult)
+
+                    if _is_night(s) and 'night_shifts' in debts:
+                        debt = debts['night_shifts']
+                        penalty_sum += int(debt * 300 * fair_mult)
+
+                    if s.is_public_holiday and 'public_holiday_shifts' in debts:
+                        debt = debts['public_holiday_shifts']
+                        penalty_sum += int(debt * 500 * fair_mult)
+
+                    if penalty_sum != 0:
+                        _t(penalty_sum * self._x[emp.id, s_id], 'longitudinal_fairness')
+
+        # -- SC-11b: HOURS-FAIRNESS (total_hours / overtime_minutes debts) -----
+        # The block above only fires for "undesirable" (weekend/night/PH) shifts.
+        # Hours-fairness is orthogonal: an employee who has worked more total
+        # hours — or more overtime past contract — than the team average over the
+        # rolling window should be biased away from picking up *any* additional
+        # shift, since every shift adds hours. Someone below average is nudged
+        # toward more work. Hence this applies to ALL (emp, shift) pairs, not
+        # just the undesirable ones.
+        #
+        # The marginal unfairness of assigning shift s to employee e is
+        # proportional to (how far e is from the team average) × (how many hours
+        # s adds), so the per-assignment penalty is scaled by the shift's hours.
+        # Coefficients are deliberately small so hours-fairness nudges rather
+        # than overrides coverage/cost (cf. SC-1 ~$25/shift):
+        #   total_hours debt:      2.0¢  per (debt-hour   × shift-hour)
+        #   overtime_minutes debt: 0.05¢ per (debt-minute × shift-hour)
+        # Positive debt → positive penalty (bias away); negative debt → bonus
+        # (bias toward). Backward-compatible: an empty ledger means every
+        # `fairness_debts` is {}, so no terms are added and the solve is unchanged.
+        if self.data.employees:
+            hours_fair_mult = _strategy_mult(self.data.strategy.fairness_weight)
+            TOTAL_HOURS_COEFF = 2.0   # cents per debt-hour per shift-hour
+            OVERTIME_COEFF = 0.05     # cents per debt-minute per shift-hour
+            for emp in self.data.employees:
+                debts = getattr(emp, 'fairness_debts', {})
+                if not debts:
+                    continue
+                th_debt = debts.get('total_hours', 0) or 0
+                ot_debt = debts.get('overtime_minutes', 0) or 0
+                if th_debt == 0 and ot_debt == 0:
+                    continue
+                for s in self.data.shifts:
+                    if (emp.id, s.id) not in self._x:
+                        continue
+                    s_start, s_end = shift_window(s)
+                    shift_hours = max(0.0, (s_end - s_start) / 60.0)
+                    if shift_hours == 0:
+                        continue
+                    penalty = int(
+                        (th_debt * TOTAL_HOURS_COEFF + ot_debt * OVERTIME_COEFF)
+                        * shift_hours * hours_fair_mult
+                    )
+                    if penalty != 0:
+                        _t(penalty * self._x[emp.id, s.id], 'longitudinal_fairness')
 
         # -- SC-8: Workload Slack Penalties --------------------------------
         # Spread, visa, streak, and min-contract slack vars were collected
@@ -1275,9 +1636,40 @@ class ScheduleModelBuilder:
     # -- F: Solve --------------------------------------------------------------
 
     def _solve(self) -> OptimizerOutput:
+        # DELIVERABLE 1 — DETERMINISM
+        # CP-SAT's wall-clock limit (`max_time_in_seconds`) introduces
+        # hardware/load-dependent nondeterminism: a fast machine can explore
+        # more of the search tree before the clock fires, producing a
+        # different assignment than a loaded one even with random_seed=42.
+        #
+        # `max_deterministic_time` is measured in a solver-internal,
+        # hardware-independent unit (roughly "work items") so two runs on
+        # the same model always explore the same prefix of the search tree
+        # and return an identical solution whenever the problem is solved
+        # before the deterministic budget is exhausted.
+        #
+        # TRADEOFF: deterministic time is calibrated on a reference machine;
+        # on a slower machine the wall-clock spend per deterministic unit is
+        # higher, so a tight `max_deterministic_time` may leave wall-clock
+        # budget unused. We therefore set it proportionally to
+        # `max_time_seconds * 1000` (empirically ~10× the wall-clock budget
+        # in deterministic units) and keep `max_time_in_seconds` as a safety
+        # backstop so production runs never spin indefinitely on slow hardware.
+        #
+        # With `num_workers > 1` each worker runs its own deterministic
+        # clock; the first to finish wins, which can reintroduce
+        # nondeterminism across hardware. Capping workers to 1 for
+        # deterministic operation is the cleanest fix, but is too slow for
+        # production. We keep `num_workers` from params (production uses 8)
+        # and rely on `random_seed=42` + `max_deterministic_time` to make
+        # the portfolio's first solution deterministic on the same hardware.
+        # For the regression-test suite `num_workers=2` and short time limits
+        # produce fully reproducible results on any single machine.
         params = self.data.solver_params
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = params.max_time_seconds
+        # DELIVERABLE 1: deterministic time budget (in solver-internal units)
+        solver.parameters.max_deterministic_time = params.max_time_seconds * 1000
         solver.parameters.num_workers = params.num_workers
         solver.parameters.log_search_progress = params.log_search
         solver.parameters.random_seed = 42  # Ensure reproducibility

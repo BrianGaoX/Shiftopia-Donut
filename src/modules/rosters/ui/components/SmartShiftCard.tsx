@@ -267,6 +267,22 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
         return estimateDetailedCostFromShift(shift);
     }, [detailedCost, shift]);
 
+    const headerBgAndText = useMemo(() => {
+        if (isPast) {
+            return isDraft
+                ? 'bg-black text-white dark:bg-black'
+                : 'bg-slate-500 text-white dark:bg-slate-600';
+        }
+        if (shift.bidding_status === 'bidding_closed_no_winner') {
+            return 'bg-orange-500/20 text-orange-900 dark:text-orange-100';
+        }
+        return cn(
+            colors.header,
+            colors.text,
+            isDraft ? 'bg-opacity-40 backdrop-blur-[2px]' : 'bg-opacity-100'
+        );
+    }, [isPast, isDraft, shift.bidding_status, colors.header, colors.text]);
+
     return (
         <CardShell
             className={cn(
@@ -279,7 +295,7 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                 isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background bg-primary/5 dark:bg-primary/20',
                 isDragging && 'opacity-50 scale-95',
                 isDragOver && 'ring-2 ring-blue-400 ring-offset-1',
-                (isDraft && isPast) && 'grayscale opacity-60 cursor-not-allowed',
+                isPast && (isDraft ? 'grayscale opacity-60 cursor-not-allowed' : 'grayscale opacity-80 cursor-not-allowed'),
                 className
             )}
             onClick={isFullyLocked || isPast ? undefined : onClick}
@@ -288,10 +304,7 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
             <div className="flex-1 flex flex-col min-h-0">
                 {/* Header */}
                 <div className={cn('px-3 py-1.5 flex justify-between items-center transition-[background-color,color] duration-300 relative z-[20]',
-                    shift.bidding_status === 'bidding_closed_no_winner' ? 'bg-orange-500/20 text-orange-900 dark:text-orange-100' : colors.header,
-                    isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-40 backdrop-blur-[2px]',
-                    !isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-100',
-                    shift.bidding_status !== 'bidding_closed_no_winner' && colors.text)}>
+                    headerBgAndText)}>
                     <div className="flex items-center gap-1.5 min-w-0">
                         <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded", isFullyLocked ? "bg-black/20 dark:bg-black/50 opacity-70" : colors.badge)}>
                             {isBiddingClosedNoWinner ? 'S8'
@@ -500,6 +513,22 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
         : ctx.state === 'S5' && ctx.urgency === 'emergent' ? 'S5*'
         : ctx.state;
 
+    const headerBgAndText = useMemo(() => {
+        if (isPast) {
+            return isDraft
+                ? 'bg-black text-white dark:bg-black'
+                : 'bg-slate-500 text-white dark:bg-slate-600';
+        }
+        if (shift.bidding_status === 'bidding_closed_no_winner') {
+            return 'bg-orange-500/20 text-orange-900 dark:text-orange-100';
+        }
+        return cn(
+            colors.header,
+            colors.text,
+            isDraft ? 'bg-opacity-40 backdrop-blur-[2px]' : 'bg-opacity-100'
+        );
+    }, [isPast, isDraft, shift.bidding_status, colors.header, colors.text]);
+
     return (
         <CardShell
             className={cn(
@@ -512,7 +541,7 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                 isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-background bg-primary/5 dark:bg-primary/20',
                 isDragging && 'opacity-50 scale-95',
                 isDragOver && 'ring-2 ring-blue-400 ring-offset-2',
-                (isDraft && isPast) && 'grayscale opacity-70 cursor-not-allowed',
+                isPast && (isDraft ? 'grayscale opacity-70 cursor-not-allowed' : 'grayscale opacity-80 cursor-not-allowed'),
                 className
             )}
             onClick={isFullyLocked || isPast ? undefined : onClick}
@@ -521,10 +550,7 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
             <div className="flex-1 flex flex-col min-h-0">
                 {/* Header */}
                 <div className={cn('px-4 py-2.5 flex justify-between items-center transition-[background-color,color] duration-300 relative z-[20]',
-                    shift.bidding_status === 'bidding_closed_no_winner' ? 'bg-orange-500/20 text-orange-900 dark:text-orange-100' : colors.header,
-                    isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-40 backdrop-blur-[2px]',
-                    !isDraft && shift.bidding_status !== 'bidding_closed_no_winner' && 'bg-opacity-100',
-                    shift.bidding_status !== 'bidding_closed_no_winner' && colors.text)}>
+                    headerBgAndText)}>
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                         <GripVertical className={cn("h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-40 transition-opacity", isFullyLocked ? "cursor-not-allowed" : "cursor-grab")} />
                         <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded",

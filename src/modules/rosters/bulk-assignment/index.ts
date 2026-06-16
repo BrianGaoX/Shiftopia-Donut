@@ -24,5 +24,5 @@ export { IncrementalValidator, incrementalValidator } from './engine/incremental
 export { ComplianceEvaluator, complianceEvaluator } from './engine/compliance-evaluator';
 export { ConflictReporter, conflictReporter } from './engine/conflict-reporter';
 export { AssignmentCommitter, assignmentCommitter } from './engine/assignment-committer';
-export type { CommitResult } from './engine/assignment-committer';
+export type { CommitResult, AtomicCommitResult } from './engine/assignment-committer';
 export type { LoadedScenario } from './engine/scenario-loader';
