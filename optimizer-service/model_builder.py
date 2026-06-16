@@ -201,6 +201,12 @@ class OptimizerInput:
     constraints: OptimizerConstraints = field(default_factory=OptimizerConstraints)
     strategy: StrategyInput = field(default_factory=StrategyInput)
     solver_params: SolverParameters = field(default_factory=SolverParameters)
+    # Forbidden (employee_id, shift_id) pairs — dropped from the eligibility map
+    # so the solver will not propose them. Drives the controller's compliance-
+    # repair loop: a pair the TS compliance engine rejected is excluded, so the
+    # re-solve assigns that shift to a DIFFERENT compliant employee (or leaves it
+    # uncovered). Empty in the normal first solve.
+    excluded_pairs: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -996,9 +1002,15 @@ class ScheduleModelBuilder:
         """
         c = self.data.constraints
         self._metrics.raw_pairs = len(self.data.employees) * len(self.data.shifts)
+        # Forbidden (employee_id, shift_id) pairs — excluded from candidacy so the
+        # solver never re-proposes a pair the compliance engine already rejected.
+        excluded = {tuple(p) for p in (self.data.excluded_pairs or [])}
 
         for shift in self.data.shifts:
-            eligible = [e for e in self.data.employees if employee_eligible(e, shift, c)]
+            eligible = [
+                e for e in self.data.employees
+                if employee_eligible(e, shift, c) and (e.id, shift.id) not in excluded
+            ]
             self._eligibility_map[shift.id] = eligible
 
         self._metrics.eligible_pairs = sum(

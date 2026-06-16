@@ -969,6 +969,37 @@ def test_decomposition_covers_multiweek_roster():
     assert out.pillars is not None and out.pillars["coverage"]["score"] == 100.0
 
 
+def test_excluded_pairs_forbids_candidacy():
+    """excluded_pairs drops an (employee, shift) pair from the eligibility map so
+    the solver re-homes the shift to a different employee (or leaves it
+    uncovered). This is what the controller's compliance-repair loop relies on:
+    a pair the compliance engine rejected is excluded, forcing an alternate."""
+    from model_builder import (
+        ScheduleModelBuilder, OptimizerInput, OptimizerConstraints, SolverParameters,
+    )
+    shift = make_shift("s1", "2026-07-01", "09:00", "17:00")
+    cheap = make_employee("cheap", hourly_rate=20.0)
+    pricey = make_employee("pricey", hourly_rate=40.0)
+
+    def run(excluded):
+        data = OptimizerInput(
+            shifts=[shift], employees=[cheap, pricey],
+            constraints=OptimizerConstraints(enforce_role_match=False, enforce_skill_match=False),
+            solver_params=SolverParameters(max_time_seconds=3.0, num_workers=2),
+            excluded_pairs=excluded,
+        )
+        return ScheduleModelBuilder(data).build_and_solve()
+
+    base = run([])
+    assert base.assignments and base.assignments[0].employee_id == "cheap"
+
+    excl = run([("cheap", "s1")])
+    assert excl.assignments and excl.assignments[0].employee_id == "pricey"
+
+    both = run([("cheap", "s1"), ("pricey", "s1")])
+    assert len(both.assignments) == 0 and both.unassigned_shift_ids == ["s1"]
+
+
 def test_decomposition_single_week_falls_back_to_monolithic():
     """<2 ISO weeks → _solve_weekly_decomposition returns None and the normal
     monolithic solve runs. The result must still be a correct full solve

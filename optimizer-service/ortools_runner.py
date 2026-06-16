@@ -196,12 +196,19 @@ class SolverParamsReq(BaseModel):
     decompose_by_week: bool = False
 
 
+class ExcludedPairReq(BaseModel):
+    employee_id: str
+    shift_id: str
+
+
 class OptimizeReq(BaseModel):
     shifts: list[ShiftReq]
     employees: list[EmployeeReq]
     constraints: ConstraintsReq = Field(default_factory=ConstraintsReq)
     strategy: StrategyReq = Field(default_factory=StrategyReq)
     solver_params: SolverParamsReq = Field(default_factory=SolverParamsReq)
+    # Forbidden (employee, shift) pairs for the compliance-repair re-solve.
+    excluded_pairs: list[ExcludedPairReq] = Field(default_factory=list)
 
 
 class DebugMetricsRes(BaseModel):
@@ -455,6 +462,7 @@ async def optimize(
         constraints=OptimizerConstraints(**{k: v for k, v in req.constraints.model_dump().items() if k in OptimizerConstraints.__dataclass_fields__}),
         strategy=StrategyInput(**{k: v for k, v in req.strategy.model_dump().items() if k in StrategyInput.__dataclass_fields__}) if hasattr(req, 'strategy') else StrategyInput(),
         solver_params=SolverParameters(**{k: v for k, v in req.solver_params.model_dump().items() if k in SolverParameters.__dataclass_fields__}),
+        excluded_pairs=[(p.employee_id, p.shift_id) for p in (req.excluded_pairs or [])],
     )
 
     # ── Offload CPU-bound solve to a worker thread ───────────────────────────

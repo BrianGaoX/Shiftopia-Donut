@@ -39,6 +39,7 @@ import { fairnessLedgerService } from '@/modules/rosters/services/fairnessLedger
 import { debtsToMap, type ShiftForFairness } from '@/modules/rosters/domain/fairness-ledger';
 import type {
     OptimizeRequest,
+    OptimizeResponse,
     OptimizerEmployee,
     OptimizerShift,
     AutoSchedulerResult,
@@ -720,6 +721,37 @@ export class AutoSchedulerController {
         }
         throwIfAborted();
 
+        // ── Layer 2.4: Compliance repair — re-home rejected assignments ───────
+        // Maximise COMPLIANT coverage. Any shift whose optimizer assignment
+        // failed the compliance validator is re-solved onto a DIFFERENT compliant
+        // employee (the failing pair is excluded), pinning the kept roster so
+        // cross-assignment rest/hours still hold. Bounded + best-effort: it never
+        // blocks the preview, and only runs on the real optimizer path (greedy
+        // fallback has no solver to re-solve). Whatever still can't be placed
+        // compliantly is left uncovered by the hard gate below.
+        if (!usedFallback && validatedProposals.some(p => !p.passing)) {
+            throwIfAborted();
+            const repairStart = performance.now();
+            const before = validatedProposals.filter(p => !p.passing).length;
+            validatedProposals = await this._repairCompliance({
+                proposals: validatedProposals,
+                optimizerShifts,
+                optimizerEmployees,
+                inputShifts: input.shifts,
+                inputEmployees: input.employees,
+                employeeDetails: input.employeeDetails ?? new Map(),
+                existingRoster,
+                constraints: input.constraints ?? { min_rest_minutes: 600, relax_constraints: false },
+                budgetSeconds: Math.min(30, Math.max(10, Math.round(solverBudget / 4))),
+                signal: input.signal,
+            });
+            const after = validatedProposals.filter(p => !p.passing).length;
+            console.info(
+                '[AutoScheduler] Compliance repair: re-homed %d of %d rejected shift(s) in %dms (%d left uncovered for compliance)',
+                before - after, before, Math.round(performance.now() - repairStart), after,
+            );
+        }
+
         // ── Layer 2.5: Enrich with Health Metrics (Fatigue/Fairness/Cost) ────
         // We calculate production-grade metrics for all proposals to ensure
         // the manager has an accurate audit of the projected roster health.
@@ -1193,6 +1225,140 @@ export class AutoSchedulerController {
             deficitDays,
             perDay,
         };
+    }
+
+    /**
+     * Compliance repair loop — maximise COMPLIANT coverage.
+     *
+     * The optimizer assigns the best (cheapest/fairest) eligible employee per
+     * shift, but the TS compliance engine may reject some of those assignments
+     * (rules the solver doesn't model). Rather than just dropping them, we
+     * re-solve the rejected shifts onto a DIFFERENT employee:
+     *
+     *   1. Keep the compliant assignments; collect the rejected ones.
+     *   2. Re-solve ONLY the rejected shifts, with: the kept roster pinned as
+     *      existing_shifts (cross-assignment rest/hours preserved) and every
+     *      known-bad (employee, shift) pair excluded (so the solver must pick a
+     *      different employee, or leave the shift uncovered).
+     *   3. Validate the new assignments; fold the passers into the roster, add
+     *      any new failures to the exclusion set, and repeat.
+     *
+     * Converges because the exclusion set grows monotonically and each shift has
+     * finitely many eligible employees; bounded by MAX_ITERS for safety. The
+     * re-solves are tiny (only the rejected shifts) so the added time is small.
+     * Best-effort: any re-solve error keeps the current roster.
+     */
+    private async _repairCompliance(args: {
+        proposals: ValidatedProposal[];
+        optimizerShifts: OptimizerShift[];
+        optimizerEmployees: OptimizerEmployee[];
+        inputShifts: ShiftMeta[];
+        inputEmployees: EmployeeMeta[];
+        employeeDetails: Map<string, Partial<OptimizerEmployee>>;
+        existingRoster: Map<string, ExistingShiftRef[]>;
+        constraints: OptimizerConstraints;
+        budgetSeconds: number;
+        signal?: AbortSignal;
+    }): Promise<ValidatedProposal[]> {
+        const {
+            proposals, optimizerShifts, optimizerEmployees, inputShifts, inputEmployees,
+            employeeDetails, existingRoster, constraints, budgetSeconds, signal,
+        } = args;
+        const MAX_ITERS = 3;
+        const SEP = ' ';
+        const shiftById = new Map(optimizerShifts.map(s => [s.id, s]));
+        const { shiftMap, employeeMap } = solutionParser.buildMaps(inputShifts, inputEmployees);
+
+        // Only retry genuine compliance failures with a known assignee — never a
+        // PAST_SHIFT (unfixable) or a SYSTEM error, and never an empty employee.
+        const isRepairable = (p: ValidatedProposal) =>
+            !!p.employeeId && !(p.violations ?? []).some(v => v.type === 'PAST_SHIFT' || v.type === 'SYSTEM');
+
+        let compliant = proposals.filter(p => p.passing);
+        const failing = proposals.filter(p => !p.passing);
+        const nonRepairable = failing.filter(p => !isRepairable(p));
+        const pending = failing.filter(isRepairable);
+        if (pending.length === 0) return proposals;
+
+        const excluded = new Set<string>();
+        const unresolved = new Map<string, ValidatedProposal>();
+        for (const p of pending) {
+            excluded.add(`${p.employeeId}${SEP}${p.shiftId}`);
+            unresolved.set(p.shiftId, p);
+        }
+
+        for (let iter = 0; iter < MAX_ITERS && unresolved.size > 0; iter++) {
+            if (signal?.aborted) break;
+
+            // Pin the kept compliant roster as existing_shifts (for BOTH the
+            // solver and the validator) so the repair respects rest/hours/overlap
+            // against assignments we are keeping.
+            const pinsByEmp = new Map<string, ExistingShiftRef[]>();
+            for (const p of compliant) {
+                const s = shiftById.get(p.shiftId);
+                if (!s || !p.employeeId) continue;
+                const arr = pinsByEmp.get(p.employeeId) ?? [];
+                arr.push({
+                    id: s.id, shift_date: s.shift_date, start_time: s.start_time,
+                    end_time: s.end_time, duration_minutes: s.duration_minutes,
+                    unpaid_break_minutes: s.unpaid_break_minutes ?? 0,
+                });
+                pinsByEmp.set(p.employeeId, arr);
+            }
+            const repairEmployees: OptimizerEmployee[] = optimizerEmployees.map(e => ({
+                ...e,
+                existing_shifts: [...(e.existing_shifts ?? []), ...(pinsByEmp.get(e.id) ?? [])],
+            }));
+            const repairShifts = optimizerShifts.filter(s => unresolved.has(s.id));
+
+            let repairResp: OptimizeResponse;
+            try {
+                repairResp = await optimizerClient.optimize({
+                    shifts: repairShifts,
+                    employees: repairEmployees,
+                    constraints,
+                    strategy: SINGLE_MODE_STRATEGY,
+                    solver_params: { max_time_seconds: budgetSeconds, num_workers: 8 },
+                    excluded_pairs: Array.from(excluded).map(k => {
+                        const [employee_id, shift_id] = k.split(SEP);
+                        return { employee_id, shift_id };
+                    }),
+                }, signal);
+            } catch (err) {
+                console.warn('[AutoScheduler] Compliance repair re-solve failed; keeping current roster', err);
+                break;
+            }
+
+            const { groups } = solutionParser.parse(repairResp, shiftMap, employeeMap);
+
+            // Validator must also see the pinned roster (rest/hours) → augment.
+            const augmentedRoster = new Map(existingRoster);
+            for (const [empId, pins] of pinsByEmp) {
+                augmentedRoster.set(empId, [...(existingRoster.get(empId) ?? []), ...pins]);
+            }
+            const repairValidated = await this._validateProposals(groups, employeeDetails, augmentedRoster);
+
+            const placed = new Set(repairValidated.map(p => p.shiftId));
+            const newlyPassing = repairValidated.filter(p => p.passing);
+            const newlyFailing = repairValidated.filter(p => !p.passing);
+
+            compliant = [...compliant, ...newlyPassing];
+            for (const p of newlyPassing) unresolved.delete(p.shiftId);
+            for (const p of newlyFailing) {
+                excluded.add(`${p.employeeId}${SEP}${p.shiftId}`);
+                if (unresolved.has(p.shiftId)) unresolved.set(p.shiftId, p); // latest failing attempt
+            }
+            // A pending shift the solver couldn't place at all this round has no
+            // remaining compliant candidate → give up on it (leave uncovered).
+            for (const sid of Array.from(unresolved.keys())) {
+                if (!placed.has(sid)) unresolved.delete(sid);
+            }
+            if (newlyFailing.length === 0) break; // nothing new failed → converged
+        }
+
+        // Kept compliant + whatever still couldn't be re-homed (stays failing →
+        // uncovered by the hard gate) + the unfixable failures.
+        return [...compliant, ...Array.from(unresolved.values()), ...nonRepairable];
     }
 
     private async _validateProposals(

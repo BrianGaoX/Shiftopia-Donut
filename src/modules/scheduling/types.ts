@@ -138,6 +138,13 @@ export interface OptimizeRequest {
          */
         decompose_by_week?: boolean;
     };
+    /**
+     * Forbidden (employee, shift) pairs — dropped from the solver's eligibility
+     * map so it will not propose them. Drives the compliance-repair re-solve: a
+     * pair the compliance engine rejected is excluded so the shift is re-homed to
+     * a different compliant employee (or left uncovered). Empty on the first solve.
+     */
+    excluded_pairs?: { employee_id: string; shift_id: string }[];
 }
 
 // =============================================================================
