@@ -2,24 +2,25 @@
  * AutoSchedulerController.commit() — atomic path tests.
  *
  * Verifies that commit():
- *  1. Re-runs simulate() per employee (TOCTOU recheck).
- *  2. Collects ALL freshly-passing pairs and sends them as ONE atomic RPC call.
- *  3. Maps concurrencyConflicts from both recheck failures and RPC conflicts.
- *  4. Returns no-op success when no proposals are passing.
- *  5. Correctly identifies employees whose recheck entirely failed.
- *  6. Generates and forwards an idempotency key to commitAtomic.
+ *  1. Groups the COMPLIANT (passing) proposals by employee and sends them as ONE
+ *     atomic RPC call — NO per-employee compliance re-simulation (preview ==
+ *     commit; the preview already validated and the hard gate guarantees 100%
+ *     compliance, so re-validating with a different DB-fetch context only
+ *     produced false drops).
+ *  2. Surfaces failedEmployees / concurrencyConflicts straight from the atomic
+ *     RPC result (the RPC's lost-update guard is the only apply-time concurrency
+ *     check).
+ *  3. Returns no-op success when no proposals are passing.
+ *  4. Generates and forwards an idempotency key to commitAtomic.
  *
  * Mocking strategy (mirrors roster-fetcher.test.ts / auditor.test.ts style):
- *  - Mock @/modules/rosters/bulk-assignment for simulate()
- *  - Mock @/modules/rosters/bulk-assignment/engine/assignment-committer for commitAtomic()
- *  - DO NOT mock crypto (vitest runs in a Node-like environment where
- *    globalThis.crypto.randomUUID is available via the happy-dom environment).
+ *  - Mock @/modules/rosters/bulk-assignment (simulate must NOT be called now)
+ *  - Mock the assignment-committer for commitAtomic()
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { AutoSchedulerController } from '../auto-scheduler.controller';
 import type { AutoSchedulerResult, ValidatedProposal } from '../types';
-import type { BulkAssignmentResult } from '@/modules/rosters/bulk-assignment';
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -112,23 +113,6 @@ function makeResult(proposals: ValidatedProposal[]): AutoSchedulerResult {
     };
 }
 
-function simulateSuccess(
-    passedIds: string[],
-    failedIds: string[] = [],
-): BulkAssignmentResult {
-    return {
-        mode: 'PARTIAL_APPLY',
-        total: passedIds.length + failedIds.length,
-        passing: passedIds.length,
-        failing: failedIds.length,
-        results: [],
-        passedV8ShiftIds: passedIds,
-        failedV8ShiftIds: failedIds,
-        canCommit: passedIds.length > 0,
-        validationMs: 1,
-    };
-}
-
 function atomicSuccess(
     successCount: number,
     perEmployee: Array<{ employee_id: string; committed: number; conflicts: string[] }>,
@@ -172,12 +156,7 @@ describe('AutoSchedulerController.commit()', () => {
         expect(mockCommitAtomic).not.toHaveBeenCalled();
     });
 
-    it('calls simulate() once per employee and sends ONE atomic commit', async () => {
-        // Two employees, both pass recheck.
-        mockSimulate
-            .mockResolvedValueOnce(simulateSuccess(['s1', 's2'])) // e1
-            .mockResolvedValueOnce(simulateSuccess(['s3']));      // e2
-
+    it('sends ONE atomic commit with all passing employees and never re-simulates', async () => {
         mockCommitAtomic.mockResolvedValueOnce(atomicSuccess(3, [
             { employee_id: 'e1', committed: 2, conflicts: [] },
             { employee_id: 'e2', committed: 1, conflicts: [] },
@@ -189,7 +168,8 @@ describe('AutoSchedulerController.commit()', () => {
             proposal('s3', 'e2', true),
         ]));
 
-        expect(mockSimulate).toHaveBeenCalledTimes(2);
+        // No per-employee compliance re-simulation — preview == commit.
+        expect(mockSimulate).not.toHaveBeenCalled();
 
         // commitAtomic must be called EXACTLY ONCE with both employees.
         expect(mockCommitAtomic).toHaveBeenCalledTimes(1);
@@ -208,7 +188,6 @@ describe('AutoSchedulerController.commit()', () => {
     });
 
     it('forwards a non-null idempotency key to commitAtomic', async () => {
-        mockSimulate.mockResolvedValueOnce(simulateSuccess(['s1']));
         mockCommitAtomic.mockResolvedValueOnce(atomicSuccess(1, [
             { employee_id: 'e1', committed: 1, conflicts: [] },
         ]));
@@ -220,73 +199,43 @@ describe('AutoSchedulerController.commit()', () => {
         expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     });
 
-    it('marks employee as recheckFailed and excludes them from atomic commit', async () => {
-        // e1 recheck throws; e2 passes.
-        mockSimulate
-            .mockRejectedValueOnce(new Error('simulate error'))     // e1 fails
-            .mockResolvedValueOnce(simulateSuccess(['s2']));         // e2 passes
-
+    it('sends every passing employee to the RPC (no client-side drops) and surfaces DB-level failures', async () => {
+        // Both employees are sent; the RPC reports e2 committed 0 → failedEmployee.
         mockCommitAtomic.mockResolvedValueOnce(atomicSuccess(1, [
-            { employee_id: 'e2', committed: 1, conflicts: [] },
+            { employee_id: 'e1', committed: 1, conflicts: [] },
+            { employee_id: 'e2', committed: 0, conflicts: [] },
         ]));
-
-        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         const result = await controller.commit(makeResult([
             proposal('s1', 'e1', true),
             proposal('s2', 'e2', true),
         ]));
 
-        // Atomic commit still called for e2 only.
         const [assignments] = mockCommitAtomic.mock.calls[0] as [
             { employeeId: string; shiftIds: string[] }[],
             string | undefined,
         ];
-        expect(assignments).toHaveLength(1);
-        expect(assignments[0].employeeId).toBe('e2');
-
-        expect(result.failedEmployees).toContain('e1');
+        expect(assignments).toHaveLength(2); // nothing dropped client-side
+        expect(result.failedEmployees).toContain('e2');
         expect(result.totalCommitted).toBe(1);
-        errorSpy.mockRestore();
     });
 
-    it('merges recheck conflicts and RPC concurrency conflicts', async () => {
-        // e1 recheck: s1 passes, s2 newly fails (concurrency conflict).
-        // RPC also surfaces s1 as a concurrency conflict (held by someone
-        // else between recheck and write).
-        mockSimulate.mockResolvedValueOnce(simulateSuccess(['s1'], ['s2']));
-
+    it('surfaces concurrency conflicts reported by the atomic RPC lost-update guard', async () => {
+        // s1 was grabbed by another employee since preview → RPC returns it as a
+        // conflict and e1 committed 0.
         mockCommitAtomic.mockResolvedValueOnce(atomicSuccess(0, [
             { employee_id: 'e1', committed: 0, conflicts: ['s1'] },
         ], ['s1']));
 
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
         const result = await controller.commit(makeResult([
             proposal('s1', 'e1', true),
-            proposal('s2', 'e1', true),
         ]));
 
-        expect(result.concurrencyConflicts).toEqual(expect.arrayContaining(['s1', 's2']));
+        expect(result.concurrencyConflicts).toContain('s1');
         expect(result.failedEmployees).toContain('e1');
-        warnSpy.mockRestore();
     });
 
-    it('returns failure when all employees fail recheck (no atomic call made)', async () => {
-        mockSimulate.mockResolvedValueOnce(simulateSuccess([], ['s1']));
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-        const result = await controller.commit(makeResult([proposal('s1', 'e1', true)]));
-
-        expect(mockCommitAtomic).not.toHaveBeenCalled();
-        expect(result.success).toBe(false);
-        expect(result.failedEmployees).toContain('e1');
-        warnSpy.mockRestore();
-    });
-
-    it('excludes non-passing proposals from byEmployee map', async () => {
-        // Mix of passing and non-passing proposals for same employee.
-        mockSimulate.mockResolvedValueOnce(simulateSuccess(['s1']));
+    it('excludes non-passing proposals from the commit', async () => {
         mockCommitAtomic.mockResolvedValueOnce(atomicSuccess(1, [
             { employee_id: 'e1', committed: 1, conflicts: [] },
         ]));
@@ -300,7 +249,7 @@ describe('AutoSchedulerController.commit()', () => {
             { employeeId: string; shiftIds: string[] }[],
             string | undefined,
         ];
-        // Only s1 should be sent to simulate and then commit.
+        // Only the passing shift is committed.
         expect(assignments[0].shiftIds).toEqual(['s1']);
         expect(result.totalCommitted).toBe(1);
     });

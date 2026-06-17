@@ -952,20 +952,23 @@ export class AutoSchedulerController {
     }
 
     /**
-     * Commit passing proposals with concurrency recheck — atomic multi-pair path.
+     * Commit the preview's compliant proposals — atomic multi-pair path.
      *
      * Flow:
-     *   1. Group passing proposals by employee (same as before).
-     *   2. Re-run simulate() in parallel chunks per employee to refresh
-     *      compliance against current DB state (TOCTOU guard — same as before).
-     *   3. Collect ALL freshly-passing (employeeId → shiftIds) pairs from the
-     *      recheck step into a single list.
-     *   4. Send the entire list to sm_bulk_assign_atomic via ONE RPC call, with
-     *      a per-attempt idempotency key (crypto.randomUUID). This makes the
-     *      commit atomic across all employees: if the DB throws a hard error
-     *      nothing is written; if the tab closes after the RPC was dispatched a
-     *      retry with the same key is a no-op.
-     *   5. Map the RPC's per_employee breakdown back to CommitResult shape.
+     *   1. Group the compliant proposals by employee.
+     *   2. Send the whole list to sm_bulk_assign_atomic via ONE RPC call with a
+     *      per-attempt idempotency key (crypto.randomUUID). Atomic across all
+     *      employees: a hard DB error writes nothing; a retry with the same key
+     *      is a no-op. The RPC's lost-update guard skips any shift claimed by
+     *      another employee since preview and returns it as a conflict.
+     *   3. Map the RPC's per_employee breakdown back to CommitResult shape.
+     *
+     * NOTE: there is deliberately NO per-employee compliance re-simulation. The
+     * preview validates with the optimizer's injected context (fresh data fetched
+     * right before the solve) and the compliance hard gate guarantees the
+     * proposals are 100% compliant; re-validating here via scenarioLoader's
+     * DB-fetch path used a DIFFERENT data context and disagreed with the preview,
+     * silently dropping ~23% of valid assignments. preview == commit now.
      *
      * Idempotency key is generated fresh per commit attempt so a manager
      * clicking Apply twice gets two independent attempts — each is idempotent
@@ -984,105 +987,33 @@ export class AutoSchedulerController {
             return { success: true, totalCommitted: 0, failedEmployees: [], concurrencyConflicts: [] };
         }
 
-        // ── Step 1: Per-employee compliance recheck (TOCTOU guard) ────────────
-        // Run in chunks of 5 to avoid browser lock contention.
-        type RecheckOutcome = {
-            employeeId: string;
-            passingShiftIds: string[];
-            recheckFailed: boolean;
-            recheckConflicts: string[]; // shifts that newly-failed recheck
-        };
-
+        // ── Book directly via the atomic RPC (preview == commit) ──────────────
+        // No per-employee compliance re-simulation here. The preview already
+        // validated every proposal against fresh data fetched right before the
+        // solve, and the compliance HARD GATE guarantees result.proposals are
+        // 100% compliant. The old recheck called scenarioLoader WITHOUT
+        // injectedData, so it re-fetched a DIFFERENT data context from the DB
+        // than the preview injected (V8 employee context + existing-roster
+        // window). That made it disagree with the preview and silently drop ~23%
+        // of valid assignments. The ONLY genuine apply-time concurrency concern —
+        // a shift claimed by another employee since preview — is handled
+        // atomically by sm_bulk_assign_atomic's lost-update guard, which skips
+        // such shifts and returns them as conflicts. So what the preview approves
+        // is exactly what books.
         const entries = Array.from(byEmployee.entries());
-        const CHUNK_SIZE = 5;
-        const recheckOutcomes: RecheckOutcome[] = [];
+        const atomicAssignments = entries.map(([employeeId, shiftIds]) => ({ employeeId, shiftIds }));
 
-        for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
-            const chunk = entries.slice(i, i + CHUNK_SIZE);
-            const chunkResults = await Promise.all(
-                chunk.map(async ([employeeId, shiftIds]): Promise<RecheckOutcome> => {
-                    let freshResult: BulkAssignmentResult;
-                    try {
-                        freshResult = await bulkAssignmentController.simulate(
-                            shiftIds, employeeId, { mode: 'PARTIAL_APPLY' },
-                        );
-                    } catch (err) {
-                        console.error('[AutoScheduler] Recheck failed for employee', employeeId, err);
-                        return { employeeId, passingShiftIds: [], recheckFailed: true, recheckConflicts: shiftIds };
-                    }
-
-                    if (freshResult.passedV8ShiftIds.length === 0) {
-                        console.debug('[AutoScheduler] All shifts failed recheck for', employeeId);
-                        return {
-                            employeeId,
-                            passingShiftIds: [],
-                            recheckFailed: true,
-                            recheckConflicts: freshResult.failedV8ShiftIds,
-                        };
-                    }
-
-                    // Per-employee conflicts are aggregated into ONE summary after
-                    // the recheck loop (see below) — no per-employee warn flood.
-                    return {
-                        employeeId,
-                        passingShiftIds: freshResult.passedV8ShiftIds,
-                        recheckFailed: false,
-                        recheckConflicts: freshResult.failedV8ShiftIds,
-                    };
-                }),
-            );
-            recheckOutcomes.push(...chunkResults);
-        }
-
-        // One aggregated recheck summary instead of a per-employee warn flood.
-        const recheckNewlyFailed = recheckOutcomes.reduce((s, o) => s + o.recheckConflicts.length, 0);
-        const recheckAffected = recheckOutcomes.filter(o => o.recheckConflicts.length > 0).length;
-        if (recheckNewlyFailed > 0) {
-            console.warn(
-                '[AutoScheduler] Concurrency recheck: %d shift(s) across %d staff newly failed and were skipped from the commit',
-                recheckNewlyFailed, recheckAffected,
-            );
-        }
-
-        // Employees whose recheck entirely failed — they will not be in the
-        // atomic commit at all and are reported as failedEmployees.
-        const recheckFailedEmployees = recheckOutcomes
-            .filter(o => o.recheckFailed)
-            .map(o => o.employeeId);
-
-        // Shifts that newly-failed compliance recheck → concurrency conflicts.
-        const recheckConflicts = recheckOutcomes.flatMap(o => o.recheckConflicts);
-
-        // Build the assignment list for the atomic RPC — only employees with
-        // at least one passing shift.
-        const atomicAssignments = recheckOutcomes
-            .filter(o => !o.recheckFailed && o.passingShiftIds.length > 0)
-            .map(o => ({ employeeId: o.employeeId, shiftIds: o.passingShiftIds }));
-
-        if (atomicAssignments.length === 0) {
-            return {
-                success: recheckFailedEmployees.length === 0,
-                totalCommitted: 0,
-                failedEmployees: recheckFailedEmployees,
-                concurrencyConflicts: recheckConflicts,
-            };
-        }
-
-        // ── Step 2: ONE atomic RPC call for all employee pairs ────────────────
         const idempotencyKey = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
             ? crypto.randomUUID()
             : undefined;
 
         const atomicResult = await assignmentCommitter.commitAtomic(atomicAssignments, idempotencyKey);
 
-        // Merge recheck-failed employees with any DB-level failures reported by
-        // the atomic committer (e.g. employee had 0 committed after RPC).
-        const allFailedEmployees = Array.from(
-            new Set([...recheckFailedEmployees, ...atomicResult.failedEmployees]),
-        );
-        const allConflicts = Array.from(
-            new Set([...recheckConflicts, ...atomicResult.concurrencyConflicts]),
-        );
+        // Failures/conflicts now come solely from the atomic RPC: a shift grabbed
+        // by another employee since preview (lost-update guard → conflict), or a
+        // hard DB error (→ failedEmployees).
+        const allFailedEmployees = atomicResult.failedEmployees;
+        const allConflicts = atomicResult.concurrencyConflicts;
 
         console.debug('[AutoScheduler] Atomic commit complete:', {
             totalCommitted: atomicResult.totalCommitted,
