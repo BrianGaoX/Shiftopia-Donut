@@ -313,7 +313,11 @@ export function AutoSchedulerModal({
     };
 
     const handleDownloadAudit = useCallback(() => {
-        if (!result || !result.uncoveredAudit) return;
+        // Generate for ANY completed run — a clean 100%-compliant roster deserves
+        // an audit report too. (Old guard required `uncoveredAudit`, which is only
+        // computed when shifts are uncovered, so the button silently did nothing
+        // on a perfect run.)
+        if (!result) return;
         setIsDownloading(true);
 
         try {
@@ -321,67 +325,99 @@ export function AutoSchedulerModal({
                 const s = String(v ?? '');
                 return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
             };
+            const money = (n: number) =>
+                new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(n || 0);
+            const row = (...cells: (string | number)[]) => cells.map(csvEscape).join(',');
 
+            const audit = result.uncoveredAudit ?? [];
             const totalUncovered = result.uncoveredV8ShiftIds.length;
-            const audited = result.uncoveredAudit.length;
+            const audited = audit.length;
+            const compliancePct = result.totalProposals > 0
+                ? Math.round((result.passing / result.totalProposals) * 100)
+                : 100;
 
-            const lines = [
-                'AUTOSCHEDULER AUDIT REPORT',
-                `Generated: ${new Date().toLocaleString()}`,
-                `Status: ${result.optimizerStatus}`,
-                `Total Passing: ${result.passing}`,
-                `Total Failing: ${result.failing}`,
-                `Uncovered: ${totalUncovered}`,
-                `Audited: ${audited}${audited < totalUncovered ? ` (capped — ${totalUncovered - audited} not detailed below)` : ''}`,
+            const lines: string[] = [
+                'AUTO-SCHEDULE AUDIT REPORT',
+                row('Generated', new Date().toLocaleString()),
+                row('Window', `${startDate} to ${endDate}`),
+                row('Optimizer status', result.optimizerStatus),
                 '',
             ];
+
+            // ── Scorecard — the new single-source-of-truth metrics (matches the
+            //    on-screen pillars: Coverage / Wellbeing / Fairness / Compliance /
+            //    Labour cost), NOT the old Passing/Failing-proposal framing. ──
+            const p = result.pillars;
+            if (p) {
+                lines.push('--- SCORECARD ---');
+                lines.push(row('Metric', 'Score', 'Detail'));
+                lines.push(row('Coverage', `${p.coverage.score}%`, `${p.coverage.covered}/${p.coverage.total} shifts filled`));
+                lines.push(row('Wellbeing', `${p.fatigue.score}/100`,
+                    p.fatigue.critical > 0 ? `${p.fatigue.critical} over-tired`
+                        : p.fatigue.amber > 0 ? `${p.fatigue.amber} near limit` : 'all well-rested'));
+                lines.push(row('Fairness', `${p.fairness.score}/100`, `${p.fairness.employees_used} staff · ${Math.round(p.fairness.spread_minutes / 60)}h spread`));
+                lines.push(row('Compliance', `${compliancePct}%`, `${result.passing}/${result.totalProposals} assignments passing`));
+                lines.push(row('Labour cost', money(p.cost.total), `${money(p.cost.avg_per_shift)}/shift avg`));
+                lines.push('');
+            }
+
+            // ── Summary — compliance is a hard gate (100% by construction). ──
+            lines.push('--- SUMMARY ---');
+            lines.push(row('Compliant assignments booked', result.passing));
+            lines.push(row('Uncovered shifts', totalUncovered));
+            lines.push(row('Compliance policy', '100% by construction — non-compliant assignments are never booked; they are left uncovered.'));
+            lines.push('');
 
             if (result.capacityCheck) {
                 const cc = result.capacityCheck;
                 lines.push('--- CAPACITY PRE-CHECK ---');
-                lines.push(`Status: ${cc.sufficient ? 'SUFFICIENT' : 'INSUFFICIENT'}`);
-                lines.push(`Total Demand (min): ${cc.totalDemandMinutes}`);
-                lines.push(`Total Supply (min): ${cc.totalSupplyMinutes}`);
+                lines.push(row('Status', cc.sufficient ? 'SUFFICIENT' : 'INSUFFICIENT'));
+                lines.push(row('Total Demand (min)', cc.totalDemandMinutes));
+                lines.push(row('Total Supply (min)', cc.totalSupplyMinutes));
                 lines.push('Date,Shifts,Employees,Demand (min),Supply (min),Deficit (min),Sufficient');
                 for (const day of cc.perDay) {
-                    lines.push([
-                        day.date, day.shiftCount, day.employeeCount, day.demandMinutes,
-                        day.supplyMinutes, day.deficitMinutes, day.sufficient ? 'YES' : 'NO'
-                    ].map(csvEscape).join(','));
+                    lines.push(row(day.date, day.shiftCount, day.employeeCount, day.demandMinutes,
+                        day.supplyMinutes, day.deficitMinutes, day.sufficient ? 'YES' : 'NO'));
                 }
                 lines.push('');
             }
 
-            lines.push('--- UNCOVERED SHIFT ANALYSIS ---');
-            lines.push('Shift Date,Time,Rejection Summary');
-
-            for (const audit of result.uncoveredAudit) {
-                const summary = Object.entries(audit.rejectionSummary)
-                    .map(([type, count]) => `${type}: ${count}`)
-                    .join(' | ');
-                lines.push([
-                    audit.shiftDate, `${audit.startTime}-${audit.endTime}`, summary || 'No reasons recorded'
-                ].map(csvEscape).join(','));
+            // ── Uncovered analysis — only when there is something uncovered. ──
+            if (totalUncovered > 0) {
+                lines.push('--- UNCOVERED SHIFT ANALYSIS ---');
+                lines.push(row('Audited', `${audited}${audited < totalUncovered ? ` (capped — ${totalUncovered - audited} not detailed)` : ''}`));
+                lines.push('Shift Date,Time,Reason Summary');
+                for (const a of audit) {
+                    const summary = Object.entries(a.rejectionSummary).map(([type, count]) => `${type}: ${count}`).join(' | ');
+                    lines.push(row(a.shiftDate, `${a.startTime}-${a.endTime}`, summary || 'No reasons recorded'));
+                }
+                lines.push('', '--- UNCOVERED — PER-EMPLOYEE DETAIL ---');
+                lines.push('Shift Date,Time,Employee,Status,Violations');
+                for (const a of audit) {
+                    for (const detail of a.employeeDetails) {
+                        lines.push(row(a.shiftDate, `${a.startTime}-${a.endTime}`,
+                            detail.employeeName, detail.status, detail.violations.map(v => v.description).join('; ')));
+                    }
+                }
+                lines.push('');
             }
 
-            lines.push('', '--- EMPLOYEE REJECTION DETAILS ---');
-            lines.push('Shift Date,Time,Employee,Status,Violations');
-
-            for (const audit of result.uncoveredAudit) {
-                for (const detail of audit.employeeDetails) {
-                    const violations = detail.violations.map(v => v.description).join('; ');
-                    lines.push([
-                        audit.shiftDate, `${audit.startTime}-${audit.endTime}`,
-                        detail.employeeName, detail.status, violations
-                    ].map(csvEscape).join(','));
-                }
+            // ── Booked roster — keeps the report substantive even at 100%
+            //    coverage (every row here is compliant by the hard gate). ──
+            lines.push('--- BOOKED ASSIGNMENTS ---');
+            lines.push('Shift Date,Time,Employee,Role,Est. Cost,Compliance');
+            const sortedProposals = [...result.proposals].sort((a, b) =>
+                a.shiftDate.localeCompare(b.shiftDate) || a.startTime.localeCompare(b.startTime));
+            for (const pr of sortedProposals) {
+                lines.push(row(pr.shiftDate, `${pr.startTime}-${pr.endTime}`, pr.employeeName,
+                    pr.roleName ?? '', money(pr.optimizerCost ?? 0), pr.complianceStatus));
             }
 
             const blob = new Blob(['\ufeff', lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.setAttribute('href', url);
-            link.setAttribute('download', `Autoscheduler_Audit_Report_${new Date().toISOString().split('T')[0]}.csv`);
+            link.setAttribute('download', `Auto-Schedule_Audit_${startDate || new Date().toISOString().split('T')[0]}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -391,7 +427,7 @@ export function AutoSchedulerModal({
         } finally {
             setIsDownloading(false);
         }
-    }, [result]);
+    }, [result, startDate, endDate]);
 
     const { totals, employeeGroups } = useMemo(() => {
         if (!result) return { totals: { cost: 0, fatigue: 0, p95Fatigue: 0, fairness: 0 }, employeeGroups: [] };
