@@ -133,7 +133,10 @@ export function employeeToDTO(emp: EmployeeRecord, contractedHours?: number): Wo
     id: emp.id,
     firstName: emp.first_name ?? null,
     lastName: emp.last_name ?? null,
-    contractedHours,
+    // Prefer an explicit override map, else fall back to the contract on the
+    // record itself. Without this, weekly contracted hours never reached the
+    // projector and utilization always collapsed to 0%.
+    contractedHours: contractedHours ?? emp.contracted_weekly_hours ?? undefined,
   };
 }
 

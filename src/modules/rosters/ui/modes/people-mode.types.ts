@@ -32,7 +32,10 @@ export interface PeopleModeEmployee {
     name: string;
     employeeId: string;
     avatar: string;
+    /** Weekly contracted hours (raw contract rate). */
     contractedHours: number;
+    /** Contracted hours scaled to the visible period — denominator behind `utilization`. */
+    periodContractedHours: number;
     currentHours: number;
     /** True when scheduledHours > contractedHours */
     overHoursWarning?: boolean;

@@ -219,7 +219,7 @@ export function runProjectionPipeline(
   };
 
   if (request.mode === 'people') {
-    result.people = projectPeople(filtered, { employees: request.employees, nowIso: request.nowIso });
+    result.people = projectPeople(filtered, { employees: request.employees, nowIso: request.nowIso, rangeDays: request.rangeDays });
   } else if (request.mode === 'group') {
     result.group = projectGroup(filtered, { rosterStructures: request.rosterStructures });
   } else if (request.mode === 'events') {

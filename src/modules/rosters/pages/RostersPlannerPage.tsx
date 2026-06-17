@@ -128,6 +128,7 @@ const NewRostersPage: React.FC = () => {
       isDnDModeActive: s.isDnDModeActive,
     })),
   );
+  const deselectMultiple = useRosterStore(s => s.deselectMultiple);
   // ==================== SESSION-SCOPED STATE FROM CONTEXT ====================
   // These persist across navigation but reset on browser refresh
   const {
@@ -1025,7 +1026,7 @@ const NewRostersPage: React.FC = () => {
       {bulkModeActive && (
         <div className="flex-shrink-0 bg-amber-500/10 border-y border-amber-500/30 px-6 py-2 flex items-center justify-between mb-2">
           <div className="flex items-center gap-3 text-amber-700 dark:text-amber-300 text-sm font-medium">
-            <span>Bulk selection active — click shifts to select</span>
+            <span>Bulk selection active — click shifts or buckets to select</span>
             {selectedV8ShiftIds.size > 0 && (
               <span className="bg-amber-500/20 text-amber-800 dark:text-amber-200 px-2 py-0.5 rounded-full text-xs font-bold">
                 {selectedV8ShiftIds.size} selected
@@ -1156,6 +1157,8 @@ const NewRostersPage: React.FC = () => {
               onBulkModeToggle={handleBulkModeToggle}
               selectedV8ShiftIds={selectedV8ShiftIdsArray}
               onToggleShiftSelection={handleToggleShiftSelection}
+              onSelectShiftIds={selectMultiple}
+              onDeselectShiftIds={deselectMultiple}
               // Day zoom
               dayZoom={dayZoom}
               // Data from unified hook
@@ -1232,7 +1235,7 @@ const NewRostersPage: React.FC = () => {
       </div>
 
       {/* Bulk Toolbar */}
-      {bulkModeActive && selectedV8ShiftIds.size > 0 && viewType !== 'month' && (
+      {bulkModeActive && selectedV8ShiftIds.size > 0 && (
         <BulkActionsToolbar
           selectedCount={selectedCount}
           selectedV8ShiftIds={selectedV8ShiftIdsArray}

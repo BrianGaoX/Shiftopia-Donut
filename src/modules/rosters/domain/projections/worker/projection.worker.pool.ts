@@ -40,6 +40,8 @@ import type {
   WorkerInboundMessage,
   WorkerOutboundMessage,
 } from './protocol';
+import { computeUtilizationPct, isOverContractedHours, periodContractedHours, computePeakFatigue } from '../utils/workload';
+import { UNASSIGNED_BUCKET_ID } from '../constants';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -95,6 +97,7 @@ function mergeResults(
   requestId: number,
   mode: ProjectionResult["mode"],
   t0: number,
+  rangeDays?: number,
 ): ProjectionResult {
   const stats = mergeStats(partials.map((p) => p.stats));
 
@@ -105,7 +108,7 @@ function mergeResults(
     stats,
     // Mode-specific data: we must merge chunks for the active mode.
     group: mode === "group" ? mergeGroups(partials.map((p) => p.group).filter(Boolean) as any[]) : null,
-    people: mode === "people" ? mergePeople(partials.map((p) => p.people).filter(Boolean) as any[]) : null,
+    people: mode === "people" ? mergePeople(partials.map((p) => p.people).filter(Boolean) as any[], rangeDays) : null,
     events: mode === "events" ? mergeEvents(partials.map((p) => p.events).filter(Boolean) as any[]) : null,
     roles: mode === "roles" ? mergeRoles(partials.map((p) => p.roles).filter(Boolean) as any[]) : null,
   };
@@ -114,7 +117,7 @@ function mergeResults(
 /**
  * Merge partial PeopleMode projections.
  */
-function mergePeople(partials: any[]): any {
+function mergePeople(partials: any[], rangeDays?: number): any {
   if (partials.length === 0) return null;
   const employeeMap = new Map<string, any>();
 
@@ -146,12 +149,31 @@ function mergePeople(partials: any[]): any {
     }
   }
 
+  // Recompute utilization AFTER merging — currentHours is only complete once
+  // every chunk's contribution is summed (the pool splits shifts by index, so a
+  // single employee's shifts can land in different workers). Uses the same
+  // helpers as people.projector so the formula can never drift again.
   const employees = Array.from(employeeMap.values()).map((emp) => {
-    const contractedMinutes = (emp.contractedHours || 0) * 60;
+    // Fatigue is recomputed over the FULL merged shift set (not max-of-chunks):
+    // the pool splits shifts by index, so an employee's consecutive-day shifts
+    // can land in different workers and a per-chunk peak would understate it.
+    let fatigueScore = emp.fatigueScore;
+    if (emp.id !== UNASSIGNED_BUCKET_ID) {
+      const mergedShifts = (Object.values(emp.shifts).flat() as any[]).map((ps) => ({
+        shift_date: ps.date,
+        start_time: ps.startTime,
+        end_time: ps.endTime,
+        unpaid_break_minutes: ps.unpaidBreakMinutes ?? 0,
+      }));
+      if (mergedShifts.length > 0) fatigueScore = computePeakFatigue(mergedShifts);
+    }
+
     return {
       ...emp,
-      utilization: contractedMinutes > 0 ? (emp.currentHours / contractedMinutes) * 100 : 0,
-      overHoursWarning: contractedMinutes > 0 && emp.currentHours > contractedMinutes,
+      fatigueScore,
+      periodContractedHours: periodContractedHours(emp.contractedHours, rangeDays),
+      utilization: computeUtilizationPct(emp.currentHours, emp.contractedHours, rangeDays),
+      overHoursWarning: isOverContractedHours(emp.currentHours, emp.contractedHours, rangeDays),
     };
   });
 
@@ -372,6 +394,7 @@ export class ProjectionWorkerPool {
     received: ProjectionResult[];
     mode: ProjectionResult['mode'];
     t0: number;
+    rangeDays?: number;
   }>();
 
   constructor(options?: {
@@ -433,6 +456,7 @@ export class ProjectionWorkerPool {
             requestId,
             pending.mode,
             pending.t0,
+            pending.rangeDays,
           );
           this.onResult?.(merged);
         }
@@ -498,6 +522,7 @@ export class ProjectionWorkerPool {
         received: [],
         mode: request.mode,
         t0: performance.now(),
+        rangeDays: request.rangeDays,
       });
 
       const message: WorkerInboundMessage = {
@@ -516,6 +541,7 @@ export class ProjectionWorkerPool {
       received: [],
       mode: request.mode,
       t0: performance.now(),
+      rangeDays: request.rangeDays,
     });
 
     for (let i = 0; i < chunks.length; i++) {

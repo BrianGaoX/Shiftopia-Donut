@@ -105,6 +105,7 @@ interface RosterState {
   setSelectedV8ShiftIds: (ids: Set<string>) => void;
   toggleShiftSelection: (id: string) => void;
   selectMultiple: (ids: string[]) => void;
+  deselectMultiple: (ids: string[]) => void;
   clearSelection: () => void;
   setIsDnDModeActive: (active: boolean) => void;
   setShowUnfilledPanel: (show: boolean) => void;
@@ -168,6 +169,12 @@ export const useRosterStore = create<RosterState>()(
       selectMultiple: (ids) => set((s) => {
         const current = new Set(s.selectedV8ShiftIds);
         ids.forEach((id) => current.add(id));
+        return { selectedV8ShiftIds: current };
+      }),
+
+      deselectMultiple: (ids) => set((s) => {
+        const current = new Set(s.selectedV8ShiftIds);
+        ids.forEach((id) => current.delete(id));
         return { selectedV8ShiftIds: current };
       }),
 

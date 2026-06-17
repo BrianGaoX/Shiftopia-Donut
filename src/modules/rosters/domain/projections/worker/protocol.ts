@@ -136,6 +136,7 @@ export interface WorkerEmployeeDTO {
   id: string;
   firstName: string | null;
   lastName: string | null;
+  /** Weekly contracted hours (e.g. 38). Scaled to the visible period downstream. */
   contractedHours?: number;
 }
 
@@ -233,6 +234,13 @@ export interface ProjectionRequest {
 
   /** Current date ISO string for fatigue windows etc. */
   nowIso: string;
+
+  /**
+   * Number of calendar days in the visible range (Day=1, Week=7, Month=28-31).
+   * Used to scale weekly contracted hours to the period for utilization.
+   * Optional — helpers default to a 7-day window when absent.
+   */
+  rangeDays?: number;
 }
 
 // ── Result Envelope (Worker → Main Thread) ─────────────────────────────────────
@@ -248,6 +256,9 @@ export interface ProjectedShiftResult {
   startTime: string;
   endTime: string;
   netMinutes: number;
+  /** Unpaid break minutes — retained so fatigue can be recomputed post-merge.
+   *  Only the people projector populates it; optional for other modes. */
+  unpaidBreakMinutes?: number;
   estimatedCost: number;
   costBreakdown: {
     base: number;

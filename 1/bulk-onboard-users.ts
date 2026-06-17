@@ -17,7 +17,7 @@ async function onboard() {
 
   const sqlLines: string[] = [
     '-- Bulk User Onboarding: test1 to test100',
-    '-- Target: Event Delivery -> Event Setups -> TM2',
+    '-- Target: Event Delivery -> Event Setups',
     '',
     'DO $$',
     'DECLARE',
@@ -29,33 +29,21 @@ async function onboard() {
     '    v_role_tm2 UUID;',
     '    v_role_tm3 UUID;',
     '    v_role_tl UUID;',
-    '    v_current_role_id UUID;',
     '    v_org_id UUID;',
-    '    v_rem_level_id UUID;',
+    '    v_rem_level_tm2 UUID;',
+    '    v_rem_level_tm3 UUID;',
+    '    v_rem_level_tl UUID;',
+    '    v_skill_id UUID;',
     'BEGIN',
     '    -- 1. Get role IDs dynamically (by name + sub_dept)',
     '    SELECT id INTO v_role_tm2 FROM public.roles WHERE name = \'Team Member\' AND sub_department_id = v_sub_dept_id;',
     '    SELECT id INTO v_role_tm3 FROM public.roles WHERE name = \'TM3\' AND sub_department_id = v_sub_dept_id;',
     '    SELECT id INTO v_role_tl  FROM public.roles WHERE name = \'Team Leader\' AND sub_department_id = v_sub_dept_id;',
     '',
-    '    -- Fallback 1: Lookup by remuneration level if names mismatched',
-    '    IF v_role_tm2 IS NULL THEN',
-    '        SELECT r.id INTO v_role_tm2 FROM public.roles r JOIN public.remuneration_levels rl ON r.remuneration_level_id = rl.id ',
-    '        WHERE r.sub_department_id = v_sub_dept_id AND rl.level_name = \'Level 2\' LIMIT 1;',
-    '    END IF;',
-    '    IF v_role_tm3 IS NULL THEN',
-    '        SELECT r.id INTO v_role_tm3 FROM public.roles r JOIN public.remuneration_levels rl ON r.remuneration_level_id = rl.id ',
-    '        WHERE r.sub_department_id = v_sub_dept_id AND rl.level_name = \'Level 3\' LIMIT 1;',
-    '    END IF;',
-    '    IF v_role_tl IS NULL THEN',
-    '        SELECT r.id INTO v_role_tl FROM public.roles r JOIN public.remuneration_levels rl ON r.remuneration_level_id = rl.id ',
-    '        WHERE r.sub_department_id = v_sub_dept_id AND rl.level_name = \'Level 4\' LIMIT 1;',
-    '    END IF;',
-    '',
-    '    -- Fallback 2: Hardcoded defaults for TM2 if still not found',
-    '    IF v_role_tm2 IS NULL THEN v_role_tm2 := \'2309d285-116e-4478-904d-44f627bdf82a\'; END IF;',
-    '    IF v_role_tm3 IS NULL THEN v_role_tm3 := v_role_tm2; END IF;',
-    '    IF v_role_tl IS NULL THEN v_role_tl := v_role_tm2; END IF;',
+    '    -- Get remuneration levels',
+    '    SELECT remuneration_level_id INTO v_rem_level_tm2 FROM public.roles WHERE id = v_role_tm2;',
+    '    SELECT remuneration_level_id INTO v_rem_level_tm3 FROM public.roles WHERE id = v_role_tm3;',
+    '    SELECT remuneration_level_id INTO v_rem_level_tl FROM public.roles WHERE id = v_role_tl;',
     '',
     '    -- 2. Get the first organization',
     '    SELECT id INTO v_org_id FROM public.organizations LIMIT 1;',
@@ -63,7 +51,23 @@ async function onboard() {
     '        RAISE EXCEPTION \'No organization found.\';',
     '    END IF;',
     '',
+    '    -- 3. Create the ES-GOLD skill if it doesn\'t exist',
+    '    INSERT INTO public.skills (id, name, description, category, is_active, requires_expiration, default_validity_months)',
+    '    VALUES (gen_random_uuid(), \'ES-GOLD\', \'Gold level Event Security skill\', \'Safety\', true, false, null)',
+    '    ON CONFLICT (name) DO NOTHING;',
+    '    SELECT id INTO v_skill_id FROM public.skills WHERE name = \'ES-GOLD\';',
+    '',
+    '    -- 4. Delete existing contracts and skills for test users before inserting to ensure exact state',
+    '    DELETE FROM public.user_contracts WHERE user_id IN (SELECT id FROM public.profiles WHERE email LIKE \'test%@test.com\');',
+    '    DELETE FROM public.employee_skills WHERE skill_id = v_skill_id AND employee_id IN (SELECT id FROM public.profiles WHERE email LIKE \'test%@test.com\');',
+    ''
   ];
+
+  // Randomly select 25 indices between 1 and 100 to receive the ES-GOLD skill
+  const randomIndices = new Set<number>();
+  while (randomIndices.size < 25) {
+    randomIndices.add(Math.floor(Math.random() * 100) + 1);
+  }
 
   for (let i = 1; i <= 100; i++) {
     const email = `test${i}@test.com`;
@@ -71,18 +75,9 @@ async function onboard() {
     const firstName = `Test`;
     const lastName = `${i}`;
 
-    // Determine role based on index
-    let roleVar = 'v_role_tm2';
-    if (i <= 15) roleVar = 'v_role_tl';
-    else if (i <= 20) roleVar = 'v_role_tm3';
-
     sqlLines.push(`    -- User ${i}: ${email}`);
     sqlLines.push(`    v_email := '${email}';`);
     sqlLines.push(`    v_password := '${password}';`);
-    sqlLines.push(`    v_current_role_id := ${roleVar};`);
-    
-    // Safety check to ensure v_current_role_id is never null
-    sqlLines.push(`    IF v_current_role_id IS NULL THEN v_current_role_id := v_role_tm2; END IF;`);
 
     sqlLines.push(`    IF NOT EXISTS (SELECT 1 FROM auth.users WHERE email = v_email) THEN`);
     sqlLines.push(`        v_user_id := gen_random_uuid();`);
@@ -96,19 +91,36 @@ async function onboard() {
     sqlLines.push(`    VALUES (v_user_id, '${firstName}', '${lastName}', v_email)`);
     sqlLines.push(`    ON CONFLICT (id) DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, email = EXCLUDED.email;`);
     sqlLines.push(``);
-    sqlLines.push(`    -- Get rem level for current role`);
-    sqlLines.push(`    SELECT remuneration_level_id INTO v_rem_level_id FROM public.roles WHERE id = v_current_role_id;`);
-    sqlLines.push(`    IF v_rem_level_id IS NULL THEN SELECT id INTO v_rem_level_id FROM public.remuneration_levels LIMIT 1; END IF;`);
+
+    // Assign contracts based on requirements:
+    // 15 employees get Team Leader, TM3 and Team Member contracts
+    // 2 employees get TM3 and Team Member contracts
+    // Rest get Team Member contracts
+    if (i <= 15) {
+      sqlLines.push(`    INSERT INTO public.user_contracts (user_id, organization_id, department_id, sub_department_id, access_level, status, role_id, rem_level_id, employment_status, contracted_weekly_hours)`);
+      sqlLines.push(`    VALUES`);
+      sqlLines.push(`        (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_role_tl, v_rem_level_tl, 'Casual', '0'),`);
+      sqlLines.push(`        (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_role_tm3, v_rem_level_tm3, 'Casual', '0'),`);
+      sqlLines.push(`        (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_role_tm2, v_rem_level_tm2, 'Casual', '0');`);
+    } else if (i <= 17) {
+      sqlLines.push(`    INSERT INTO public.user_contracts (user_id, organization_id, department_id, sub_department_id, access_level, status, role_id, rem_level_id, employment_status, contracted_weekly_hours)`);
+      sqlLines.push(`    VALUES`);
+      sqlLines.push(`        (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_role_tm3, v_rem_level_tm3, 'Casual', '0'),`);
+      sqlLines.push(`        (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_role_tm2, v_rem_level_tm2, 'Casual', '0');`);
+    } else {
+      sqlLines.push(`    INSERT INTO public.user_contracts (user_id, organization_id, department_id, sub_department_id, access_level, status, role_id, rem_level_id, employment_status, contracted_weekly_hours)`);
+      sqlLines.push(`    VALUES`);
+      sqlLines.push(`        (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_role_tm2, v_rem_level_tm2, 'Casual', '0');`);
+    }
     sqlLines.push(``);
-    sqlLines.push(`    -- Assign role and sub-department`);
-    sqlLines.push(`    IF NOT EXISTS (SELECT 1 FROM public.user_contracts WHERE user_id = v_user_id AND organization_id = v_org_id AND department_id = v_dept_id AND sub_department_id = v_sub_dept_id) THEN`);
-    sqlLines.push(`        INSERT INTO public.user_contracts (user_id, organization_id, department_id, sub_department_id, access_level, status, role_id, rem_level_id)`);
-    sqlLines.push(`        VALUES (v_user_id, v_org_id, v_dept_id, v_sub_dept_id, 'alpha', 'Active', v_current_role_id, v_rem_level_id);`);
-    sqlLines.push(`    ELSE`);
-    sqlLines.push(`        UPDATE public.user_contracts SET role_id = v_current_role_id, rem_level_id = v_rem_level_id, status = 'Active'`);
-    sqlLines.push(`        WHERE user_id = v_user_id AND organization_id = v_org_id AND department_id = v_dept_id AND sub_department_id = v_sub_dept_id;`);
-    sqlLines.push(`    END IF;`);
-    sqlLines.push(``);
+
+    // Give 25 random members ES-GOLD skill
+    if (randomIndices.has(i)) {
+      sqlLines.push(`    INSERT INTO public.employee_skills (employee_id, skill_id, status, proficiency_level)`);
+      sqlLines.push(`    VALUES (v_user_id, v_skill_id, 'Active', 'Competent');`);
+      sqlLines.push(``);
+    }
+
     sqlLines.push(`    -- Assign Access Certificate (Alpha Type X)`);
     sqlLines.push(`    IF NOT EXISTS (SELECT 1 FROM public.app_access_certificates WHERE user_id = v_user_id AND organization_id = v_org_id AND department_id = v_dept_id AND sub_department_id = v_sub_dept_id AND certificate_type = 'X') THEN`);
     sqlLines.push(`        INSERT INTO public.app_access_certificates (user_id, organization_id, department_id, sub_department_id, access_level, certificate_type, is_active)`);
@@ -122,10 +134,9 @@ async function onboard() {
 
   sqlLines.push('END $$;');
 
-  const sqlFile = 'scripts/onboard_users.sql';
+  const sqlFile = '1/onboard_users.sql';
   fs.writeFileSync(sqlFile, sqlLines.join('\n'));
   console.log(`Generated SQL script: ${sqlFile}`);
-  console.log('Please execute this SQL in your Supabase Dashboard SQL Editor to create the 100 users.');
 }
 
 onboard().catch(console.error);

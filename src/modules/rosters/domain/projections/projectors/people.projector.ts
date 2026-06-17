@@ -21,7 +21,7 @@ import { getCachedCost, makeCacheKey } from '../cache/projection.cache';
 import { ZERO_COST_BREAKDOWN } from '../utils/cost/constants';
 import { determineShiftState } from '../../shift-state.utils';
 import { GROUP_COLORS, UNASSIGNED_COLORS, ALL_GROUP_TYPES } from '../constants';
-import { calculateFatigueWithRecovery } from '../utils/fatigue';
+import { computeUtilizationPct, isOverContractedHours, periodContractedHours, computePeakFatigue } from '../utils/workload';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,9 +43,10 @@ function makeEmployee(
     id, 
     name, 
     avatar, 
-    contractedHours, 
-    currentHours: 0, 
-    overHoursWarning: false, 
+    contractedHours,
+    periodContractedHours: 0,
+    currentHours: 0,
+    overHoursWarning: false,
     shifts: {},
     estimatedPay: 0,
     fatigueScore: 0,
@@ -88,6 +89,7 @@ function toProjectedShift(shift: WorkerShiftDTO): ProjectedShiftResult {
     startTime: shift.startTime,
     endTime: shift.endTime,
     netMinutes,
+    unpaidBreakMinutes: shift.unpaidBreakMinutes ?? 0,
     estimatedCost,
     costBreakdown: {
       base: detail.ordinaryCost,
@@ -132,6 +134,8 @@ export interface PeopleProjectorContext {
   employees?: WorkerEmployeeDTO[];
   contractedHoursMap?: Record<string, number>;
   nowIso?: string;
+  /** Calendar days in the visible range — scales weekly contract for utilization. */
+  rangeDays?: number;
 }
 
 export function projectPeople(
@@ -197,17 +201,24 @@ export function projectPeople(
   });
 
   const empArray = Array.from(empMap.values());
-  const todayStr = ctx.nowIso ? ctx.nowIso.substring(0, 10) : new Date().toISOString().substring(0, 10);
+  const { rangeDays } = ctx;
+
+  // O(1) lookup so fatigue mapping doesn't scan the full shift list per shift.
+  const shiftById = new Map(shifts.map(s => [s.id, s]));
 
   empArray.forEach(emp => {
-    emp.overHoursWarning = emp.contractedHours > 0 && emp.currentHours > emp.contractedHours;
-    emp.utilization = emp.contractedHours > 0 ? (emp.currentHours / emp.contractedHours) * 100 : 0;
-    
+    // Utilization scales the WEEKLY contract to the visible period so the % is
+    // correct in every view (Day/Week/Month), not just Week. Shared with the
+    // worker-pool merge path via these helpers — one formula, one answer.
+    emp.periodContractedHours = periodContractedHours(emp.contractedHours, rangeDays);
+    emp.overHoursWarning = isOverContractedHours(emp.currentHours, emp.contractedHours, rangeDays);
+    emp.utilization = computeUtilizationPct(emp.currentHours, emp.contractedHours, rangeDays);
+
     const empShifts = Object.values(emp.shifts).flat() as unknown as ProjectedShiftResult[];
     if (empShifts.length > 0 && emp.id !== UNASSIGNED_BUCKET_ID) {
       // Map DTO back to the specific keys fatigue.ts expects
       const fatigueInput = empShifts.map(ps => {
-        const originalDto = shifts.find(s => s.id === ps.id)!;
+        const originalDto = shiftById.get(ps.id)!;
         return {
           shift_date: originalDto.shiftDate,
           start_time: originalDto.startTime,
@@ -215,7 +226,9 @@ export function projectPeople(
           unpaid_break_minutes: originalDto.unpaidBreakMinutes,
         };
       });
-      emp.fatigueScore = calculateFatigueWithRecovery(fatigueInput, todayStr).current;
+      // Peak fatigue across the roster (per-shift window), not "as of today" —
+      // the latter reads 0 for any future roster.
+      emp.fatigueScore = computePeakFatigue(fatigueInput);
     }
   });
 

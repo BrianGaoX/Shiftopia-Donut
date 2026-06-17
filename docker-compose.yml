@@ -61,16 +61,19 @@ services:
       timeout: 10s
       retries: 3
 
-  # Uncomment to run the web-app in Docker too
-  # web-app:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.web
-  #   container_name: superman-web
-  #   ports:
-  #     - '5173:5173'
-  #   environment:
-  #     - VITE_OPTIMIZER_URL=http://optimizer:5005
-  #   depends_on:
-  #     optimizer:
-  #       condition: service_healthy
+  web-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: superman-web
+    ports:
+      - '8080:80'
+    environment:
+      - VITE_OPTIMIZER_URL=http://localhost:5005
+      - VITE_ML_URL=http://localhost:8000
+    depends_on:
+      optimizer:
+        condition: service_healthy
+      ml:
+        condition: service_healthy
+

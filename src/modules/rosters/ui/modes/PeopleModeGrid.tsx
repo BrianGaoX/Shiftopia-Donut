@@ -624,7 +624,7 @@ const EmployeeRowImpl = React.forwardRef<HTMLDivElement, EmployeeRowProps>(({
                   employee.overHoursWarning ? 'text-amber-400' : 'text-muted-foreground'
                 )}>
                   {employee.currentHours.toFixed(1)}h
-                  <span className="text-muted-foreground/50"> / {employee.contractedHours}h</span>
+                  <span className="text-muted-foreground/50"> / {Math.round(employee.periodContractedHours)}h</span>
                 </span>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -780,10 +780,9 @@ const EmployeeRowImpl = React.forwardRef<HTMLDivElement, EmployeeRowProps>(({
                     employee.overHoursWarning ? 'bg-amber-400' : 'bg-primary/60'
                   )}
                   style={{
-                    width: `${Math.min(100, employee.contractedHours > 0
-                      ? (employee.currentHours / employee.contractedHours) * 100
-                      : 0
-                    )}%`,
+                    // Period-aware utilization (same denominator as the "Xh / Yh"
+                    // fraction and the UTL badge) — never the raw weekly contract.
+                    width: `${Math.min(100, employee.utilization)}%`,
                   }}
                 />
               </div>

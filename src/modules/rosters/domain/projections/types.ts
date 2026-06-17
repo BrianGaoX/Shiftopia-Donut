@@ -210,7 +210,12 @@ export interface ProjectedEmployee {
   id:               string;
   name:             string;
   avatar:           string;
+  /** Weekly contracted hours (e.g. 38) — the raw contract rate. */
   contractedHours:  number;
+  /** Contracted hours scaled to the visible period (week, month, …). The
+   *  denominator behind `utilization`, so the displayed "Xh / Yh" fraction and
+   *  the UTL % always agree. */
+  periodContractedHours: number;
   /** Hours scheduled in the current view window */
   currentHours:     number;
   /** true when scheduledHours > contractedHours */
@@ -283,6 +288,8 @@ export interface EmployeeRecord {
   id:           string;
   first_name?:  string | null;
   last_name?:   string | null;
+  /** Weekly contracted hours (e.g. 38). Sourced from the active user contract. */
+  contracted_weekly_hours?: number | null;
 }
 
 export interface EventRecord {

@@ -7755,8 +7755,8 @@ BEGIN
         -- S2: Draft + Assigned (outcome is null or 'pending' in draft)
         WHEN v_shift.lifecycle = 'Draft' AND v_shift.assignment = 'assigned' THEN 'S2'
         
-        -- S3: Published + Offered
-        WHEN v_shift.lifecycle = 'Published' AND v_shift.outcome = 'offered' THEN 'S3'
+        -- S3: Published + Offered (awaiting decision: outcome is NULL or 'offered')
+        WHEN v_shift.lifecycle = 'Published' AND v_shift.assignment = 'assigned' AND (v_shift.outcome IS NULL OR v_shift.outcome = 'offered') THEN 'S3'
         
         -- S4: Published + Confirmed + NoTrade
         WHEN v_shift.lifecycle = 'Published' AND v_shift.outcome = 'confirmed' AND v_shift.trading = 'NoTrade' THEN 'S4'
@@ -7813,13 +7813,13 @@ BEGIN
     WHEN p_lifecycle = 'Draft' AND p_assignment = 'unassigned' 
          AND p_outcome IS NULL AND p_bidding = 'not_on_bidding' AND p_trading = 'NoTrade' 
          THEN 'S1'
-    -- S2: Draft + Assigned + Pending
+    -- S2: Draft + Assigned + Pending (outcome is null or 'pending' in draft)
     WHEN p_lifecycle = 'Draft' AND p_assignment = 'assigned' 
-         AND p_outcome = 'pending' AND p_bidding = 'not_on_bidding' AND p_trading = 'NoTrade' 
+         AND (p_outcome IS NULL OR p_outcome = 'pending') AND p_bidding = 'not_on_bidding' AND p_trading = 'NoTrade' 
          THEN 'S2'
     -- S3: Published + Assigned + Offered
     WHEN p_lifecycle = 'Published' AND p_assignment = 'assigned' 
-         AND p_outcome = 'offered' AND p_bidding = 'not_on_bidding' AND p_trading = 'NoTrade' 
+         AND (p_outcome IS NULL OR p_outcome = 'offered') AND p_bidding = 'not_on_bidding' AND p_trading = 'NoTrade' 
          THEN 'S3'
     -- S4: Published + Assigned + Confirmed
     WHEN p_lifecycle = 'Published' AND p_assignment = 'assigned' 

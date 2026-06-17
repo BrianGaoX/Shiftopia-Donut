@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef, startTransition } from 'react';
-import { useRosterStore } from '../state/useRosterStore';
+import { useRosterStore, selectDateRange } from '../state/useRosterStore';
+import { differenceInCalendarDays } from 'date-fns';
 import { applyAdvancedFilters } from '../domain/projections/utils/filters';
 import { buildStats } from '../domain/projections/projectors/shared';
 import type { 
@@ -26,6 +27,12 @@ import type { ProjectionResult as WorkerResult, ProjectedShiftResult } from '../
 export function useRosterProjections(input: ProjectionInput): ProjectionResult {
   const activeMode = useRosterStore(s => s.activeMode);
   const advancedFilters = useRosterStore(s => s.advancedFilters);
+  // Calendar days in the visible range (Day=1, Week=7, Month=28-31). Selector
+  // returns a primitive, so identical ranges don't churn the worker request.
+  const rangeDays = useRosterStore(s => {
+    const { from, to } = selectDateRange(s);
+    return differenceInCalendarDays(to, from) + 1;
+  });
 
   const {
     shifts = [],
@@ -214,9 +221,10 @@ export function useRosterProjections(input: ProjectionInput): ProjectionResult {
       rosterStructures: rosterStructureDTOs,
       filters: filterDTOs,
       nowIso: nowMinuteRef.current.iso,
+      rangeDays,
     });
 
-  }, [shifts, employees, roles, levels, events, rosterStructures, advancedFilters, activeMode, pool]);
+  }, [shifts, employees, roles, levels, events, rosterStructures, advancedFilters, activeMode, rangeDays, pool]);
 
   // Clean up pool on unmount
   useEffect(() => {

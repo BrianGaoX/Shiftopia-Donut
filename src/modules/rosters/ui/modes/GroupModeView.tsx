@@ -407,6 +407,8 @@ interface GroupModeViewProps {
   dayZoom?: 60;
   selectedV8ShiftIds?: string[];
   onToggleShiftSelection?: (shiftId: string) => void;
+  onSelectShiftIds?: (ids: string[]) => void;
+  onDeselectShiftIds?: (ids: string[]) => void;
   /** Centralized employee-to-shift assignment handler (from RostersPlannerPage) */
   onAssignShift?: (shiftId: string, employeeId: string, employeeName: string) => void;
   /** Phase-3: pre-aggregated server-side summary map for month view */
@@ -730,6 +732,8 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
   projection,
   selectedV8ShiftIds: propsSelectedV8ShiftIds, // Destructure the prop and rename it
   onToggleShiftSelection,
+  onSelectShiftIds,
+  onDeselectShiftIds,
   onAssignShift,
   summaryData,
   onDrillDown,
@@ -754,6 +758,25 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
     () => new Set(selectedV8ShiftIds),
     [selectedV8ShiftIds],
   );
+
+  // Index shifts by key: `${shift_date}::${group_type||'unassigned'}::${sub_group_name||'General'}`
+  const shiftsByBucketKey = React.useMemo(() => {
+    const map = new Map<string, Shift[]>();
+    if (!externalShifts) return map;
+    
+    externalShifts.forEach(shift => {
+      const dateKey = shift.shift_date;
+      const groupKey = shift.group_type || 'unassigned';
+      const subGroupKey = shift.sub_group_name || 'General';
+      const key = `${dateKey}::${groupKey}::${subGroupKey}`;
+      
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(shift);
+    });
+    return map;
+  }, [externalShifts]);
 
   // Collapsible group state (persisted to localStorage)
   const [collapsedGroups, toggleGroupCollapse] = useCollapsedGroups();
@@ -2409,6 +2432,33 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                   const cellIsPast = isSydneyPast(date);
                                   const isGhost = !isDateInTemplate(date);
 
+                                  const bucketKey = `${dateKey}::${group.type}::${subGroup.name}`;
+                                  const bucketShifts = shiftsByBucketKey.get(bucketKey) || [];
+                                  const eligibleIds = bucketShifts
+                                    .filter(s => !isShiftLocked(s.shift_date, s.start_time, 'roster_management'))
+                                    .map(s => s.id);
+                                  const selectableCount = eligibleIds.length;
+                                  
+                                  let cellSelectionState: 'all' | 'some' | 'none' = 'none';
+                                  if (selectableCount > 0) {
+                                    const selectedCount = eligibleIds.filter(id => selectedV8ShiftIdsSet.has(id)).length;
+                                    if (selectedCount === selectableCount) {
+                                      cellSelectionState = 'all';
+                                    } else if (selectedCount > 0) {
+                                      cellSelectionState = 'some';
+                                    }
+                                  }
+
+                                  const handleToggleSelect = () => {
+                                    if (selectableCount === 0) return;
+                                    const selectedCount = eligibleIds.filter(id => selectedV8ShiftIdsSet.has(id)).length;
+                                    if (selectedCount === selectableCount) {
+                                      onDeselectShiftIds?.(eligibleIds);
+                                    } else {
+                                      onSelectShiftIds?.(eligibleIds);
+                                    }
+                                  };
+
                                   return (
                                     <div
                                       role="cell"
@@ -2460,6 +2510,11 @@ export const GroupModeView: React.FC<GroupModeViewProps> = ({
                                                       group.color === 'red' ? 'red' :
                                                         group.color === 'amber' ? 'amber' : 'gray')}
                                                 onClick={() => onDrillDown?.(dateKey, group.type, subGroup.name)}
+                                                isBulkMode={isBulkMode}
+                                                selectionState={cellSelectionState}
+                                                selectableCount={selectableCount}
+                                                onToggleSelect={handleToggleSelect}
+                                                isLoading={isShiftsLoading}
                                               />
                                             </div>
                                           ) : (
