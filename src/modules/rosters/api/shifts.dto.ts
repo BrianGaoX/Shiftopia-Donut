@@ -36,8 +36,6 @@ export interface CreateShiftData {
     /** How the employee was assigned: 'direct' | 'manual' | 'autoscheduler' | 'dnd' */
     assignment_source?: string | null;
     assignment_outcome?: 'confirmed' | 'no_show' | 'emergency_assigned' | 'pending' | null;
-    /** null = normal assignment, manual = forced, auto = assigned when TTS < 4h */
-    emergency_source?: 'manual' | 'auto' | null;
     is_training?: boolean;
     synthesis_run_id?: string | null;
     demand_source?: 'baseline' | 'ml_predicted' | 'derived' | null;

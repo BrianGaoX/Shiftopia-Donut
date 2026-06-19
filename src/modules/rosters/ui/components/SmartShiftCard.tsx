@@ -232,17 +232,14 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
         start_at:           shift.start_at          ?? null,
         end_at:             shift.end_at            ?? null,
         actual_start:       shift.actual_start      ?? null,
-        emergency_source:   (shift as any).emergency_source ?? null,
-    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.start_at, shift.end_at, shift.actual_start, (shift as any).emergency_source]);
+    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.start_at, shift.end_at, shift.actual_start]);
 
     const isBiddingActive = !!(shift.bidding_status && shift.bidding_status !== 'not_on_bidding');
-    const isBiddingClosedNoWinner = shift.bidding_status === 'bidding_closed_no_winner';
     const biddingUrgency = useMemo(() => {
         if (!isBiddingActive) return null;
-        if (isBiddingClosedNoWinner) return 'closed';
-        if (shift.bidding_status === 'on_bidding_urgent' || ctx.urgency === 'urgent' || ctx.urgency === 'emergent') return 'urgent';
+        if (ctx.urgency === 'urgent' || ctx.urgency === 'emergent') return 'urgent';
         return 'standard';
-    }, [shift.bidding_status, ctx.urgency, isBiddingActive, isBiddingClosedNoWinner]);
+    }, [ctx.urgency, isBiddingActive]);
 
     const stateId = ctx.state;
     const fsmLock = getLockState(ctx.state);
@@ -273,15 +270,12 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                 ? 'bg-black text-white dark:bg-black'
                 : 'bg-slate-500 text-white dark:bg-slate-600';
         }
-        if (shift.bidding_status === 'bidding_closed_no_winner') {
-            return 'bg-orange-500/20 text-orange-900 dark:text-orange-100';
-        }
         return cn(
             colors.header,
             colors.text,
             isDraft ? 'bg-opacity-40 backdrop-blur-[2px]' : 'bg-opacity-100'
         );
-    }, [isPast, isDraft, shift.bidding_status, colors.header, colors.text]);
+    }, [isPast, isDraft, colors.header, colors.text]);
 
     return (
         <CardShell
@@ -307,8 +301,7 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                     headerBgAndText)}>
                     <div className="flex items-center gap-1.5 min-w-0">
                         <span className={cn("text-[9px] font-mono font-bold px-1 py-0.5 rounded", isFullyLocked ? "bg-black/20 dark:bg-black/50 opacity-70" : colors.badge)}>
-                            {isBiddingClosedNoWinner ? 'S8'
-                            : ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
+                            {ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
                             : ctx.state === 'S5' && ctx.urgency === 'emergent' ? 'S5*'
                             : stateId}
                         </span>
@@ -326,16 +319,6 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                                 <TooltipContent className="bg-indigo-950 text-indigo-50 border-indigo-800 py-1.5 px-3 text-[11px] max-w-[220px] text-center font-medium shadow-lg" sideOffset={4}>
                                     {shift.notes}
                                 </TooltipContent>
-                            </Tooltip>
-                        )}
-                        {ctx.emergencyLabel && (
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <div className="flex items-center justify-center bg-rose-500/20 rounded p-0.5">
-                                        <Flame className="h-3 w-3 text-rose-500" />
-                                    </div>
-                                </TooltipTrigger>
-                                <TooltipContent className="bg-rose-600 text-white border-none py-1 px-2 text-[10px] font-medium">{ctx.emergencyLabel}</TooltipContent>
                             </Tooltip>
                         )}
 
@@ -404,7 +387,6 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                                     <div className={cn(
                                         "p-1.5 rounded-lg border flex items-center justify-center shadow-sm cursor-help hover:scale-105 transition-all duration-300",
                                         biddingUrgency === 'urgent' && "bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400",
-                                        biddingUrgency === 'closed' && "bg-slate-500/10 border-slate-500/20 text-slate-500 dark:text-slate-400 opacity-60 hover:opacity-100",
                                         biddingUrgency === 'standard' && "bg-blue-500/15 border-blue-500/30 text-blue-600 dark:text-blue-400"
                                     )}>
                                         <Gavel className="h-4.5 w-4.5" />
@@ -412,7 +394,6 @@ const CompactCard: React.FC<SmartShiftCardProps> = ({
                                 </TooltipTrigger>
                                 <TooltipContent className="bg-slate-900 text-white border-none py-1.5 px-3 text-[10px] font-bold">
                                     {biddingUrgency === 'urgent' && 'Urgent Bidding Active'}
-                                    {biddingUrgency === 'closed' && 'Bidding Closed (No Winner)'}
                                     {biddingUrgency === 'standard' && 'Bidding Active'}
                                 </TooltipContent>
                             </Tooltip>
@@ -473,18 +454,15 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
         start_at:           shift.start_at          ?? null,
         end_at:             shift.end_at            ?? null,
         actual_start:       shift.actual_start      ?? null,
-        emergency_source:   (shift as any).emergency_source ?? null,
-    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.start_at, shift.end_at, shift.actual_start, (shift as any).emergency_source]);
+    }), [shift.lifecycle_status, shift.is_cancelled, shift.assignment_status, shift.assignment_outcome, shift.trading_status, shift.scheduled_start, shift.scheduled_end, shift.start_at, shift.end_at, shift.actual_start]);
 
     const isBiddingActive = !!(shift.bidding_status && shift.bidding_status !== 'not_on_bidding');
-    const isBiddingClosedNoWinner = shift.bidding_status === 'bidding_closed_no_winner';
     const biddingUrgency = useMemo(() => {
         if (!isBiddingActive) return null;
-        if (isBiddingClosedNoWinner) return 'closed';
-        if (shift.bidding_status === 'on_bidding_urgent' || ctx.urgency === 'urgent' || ctx.urgency === 'emergent') return 'urgent';
+        if (ctx.urgency === 'urgent' || ctx.urgency === 'emergent') return 'urgent';
         return 'standard';
-    }, [shift.bidding_status, ctx.urgency, isBiddingActive, isBiddingClosedNoWinner]);
-    
+    }, [ctx.urgency, isBiddingActive]);
+
     const fsmLock = getLockState(ctx.state);
     const isFullyLocked = isLocked || fsmLock.fullyLocked;
     
@@ -504,12 +482,7 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
     }, [detailedCost, shift]);
 
     const stateLabel =
-        // Display-only decoration: a closed-no-winner shift is FSM state S5
-        // (Published + unassigned), shown as S8 to distinguish it from active
-        // bidding. The FSM (shift-fsm.ts) and DB still derive S5 — this is a
-        // card-level decoration, like the '*' emergent suffix below.
-        isBiddingClosedNoWinner ? 'S8'
-        : ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
+        ctx.state === 'S3' && ctx.urgency === 'emergent' ? 'S3*'
         : ctx.state === 'S5' && ctx.urgency === 'emergent' ? 'S5*'
         : ctx.state;
 
@@ -519,15 +492,12 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                 ? 'bg-black text-white dark:bg-black'
                 : 'bg-slate-500 text-white dark:bg-slate-600';
         }
-        if (shift.bidding_status === 'bidding_closed_no_winner') {
-            return 'bg-orange-500/20 text-orange-900 dark:text-orange-100';
-        }
         return cn(
             colors.header,
             colors.text,
             isDraft ? 'bg-opacity-40 backdrop-blur-[2px]' : 'bg-opacity-100'
         );
-    }, [isPast, isDraft, shift.bidding_status, colors.header, colors.text]);
+    }, [isPast, isDraft, colors.header, colors.text]);
 
     return (
         <CardShell
@@ -656,7 +626,6 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                                     <div className={cn(
                                         "p-1.5 rounded-lg border flex items-center justify-center shadow-sm cursor-help hover:scale-105 transition-all duration-300",
                                         biddingUrgency === 'urgent' && "bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400",
-                                        biddingUrgency === 'closed' && "bg-slate-500/10 border-slate-500/20 text-slate-500 dark:text-slate-400 opacity-60 hover:opacity-100",
                                         biddingUrgency === 'standard' && "bg-blue-500/15 border-blue-500/30 text-blue-600 dark:text-blue-400"
                                     )}>
                                         <Gavel className="h-4.5 w-4.5" />
@@ -664,7 +633,6 @@ const DetailedCard: React.FC<SmartShiftCardProps> = ({
                                 </TooltipTrigger>
                                 <TooltipContent className="bg-slate-900 text-white border-none py-1.5 px-3 text-[10px] font-bold">
                                     {biddingUrgency === 'urgent' && 'Urgent Bidding Active'}
-                                    {biddingUrgency === 'closed' && 'Bidding Closed (No Winner)'}
                                     {biddingUrgency === 'standard' && 'Bidding Active'}
                                 </TooltipContent>
                             </Tooltip>

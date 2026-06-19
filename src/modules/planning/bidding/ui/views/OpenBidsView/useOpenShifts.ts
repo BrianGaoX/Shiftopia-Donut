@@ -67,7 +67,7 @@ export function useManagerBidShifts(filters: ManagerBidFilters): UseManagerBidSh
         let toggle: BidToggle = 'normal';
         if (s.assigned_employee_id) {
           toggle = 'resolved';
-        } else if (isOnBidding(s.bidding_status) && (computeBiddingUrgency(s.shift_date, s.start_time) === 'urgent' || s.is_urgent)) {
+        } else if (isOnBidding(s.bidding_status) && computeBiddingUrgency(s.shift_date, s.start_time) === 'urgent') {
           toggle = 'urgent';
         } else {
           toggle = 'normal';

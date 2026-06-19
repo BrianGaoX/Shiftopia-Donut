@@ -207,18 +207,14 @@ export const AssignmentStep: React.FC<AssignmentStepProps> = ({
                 {/* Emergency Assign Warning */}
                 {(() => {
                     let isLocked = false;
-                    if (existingShift) {
-                        if (existingShift.bidding_status === 'bidding_closed_no_winner') {
-                            isLocked = true;
-                        } else if (existingShift.shift_date && existingShift.start_time) {
-                            const [h, m] = existingShift.start_time.split(':').map(Number);
-                            const shiftStart = new Date(existingShift.shift_date);
-                            shiftStart.setHours(h, m, 0, 0);
-                            const now = new Date(); // approximate, enough for UI warning
-                            const diffMs = shiftStart.getTime() - now.getTime();
-                            const diffHours = diffMs / (1000 * 60 * 60);
-                            if (diffHours >= 0 && diffHours <= 4) isLocked = true;
-                        }
+                    if (existingShift && existingShift.shift_date && existingShift.start_time) {
+                        const [h, m] = existingShift.start_time.split(':').map(Number);
+                        const shiftStart = new Date(existingShift.shift_date);
+                        shiftStart.setHours(h, m, 0, 0);
+                        const now = new Date(); // approximate, enough for UI warning
+                        const diffMs = shiftStart.getTime() - now.getTime();
+                        const diffHours = diffMs / (1000 * 60 * 60);
+                        if (diffHours >= 0 && diffHours <= 4) isLocked = true;
                     }
                     if (!isLocked) return null;
 
@@ -238,7 +234,7 @@ export const AssignmentStep: React.FC<AssignmentStepProps> = ({
                 })()}
 
                 {/* Bidding Warning */}
-                {existingShift?.is_on_bidding && existingShift?.bidding_status !== 'bidding_closed_no_winner' && (
+                {existingShift?.is_on_bidding && (
                     <div className="mx-4 mt-3 p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30">
                         <div className="flex items-start gap-2">
                             <Gavel className="h-4 w-4 text-indigo-400 flex-shrink-0 mt-0.5" />

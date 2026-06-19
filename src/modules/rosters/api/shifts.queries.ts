@@ -75,7 +75,6 @@ const SHIFT_SELECT = `
   shift_group_id,
   roster_subgroup_id,
   role_id,
-  role_level,
   remuneration_level_id,
   remuneration_rate,
   actual_hourly_rate,
@@ -104,7 +103,6 @@ const SHIFT_SELECT = `
   is_published,
   is_locked,
   bidding_status,
-  bidding_priority_text,
   trade_requested_at,
   trading_status,
   attendance_status,
@@ -1263,7 +1261,7 @@ export const shiftsQueries = {
                 remuneration_levels(level_name, hourly_rate_min)
             `)
                 .eq('organization_id', organizationId)
-                .in('bidding_status', ['on_bidding_normal', 'on_bidding_urgent'])
+                .in('bidding_status', ['on_bidding', 'on_bidding_normal', 'on_bidding_urgent'])
                 .is('deleted_at', null)
                 .eq('is_cancelled', false);
 
@@ -1325,9 +1323,10 @@ export const shiftsQueries = {
 
     /**
      * Get shifts for manager bid management across all three categories:
-     * - Urgent: bidding_status = 'on_bidding_urgent'
-     * - Normal: bidding_status = 'on_bidding_normal'
+     * - Urgent: TTS ≤ 24h (derived client-side via computeShiftUrgency; not enum-driven)
+     * - Normal: TTS > 24h and bidding active (on_bidding / on_bidding_normal / on_bidding_urgent)
      * - Resolved: assigned_employee_id IS NOT NULL (winner assigned)
+     * Active bidding values: 'on_bidding', 'on_bidding_normal', 'on_bidding_urgent'
      */
     async getManagerBidShifts(filters: {
         organizationId: string;
@@ -1344,8 +1343,9 @@ export const shiftsQueries = {
                 return [];
             }
 
-            // Fetch all shifts that have ever been on bidding (normal or urgent)
-            // OR are currently assigned after bidding
+            // Fetch all Published shifts that are active-bidding (on_bidding / on_bidding_normal /
+            // on_bidding_urgent) OR have an assigned winner. Urgency bucketing is derived
+            // client-side via computeShiftUrgency — not from the bidding_status enum value.
             let query = supabase
                 .from('shifts')
                 .select(`

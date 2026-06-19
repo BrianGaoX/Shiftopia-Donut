@@ -3947,7 +3947,6 @@ export type Database = {
           actual_start: string | null
           assigned_at: string | null
           assigned_employee_id: string | null
-          assignment_id: string | null
           assignment_outcome:
             | Database["public"]["Enums"]["shift_assignment_outcome"]
             | null
@@ -3958,13 +3957,10 @@ export type Database = {
           bidding_close_at: string | null
           bidding_enabled: boolean | null
           bidding_open_at: string | null
-          bidding_opened_at: string | null
-          bidding_priority_text: string | null
           bidding_status: Database["public"]["Enums"]["shift_bidding_status"]
           break_minutes: number | null
           cancellation_reason: string | null
           cancelled_at: string | null
-          cancelled_by: string | null
           cancelled_by_user_id: string | null
           compliance_checked_at: string | null
           compliance_override: boolean | null
@@ -3986,12 +3982,10 @@ export type Database = {
           eligibility_snapshot: Json | null
           emergency_assigned_at: string | null
           emergency_assigned_by: string | null
-          emergency_source: string | null
           end_at: string | null
           end_time: string
           event_ids: Json | null
           event_tags: Json | null
-          final_call_sent_at: string | null
           fulfillment_status: Database["public"]["Enums"]["shift_fulfillment_status"]
           group_type: Database["public"]["Enums"]["template_group_type"] | null
           id: string
@@ -4004,7 +3998,6 @@ export type Database = {
           is_published: boolean | null
           is_recurring: boolean | null
           is_training: boolean | null
-          is_urgent: boolean | null
           last_dropped_by: string | null
           last_modified_by: string | null
           last_modified_reason: string | null
@@ -4028,7 +4021,6 @@ export type Database = {
           required_licenses: Json | null
           required_skills: Json | null
           role_id: string | null
-          role_level: number | null
           roster_date: string | null
           roster_id: string
           roster_shift_id: string | null
@@ -4071,7 +4063,6 @@ export type Database = {
           actual_start?: string | null
           assigned_at?: string | null
           assigned_employee_id?: string | null
-          assignment_id?: string | null
           assignment_outcome?:
             | Database["public"]["Enums"]["shift_assignment_outcome"]
             | null
@@ -4082,13 +4073,10 @@ export type Database = {
           bidding_close_at?: string | null
           bidding_enabled?: boolean | null
           bidding_open_at?: string | null
-          bidding_opened_at?: string | null
-          bidding_priority_text?: string | null
           bidding_status?: Database["public"]["Enums"]["shift_bidding_status"]
           break_minutes?: number | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
-          cancelled_by?: string | null
           cancelled_by_user_id?: string | null
           compliance_checked_at?: string | null
           compliance_override?: boolean | null
@@ -4110,12 +4098,10 @@ export type Database = {
           eligibility_snapshot?: Json | null
           emergency_assigned_at?: string | null
           emergency_assigned_by?: string | null
-          emergency_source?: string | null
           end_at?: string | null
           end_time: string
           event_ids?: Json | null
           event_tags?: Json | null
-          final_call_sent_at?: string | null
           fulfillment_status?: Database["public"]["Enums"]["shift_fulfillment_status"]
           group_type?: Database["public"]["Enums"]["template_group_type"] | null
           id?: string
@@ -4128,7 +4114,6 @@ export type Database = {
           is_published?: boolean | null
           is_recurring?: boolean | null
           is_training?: boolean | null
-          is_urgent?: boolean | null
           last_dropped_by?: string | null
           last_modified_by?: string | null
           last_modified_reason?: string | null
@@ -4152,7 +4137,6 @@ export type Database = {
           required_licenses?: Json | null
           required_skills?: Json | null
           role_id?: string | null
-          role_level?: number | null
           roster_date?: string | null
           roster_id: string
           roster_shift_id?: string | null
@@ -4195,7 +4179,6 @@ export type Database = {
           actual_start?: string | null
           assigned_at?: string | null
           assigned_employee_id?: string | null
-          assignment_id?: string | null
           assignment_outcome?:
             | Database["public"]["Enums"]["shift_assignment_outcome"]
             | null
@@ -4206,13 +4189,10 @@ export type Database = {
           bidding_close_at?: string | null
           bidding_enabled?: boolean | null
           bidding_open_at?: string | null
-          bidding_opened_at?: string | null
-          bidding_priority_text?: string | null
           bidding_status?: Database["public"]["Enums"]["shift_bidding_status"]
           break_minutes?: number | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
-          cancelled_by?: string | null
           cancelled_by_user_id?: string | null
           compliance_checked_at?: string | null
           compliance_override?: boolean | null
@@ -4234,12 +4214,10 @@ export type Database = {
           eligibility_snapshot?: Json | null
           emergency_assigned_at?: string | null
           emergency_assigned_by?: string | null
-          emergency_source?: string | null
           end_at?: string | null
           end_time?: string
           event_ids?: Json | null
           event_tags?: Json | null
-          final_call_sent_at?: string | null
           fulfillment_status?: Database["public"]["Enums"]["shift_fulfillment_status"]
           group_type?: Database["public"]["Enums"]["template_group_type"] | null
           id?: string
@@ -4252,7 +4230,6 @@ export type Database = {
           is_published?: boolean | null
           is_recurring?: boolean | null
           is_training?: boolean | null
-          is_urgent?: boolean | null
           last_dropped_by?: string | null
           last_modified_by?: string | null
           last_modified_reason?: string | null
@@ -4276,7 +4253,6 @@ export type Database = {
           required_licenses?: Json | null
           required_skills?: Json | null
           role_id?: string | null
-          role_level?: number | null
           roster_date?: string | null
           roster_id?: string
           roster_shift_id?: string | null
@@ -6068,7 +6044,6 @@ export type Database = {
           actual_start: string | null
           assigned_at: string | null
           assigned_employee_id: string | null
-          assignment_id: string | null
           assignment_outcome:
             | Database["public"]["Enums"]["shift_assignment_outcome"]
             | null
@@ -6081,15 +6056,12 @@ export type Database = {
           bidding_close_at: string | null
           bidding_enabled: boolean | null
           bidding_open_at: string | null
-          bidding_opened_at: string | null
-          bidding_priority_text: string | null
           bidding_status:
             | Database["public"]["Enums"]["shift_bidding_status"]
             | null
           break_minutes: number | null
           cancellation_reason: string | null
           cancelled_at: string | null
-          cancelled_by: string | null
           cancelled_by_user_id: string | null
           compliance_checked_at: string | null
           compliance_override: boolean | null
@@ -6121,7 +6093,6 @@ export type Database = {
           is_overnight: boolean | null
           is_published: boolean | null
           is_recurring: boolean | null
-          is_urgent: boolean | null
           last_modified_by: string | null
           last_modified_reason: string | null
           lifecycle_status:
@@ -6143,7 +6114,6 @@ export type Database = {
           required_licenses: Json | null
           required_skills: Json | null
           role_id: string | null
-          role_level: number | null
           roster_date: string | null
           roster_id: string | null
           roster_shift_id: string | null
@@ -6182,7 +6152,6 @@ export type Database = {
           actual_start?: string | null
           assigned_at?: string | null
           assigned_employee_id?: string | null
-          assignment_id?: string | null
           assignment_outcome?:
             | Database["public"]["Enums"]["shift_assignment_outcome"]
             | null
@@ -6195,15 +6164,12 @@ export type Database = {
           bidding_close_at?: string | null
           bidding_enabled?: boolean | null
           bidding_open_at?: string | null
-          bidding_opened_at?: string | null
-          bidding_priority_text?: string | null
           bidding_status?:
             | Database["public"]["Enums"]["shift_bidding_status"]
             | null
           break_minutes?: number | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
-          cancelled_by?: string | null
           cancelled_by_user_id?: string | null
           compliance_checked_at?: string | null
           compliance_override?: boolean | null
@@ -6235,7 +6201,6 @@ export type Database = {
           is_overnight?: boolean | null
           is_published?: boolean | null
           is_recurring?: boolean | null
-          is_urgent?: boolean | null
           last_modified_by?: string | null
           last_modified_reason?: string | null
           lifecycle_status?:
@@ -6257,7 +6222,6 @@ export type Database = {
           required_licenses?: Json | null
           required_skills?: Json | null
           role_id?: string | null
-          role_level?: number | null
           roster_date?: string | null
           roster_id?: string | null
           roster_shift_id?: string | null
@@ -6296,7 +6260,6 @@ export type Database = {
           actual_start?: string | null
           assigned_at?: string | null
           assigned_employee_id?: string | null
-          assignment_id?: string | null
           assignment_outcome?:
             | Database["public"]["Enums"]["shift_assignment_outcome"]
             | null
@@ -6309,15 +6272,12 @@ export type Database = {
           bidding_close_at?: string | null
           bidding_enabled?: boolean | null
           bidding_open_at?: string | null
-          bidding_opened_at?: string | null
-          bidding_priority_text?: string | null
           bidding_status?:
             | Database["public"]["Enums"]["shift_bidding_status"]
             | null
           break_minutes?: number | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
-          cancelled_by?: string | null
           cancelled_by_user_id?: string | null
           compliance_checked_at?: string | null
           compliance_override?: boolean | null
@@ -6349,7 +6309,6 @@ export type Database = {
           is_overnight?: boolean | null
           is_published?: boolean | null
           is_recurring?: boolean | null
-          is_urgent?: boolean | null
           last_modified_by?: string | null
           last_modified_reason?: string | null
           lifecycle_status?:
@@ -6371,7 +6330,6 @@ export type Database = {
           required_licenses?: Json | null
           required_skills?: Json | null
           role_id?: string | null
-          role_level?: number | null
           roster_date?: string | null
           roster_id?: string | null
           roster_shift_id?: string | null
@@ -6877,16 +6835,14 @@ export type Database = {
         Args: { p_roster_shift_id: string }
         Returns: boolean
       }
-      cancel_shift:
-        | {
-            Args: {
-              p_cancelled_by?: string
-              p_reason?: string
-              p_shift_id: string
-            }
-            Returns: Json
-          }
-        | { Args: { p_reason: string; p_shift_id: string }; Returns: Json }
+      cancel_shift: {
+        Args: {
+          p_cancelled_by?: string
+          p_reason?: string
+          p_shift_id: string
+        }
+        Returns: Json
+      }
       cancel_shift_v2:
         | { Args: { p_reason: string; p_shift_id: string }; Returns: Json }
         | {
@@ -7855,14 +7811,6 @@ export type Database = {
         Returns: Json
       }
       set_batch_id: { Args: { batch_id: string }; Returns: undefined }
-      set_emergency_source: {
-        Args: {
-          p_action: string
-          p_current: string
-          p_time_to_start_sec: number
-        }
-        Returns: string
-      }
       set_roster_day_status: {
         Args: {
           p_roster_day_id: string
@@ -7987,25 +7935,15 @@ export type Database = {
         Args: { p_reason?: string; p_shift_id: string; p_user_id?: string }
         Returns: Json
       }
-      sm_emergency_assign:
-        | {
-            Args: {
-              p_employee_id: string
-              p_reason?: string
-              p_shift_id: string
-              p_user_id?: string
-            }
-            Returns: Json
-          }
-        | {
-            Args: {
-              p_employee_id: string
-              p_reason?: string
-              p_shift_id: string
-              p_user_id?: string
-            }
-            Returns: Json
-          }
+      sm_emergency_assign: {
+        Args: {
+          p_employee_id: string
+          p_reason?: string
+          p_shift_id: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       sm_employee_cancel:
         | { Args: { p_employee_id: string; p_shift_id: string }; Returns: Json }
         | {

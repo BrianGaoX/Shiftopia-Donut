@@ -1,0 +1,26 @@
+-- ============================================================================
+-- DROP the redundant sm_emergency_assign(uuid,uuid,uuid,text) overload
+-- ============================================================================
+-- Two overloads existed with IDENTICAL PostgREST argument-NAME sets
+-- {p_shift_id, p_employee_id, p_user_id, p_reason}:
+--   /a  sm_emergency_assign(uuid, uuid, uuid, text)  -> (p_shift_id,p_employee_id,p_user_id,p_reason)
+--   /b  sm_emergency_assign(uuid, uuid, text, uuid)  -> (p_shift_id,p_employee_id,p_reason,p_user_id)
+-- PostgREST resolves RPC overloads by the SET of argument names in the request
+-- body, so it cannot distinguish these two -> sm_emergency_assign was effectively
+-- uncallable over the API (300 Multiple Choices / 404). The 2-arg PL/pgSQL call in
+-- test_all_transitions() was ambiguous for the same reason.
+--
+-- Keep /b, drop /a:
+--   * sm_bulk_emergency_assign() already calls /b POSITIONALLY: (uuid,uuid,text,uuid).
+--   * The client (assignShift.command.ts) wants /b's semantics
+--     (fulfillment_status='scheduled', gate via slim get_shift_fsm_state S4/S5).
+--   * /a's extra reach (S8/S15 + S15 "revival": is_published=TRUE/is_cancelled=FALSE,
+--     fulfillment='fulfilled') had NO caller — the only client caller hits Published
+--     shifts (S4/S5) and sm_bulk_emergency_assign uses /b.
+--
+-- After this, sm_emergency_assign is a single function: callers with 2 args
+-- (test_all_transitions) or named {p_shift_id,p_employee_id,p_user_id,p_reason}
+-- (client, after dropping the bogus p_source) resolve unambiguously.
+-- ============================================================================
+
+DROP FUNCTION IF EXISTS public.sm_emergency_assign(uuid, uuid, uuid, text);

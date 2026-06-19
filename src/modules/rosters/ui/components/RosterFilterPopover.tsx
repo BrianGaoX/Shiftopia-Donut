@@ -149,7 +149,6 @@ export const RosterFilterPopover: React.FC = () => {
                                     <SelectItem value="pending">Pending</SelectItem>
                                     <SelectItem value="offered">Offered</SelectItem>
                                     <SelectItem value="confirmed">Confirmed</SelectItem>
-                                    <SelectItem value="emergency_assigned">Emergency</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -168,7 +167,6 @@ export const RosterFilterPopover: React.FC = () => {
                                     <SelectItem value="all">All</SelectItem>
                                     <SelectItem value="not_on_bidding">Not on Bidding</SelectItem>
                                     <SelectItem value="on_bidding">On Bidding</SelectItem>
-                                    <SelectItem value="bidding_closed_no_winner">Closed (No Winner)</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>

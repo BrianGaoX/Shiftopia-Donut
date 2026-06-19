@@ -252,7 +252,6 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
                 if (o === 'pending') return <Clock className="w-4 h-4 text-yellow-500" />;
                 if (o === 'offered') return <MailOpen className="w-4 h-4 text-blue-500" />;
                 if (o === 'confirmed') return <BadgeCheck className="w-4 h-4 text-green-600" />;
-                if (o === 'emergency_assigned') return <Zap className="w-4 h-4 text-red-500" />;
                 return <Circle className="w-4 h-4 text-gray-300" />;
               })()}
               <span className={cn("text-[9px] font-bold capitalize truncate w-full text-center", 'text-muted-foreground')}>
@@ -263,7 +262,6 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
                     if (o === 'pending') return 'Pending';
                     if (o === 'offered') return 'Offered';
                     if (o === 'confirmed') return 'Confirmed';
-                    if (o === 'emergency_assigned') return 'EmergencyAssigned';
                   }
                   return 'null';
                 })()}
@@ -275,12 +273,10 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
               {(() => {
                 const b = rawShift.bidding_status;
                 const isActiveBidding = b === 'on_bidding' || b === 'on_bidding_normal' || b === 'on_bidding_urgent';
-                if (!isActiveBidding && b !== 'bidding_closed_no_winner') return <Ban className="w-4 h-4 text-gray-400" />;
-                if (b === 'bidding_closed_no_winner') return <Ban className="w-4 h-4 text-gray-600" />;
+                if (!isActiveBidding) return <Ban className="w-4 h-4 text-gray-400" />;
                 const urg = computeShiftUrgency(rawShift.shift_date, rawShift.start_time);
                 // An actively on-bidding shift (S5) is on bidding — emergent just
                 // means the start is imminent/passed, not that bidding expired.
-                // "Expired" is `bidding_closed_no_winner` only (handled above).
                 if (urg === 'emergent') return <Flame className="w-4 h-4 text-rose-500 animate-[pulse_0.8s_ease-in-out_infinite]" />;
                 if (urg === 'urgent')   return <Flame className="w-4 h-4 text-orange-500 animate-pulse" />;
                 return <Gavel className="w-4 h-4 text-blue-500" />;
@@ -294,8 +290,7 @@ export const ShiftCardCompact: React.FC<ShiftCardCompactProps> = ({
                 {(() => {
                   const b = rawShift.bidding_status;
                   const isActiveBidding = b === 'on_bidding' || b === 'on_bidding_normal' || b === 'on_bidding_urgent';
-                  if (!isActiveBidding && b !== 'bidding_closed_no_winner') return 'NotOnBidding';
-                  if (b === 'bidding_closed_no_winner') return 'ClosedNoWinner';
+                  if (!isActiveBidding) return 'NotOnBidding';
                   const urg = computeShiftUrgency(rawShift.shift_date, rawShift.start_time);
                   if (urg === 'emergent') return 'Emergent';
                   if (urg === 'urgent')   return 'Urgent';

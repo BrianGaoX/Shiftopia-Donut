@@ -2,16 +2,14 @@
  * Shift UI Context
  *
  * Pure logic layer — derives all display-relevant context from a shift's
- * FSM state + emergency_source + time-to-start.
+ * FSM state + time-to-start.
  *
  * Rules:
  *  - State  → from getShiftFSMState() (canonical, never re-derived here)
  *  - Urgency → runtime TTS calculation (visual only, never affects actions)
- *  - Emergency label → from emergency_source column (historical, write-once)
+ *  - Emergency label → runtime TTS calculation (TTS < 4h); there is no persisted
+ *    emergency_source/is_urgent column — urgency & emergency are pure time facts.
  *  - Actions → from FSM state + Emergent policy (S1 restricted if TTS < 4h)
- *
- * IMPORTANT: Do NOT write emergency_source from UI.
- * Only backend assignment APIs (set_emergency_source) may write it.
  */
 
 import {
@@ -19,7 +17,6 @@ import {
     FSM_STATE_META,
     type ShiftStateID,
     type ShiftFSMInput,
-    type EmergencySource,
 } from './shift-fsm';
 import { type ShiftUrgency } from './bidding-urgency';
 import { 
@@ -61,8 +58,6 @@ export interface ShiftUIContextInput extends ShiftFSMInput {
     end_at?: string | Date | null | undefined;
     /** Actual clock-in time — used to detect "Late" (past start, not clocked in) */
     actual_start?: string | null | undefined;
-    /** Written by backend assignment APIs — never set from UI */
-    emergency_source: EmergencySource;
 }
 
 export interface ShiftUIContext {
@@ -73,8 +68,6 @@ export interface ShiftUIContext {
     isUrgent: boolean;
     /** TTS < 4h — visual indicator only */
     isEmergency: boolean;
-    /** Display label derived from emergency_source; null if not an emergency assignment */
-    emergencyLabel: string | null;
     /** TTS-based urgency — visual only, never gates actions */
     urgency: ShiftUrgency;
     /** Priority-ordered ring color for card borders/glows across all views */
@@ -142,11 +135,6 @@ export function getShiftUIContext(shift: ShiftUIContextInput): ShiftUIContext {
     const isUrgent    = ttsSec < 24 * 60 * 60;
     const isEmergency = ttsSec < 4  * 60 * 60;
 
-    const emergencyLabel: string | null =
-        shift.emergency_source === 'manual' ? 'Emergency'
-        : shift.emergency_source === 'auto'  ? 'Auto Emergency'
-        : null;
-
     const urgency: ShiftUrgency =
         ttsSec === 0         ? 'emergent'
         : ttsSec < 4  * 3600 ? 'emergent'
@@ -182,16 +170,13 @@ export function getShiftUIContext(shift: ShiftUIContextInput): ShiftUIContext {
         return 'blue';
     })();
 
-    return { state, ttsSec, isUrgent, isEmergency, emergencyLabel, urgency, ringColor };
+    return { state, ttsSec, isUrgent, isEmergency, urgency, ringColor };
 }
 
 /**
  * Build ordered badge list for a shift card.
  *
- * Order: State → Trade → Emergency (historical) → Urgency (runtime) → Terminal
- *
- * Guardrail: if emergencyLabel is present, Urgent badge is suppressed
- * (historical context takes precedence over runtime TTS indicator).
+ * Order: State → Trade → Urgency (runtime TTS) → Terminal
  */
 export function getBadges(ctx: ShiftUIContext): ShiftBadge[] {
     const badges: ShiftBadge[] = [];
@@ -204,14 +189,9 @@ export function getBadges(ctx: ShiftUIContext): ShiftBadge[] {
     if (ctx.state === 'S9')  badges.push({ label: 'Trade Requested', tone: 'warning' });
     if (ctx.state === 'S10') badges.push({ label: 'Trade Accepted',  tone: 'warning' });
 
-    // Emergency (historical — write-once field from DB)
-    if (ctx.emergencyLabel) {
-        badges.push({ label: ctx.emergencyLabel, tone: 'danger' });
-    }
-
-    // Urgency (runtime TTS — suppressed if emergency badge shown or in terminal state)
+    // Urgency (runtime TTS — suppressed in terminal states)
     const terminalStates = ['S13', 'S15'];
-    if (!ctx.emergencyLabel && !terminalStates.includes(ctx.state)) {
+    if (!terminalStates.includes(ctx.state)) {
         if (ctx.urgency === 'emergent') {
             badges.push({ label: 'Emergent', tone: 'danger' });
         } else if (ctx.urgency === 'urgent') {

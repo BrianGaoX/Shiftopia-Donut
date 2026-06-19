@@ -1,7 +1,6 @@
 import { supabase } from '@/platform/supabase/client';
 import { Shift } from '@/modules/rosters';
 import { Bid, BidStatus } from '../model/bid.types';
-import { computeBiddingUrgency } from '@/modules/rosters/domain/bidding-urgency';
 
 // --- Helper Functions ---
 const mapDbStatusToBidStatus = (dbStatus: string): BidStatus => {
@@ -108,10 +107,9 @@ export const biddingApi = {
             throw queryError;
         }
 
-        return (queryData || []).map((row: any) => ({
-            ...row,
-            is_urgent: computeBiddingUrgency(row.shift_date, row.start_time) === 'urgent'
-        })) as unknown as Shift[];
+        // Urgency is derived from time-to-start at read time by consumers
+        // (computeShiftUrgency); no persisted is_urgent column.
+        return (queryData || []) as unknown as Shift[];
     },
 
     /**
@@ -286,7 +284,6 @@ export const biddingApi = {
             //   - FOR UPDATE locking to prevent race conditions (RC5)
             //   - bid status updates (accept winner, reject others)
             //   - shift FSM transition (S5 → S4) with correct field values
-            //   - emergency_source write-once logic
             //   - operational log entry
             const { data: rpcResult, error: rpcError } = await (supabase as any)
                 .rpc('sm_select_bid_winner', {

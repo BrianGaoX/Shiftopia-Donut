@@ -61,7 +61,6 @@ export interface Shift {
     shift_group_id: string | null;
     shift_subgroup_id: string | null;
     role_id: string | null;
-    role_level: number | null;
     remuneration_level_id: string | null;
     remuneration_rate: number | null;
     actual_hourly_rate: number | null;
@@ -86,14 +85,12 @@ export interface Shift {
     tz_identifier?: string | null;
 
     assigned_employee_id: string | null;
-    assignment_id: string | null;
 
     assigned_at: string | null;
 
     lifecycle_status: 'Draft' | 'Published' | 'InProgress' | 'Completed' | 'Cancelled';
     assignment_status?: AssignmentStatusText; // Made optional as sometimes missing from simple queries
     assignment_outcome?: 'confirmed' | 'no_show' | 'emergency_assigned' | 'pending' | null;
-    emergency_source?: 'manual' | 'auto' | null;
     fulfillment_status: 'scheduled' | 'bidding' | 'offered' | 'none';
     is_draft: boolean;
     is_cancelled: boolean;
@@ -104,7 +101,6 @@ export interface Shift {
 
     offer_expires_at?: string | null; // Made optional as not in all views
     bidding_status: 'not_on_bidding' | 'on_bidding' | 'on_bidding_normal' | 'on_bidding_urgent' | 'bidding_closed_no_winner';
-    bidding_priority_text: string;
 
     trade_requested_at: string | null;
     is_trade_requested?: boolean;

@@ -3,7 +3,6 @@
  *
  * Unit tests for:
  *   - getShiftFSMState      (all 10 valid states + edge cases)
- *   - resolveEmergencySource
  *   - getLockState
  *   - getAvailableActions
  *   - getBadges
@@ -15,7 +14,6 @@ import { describe, it, expect } from 'vitest';
 
 import {
     getShiftFSMState,
-    resolveEmergencySource,
     FSM_STATE_META,
     type ShiftFSMInput,
     type ShiftStateID,
@@ -186,42 +184,7 @@ describe('getShiftFSMState — edge cases', () => {
     });
 });
 
-// ─── 3. resolveEmergencySource ────────────────────────────────────────────────
-
-describe('resolveEmergencySource', () => {
-
-    const FOUR_HOURS_SEC = 4 * 60 * 60;
-
-    it('current != null → returns current unchanged (write-once, manual)', () => {
-        expect(resolveEmergencySource('NORMAL_ASSIGN', 0, 'manual')).toBe('manual');
-    });
-
-    it('current != null → returns current unchanged (write-once, auto)', () => {
-        expect(resolveEmergencySource('EMERGENCY_ASSIGN', 0, 'auto')).toBe('auto');
-    });
-
-    it('EMERGENCY_ASSIGN + current=null → "manual"', () => {
-        expect(resolveEmergencySource('EMERGENCY_ASSIGN', FOUR_HOURS_SEC + 1, null)).toBe('manual');
-    });
-
-    it('NORMAL_ASSIGN + TTS < 4h → "auto"', () => {
-        expect(resolveEmergencySource('NORMAL_ASSIGN', FOUR_HOURS_SEC - 1, null)).toBe('auto');
-    });
-
-    it('NORMAL_ASSIGN + TTS exactly at boundary (14399s < 14400) → "auto"', () => {
-        expect(resolveEmergencySource('NORMAL_ASSIGN', FOUR_HOURS_SEC - 1, null)).toBe('auto');
-    });
-
-    it('NORMAL_ASSIGN + TTS >= 4h → null', () => {
-        expect(resolveEmergencySource('NORMAL_ASSIGN', FOUR_HOURS_SEC, null)).toBeNull();
-    });
-
-    it('NORMAL_ASSIGN + TTS well above 4h → null', () => {
-        expect(resolveEmergencySource('NORMAL_ASSIGN', FOUR_HOURS_SEC * 10, null)).toBeNull();
-    });
-});
-
-// ─── 4. getLockState ─────────────────────────────────────────────────────────
+// ─── 3. getLockState ─────────────────────────────────────────────────────────
 
 describe('getLockState', () => {
 
@@ -331,7 +294,6 @@ function ctx(overrides: Partial<ShiftUIContext> & { state: ShiftStateID }): Shif
         ttsSec:         0,
         isUrgent:       false,
         isEmergency:    false,
-        emergencyLabel: null,
         urgency:        'normal',
         ringColor:      'none',
         ...overrides,
@@ -340,19 +302,16 @@ function ctx(overrides: Partial<ShiftUIContext> & { state: ShiftStateID }): Shif
 
 describe('getBadges', () => {
 
-    it('S5 + urgency=urgent + no emergencyLabel → includes badge with label "Urgent"', () => {
-        const badges = getBadges(ctx({ state: 'S5', isUrgent: true, urgency: 'urgent', emergencyLabel: null }));
+    it('S5 + urgency=urgent → includes badge with label "Urgent"', () => {
+        const badges = getBadges(ctx({ state: 'S5', isUrgent: true, urgency: 'urgent' }));
         const labels = badges.map(b => b.label);
         expect(labels).toContain('Urgent');
     });
 
-    it('S4 + emergencyLabel="Emergency" → includes danger badge, NO "Urgent" badge', () => {
-        const badges = getBadges(ctx({ state: 'S4', isUrgent: true, emergencyLabel: 'Emergency' }));
-        const dangerBadge = badges.find(b => b.label === 'Emergency');
-        expect(dangerBadge).toBeDefined();
-        expect(dangerBadge!.tone).toBe('danger');
+    it('S4 + urgency=urgent → includes "Urgent" badge (urgency is pure TTS, no emergency suppression)', () => {
+        const badges = getBadges(ctx({ state: 'S4', isUrgent: true, urgency: 'urgent' }));
         const labels = badges.map(b => b.label);
-        expect(labels).not.toContain('Urgent');
+        expect(labels).toContain('Urgent');
     });
 
     it('S9 → includes "Trade Requested" badge', () => {
@@ -396,11 +355,10 @@ describe('getBadges', () => {
         expect(labels).not.toContain('Urgent');
     });
 
-    it('S5 + isUrgent=true + emergencyLabel set → suppresses "Urgent" badge', () => {
-        const badges = getBadges(ctx({ state: 'S5', isUrgent: true, emergencyLabel: 'Auto Emergency' }));
+    it('S5 + urgency=emergent → includes "Emergent" badge', () => {
+        const badges = getBadges(ctx({ state: 'S5', urgency: 'emergent' }));
         const labels = badges.map(b => b.label);
-        expect(labels).not.toContain('Urgent');
-        expect(labels).toContain('Auto Emergency');
+        expect(labels).toContain('Emergent');
     });
 
     it('state badge tone is always "info"', () => {

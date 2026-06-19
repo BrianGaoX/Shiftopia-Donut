@@ -1,5 +1,6 @@
 // src/modules/rosters/model/roster.types.ts
 import { Employee, Shift } from '@/modules/core/types';
+import { computeShiftUrgency, isOnBidding } from '@/modules/rosters/domain/bidding-urgency';
 
 // ============================================================
 // ENUMS
@@ -217,7 +218,6 @@ export interface RosterShiftWithLiveState {
     is_live: boolean;
     is_on_bidding: boolean;
     bidding_open_at: string | null;
-    is_urgent: boolean;
     confirmed_at: string | null;
     trade_requested_at: string | null;
     state_id: string | null; // S1-S15
@@ -481,7 +481,7 @@ export function dbRosterDayToFrontend(db: any): RosterDay {
                     notes: sh.notes,
                     sortOrder: sh.sortOrder,
                     isManual: sh.isManual || false,
-                    isUrgent: sh.isUrgent || sh.is_urgent || false,
+                    isUrgent: sh.isUrgent || false,
                     assignmentOutcome: sh.assignment_outcome || sh.assignmentOutcome,
                     assignment: sh.assignment
                         ? {
@@ -715,7 +715,8 @@ export function flatRosterShiftsToRosterDay(
             biddingStatus: item.bidding_status,
             isLive: item.is_live,
             isOnBidding: item.is_on_bidding,
-            isUrgent: item.is_urgent,
+            // Urgency is derived from time-to-start at read time (no persisted is_urgent column)
+            isUrgent: isOnBidding(item.bidding_status) && computeShiftUrgency(item.shift_start_date, item.start_time) === 'urgent',
             stateId: item.state_id,
 
             assignment: item.assigned_employee_id

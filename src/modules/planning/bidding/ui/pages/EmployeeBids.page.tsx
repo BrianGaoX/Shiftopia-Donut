@@ -255,7 +255,7 @@ export const EmployeeBidsPage: React.FC = () => {
             const netLength = durationMin - unpaidBreak;
 
             const timeToStartHours = (shiftStartAt.getTime() - new Date().getTime()) / (1000 * 60 * 60);
-            const isUrgent = (s as any).bidding_status === 'on_bidding_urgent' || (s as any).is_urgent || (timeToStartHours > 0 && timeToStartHours < 24);
+            const isUrgent = timeToStartHours > 0 && timeToStartHours < 24;
 
             return {
                 id: s.id,

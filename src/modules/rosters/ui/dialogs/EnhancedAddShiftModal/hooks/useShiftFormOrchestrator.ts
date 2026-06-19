@@ -256,11 +256,10 @@ export function useShiftFormOrchestrator({
     const isReadOnly = (editMode && (isPast || isStarted)) || isPublished;
 
     // ── Emergency assignment detection ───────────────────────────────────────
-    // True when TTS ≤ 4h OR bidding closed without winner — assigning in this
-    // state bypasses standard bidding and writes 'emergency_assigned' as outcome.
+    // True when TTS ≤ 4h — assigning in this state bypasses standard bidding and
+    // writes 'emergency_assigned' as outcome.
     const isEmergencyAssignment = useMemo(() => {
         if (!editMode || !existingShift) return false;
-        if (existingShift.bidding_status === 'bidding_closed_no_winner') return true;
         if (watchShiftDate && watchStart) {
             const shiftDateStr = format(watchShiftDate, 'yyyy-MM-dd');
             const urgency = computeShiftUrgency(shiftDateStr, watchStart, existingShift.start_at ?? undefined);
@@ -270,7 +269,7 @@ export function useShiftFormOrchestrator({
     }, [editMode, existingShift, watchShiftDate, watchStart]);
 
     // ── Unpublish eligibility (state-machine.md §8.1) ───────────────────────
-    // Unpublish is allowed from: S3 (Offered), S5/S6 (OnBidding), S8 (BiddingClosedNoWinner)
+    // Unpublish is allowed from: S3 (Offered), S5/S6 (OnBidding)
     // Blocked for: S4 (Confirmed), S7 (EmergencyAssigned), InProgress, Completed, Cancelled
     const canUnpublish = useMemo(() => {
         if (!editMode || !existingShift || isTemplateMode || isPast || isStarted) return false;
@@ -286,8 +285,6 @@ export function useShiftFormOrchestrator({
         if (outcome === 'offered') return true;
         // S5/S6: OnBidding — allowed
         if (bidding === 'on_bidding_normal' || bidding === 'on_bidding_urgent' || bidding === 'on_bidding') return true;
-        // S8: BiddingClosedNoWinner — allowed
-        if (bidding === 'bidding_closed_no_winner') return true;
         return false;
     }, [editMode, existingShift, isTemplateMode, isPast, isStarted]);
 
@@ -882,11 +879,10 @@ export function useShiftFormOrchestrator({
                     assignment_source: values.assigned_employee_id
                         ? (editMode ? 'manual' : 'direct')
                         : null,
-                    // Emergency assignment — set when manager assigns within the 4H lockout
-                    // or after bidding closed with no winner (bypasses standard bidding flow)
-                    assignment_outcome: (values.assigned_employee_id
-                        ? (isEmergencyAssignment ? 'emergency_assigned' : 'pending')
-                        : null) as 'emergency_assigned' | 'pending' | null,
+                    // Assigned-on-create → 'pending' (becomes an offer on publish).
+                    // Emergency is no longer a distinct outcome; urgency/emergency is
+                    // derived from time-to-start at read time.
+                    assignment_outcome: (values.assigned_employee_id ? 'pending' : null) as 'pending' | null,
                     is_training: values.is_training ?? false,
                 };
 

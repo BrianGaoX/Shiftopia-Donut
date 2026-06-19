@@ -63,10 +63,11 @@ describe('Auditor', () => {
             elapsed_ms: 1.2,
             rows: [{
                 shift_id: 's1',
-                rejection_summary: { LEVEL_TOO_LOW: 1 },
+                // ROLE_MISMATCH is the live reason code (LEVEL_TOO_LOW was retired server-side)
+                rejection_summary: { ROLE_MISMATCH: 1 },
                 employees: [{
                     employee_id: 'e1', status: 'FAIL',
-                    rejection_reasons: ['LEVEL_TOO_LOW'],
+                    rejection_reasons: ['ROLE_MISMATCH'],
                 }],
             }],
         }));
@@ -82,10 +83,10 @@ describe('Auditor', () => {
         });
 
         expect(result).toHaveLength(1);
-        expect(result[0].rejectionSummary).toEqual({ LEVEL_TOO_LOW: 1 });
+        expect(result[0].rejectionSummary).toEqual({ ROLE_MISMATCH: 1 });
         expect(result[0].employeeDetails[0].status).toBe('FAIL');
         // Reason code → human-readable description mapping
-        expect(result[0].employeeDetails[0].violations[0].description).toContain('skill level is below');
+        expect(result[0].employeeDetails[0].violations[0].description).toContain('role does not match');
     });
 
     it('flags CAPACITY_CONFLICT when employee is on an overlapping passing proposal', async () => {

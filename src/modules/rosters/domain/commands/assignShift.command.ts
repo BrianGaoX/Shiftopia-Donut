@@ -400,8 +400,8 @@ export async function executeAssignShift(
                 .rpc('sm_emergency_assign', {
                     p_shift_id:    shiftId,
                     p_employee_id: employeeId,
+                    p_reason:      context === 'AUTO' ? 'Auto-scheduled direct assignment' : 'Manual direct assignment',
                     p_user_id:     userId ?? null,
-                    p_source:      context === 'AUTO' ? 'auto' : 'manual',
                 });
             if (rpcError) return { success: false, error: rpcError.message };
             if (rpcResult && rpcResult.success === false) return { success: false, error: rpcResult.error };

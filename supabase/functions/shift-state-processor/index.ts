@@ -65,9 +65,8 @@ Deno.serve(async (req: Request) => {
       ttsMap.set(s.id, start ? start.getTime() - now.getTime() : Infinity);
     }
 
-    const FOUR_H_MS    = 4  * 60 * 60 * 1000;
-    const FIVE_H_MS    = 5  * 60 * 60 * 1000;
-    const TWENTY4_H_MS = 24 * 60 * 60 * 1000;
+    const FOUR_H_MS = 4 * 60 * 60 * 1000;
+    const FIVE_H_MS = 5 * 60 * 60 * 1000;
 
     // ── Pass 0: Final Call (TTS in (4h, 5h]) ────────────────────────────────────
     const finalCallIds = allShifts
@@ -86,32 +85,6 @@ Deno.serve(async (req: Request) => {
         logs.push(`[WARN] Final call update error: ${error.message}`);
       } else {
         logs.push(`[INFO] Sent final call for ${finalCallIds.length} shift(s) (5h mark)`);
-      }
-    }
-
-    // ── Pass 1: Urgency escalation (TTS ≤ 24h, still > 4h) ─────────────────────
-    const urgentIds = allShifts
-      .filter(s => {
-        const tts = ttsMap.get(s.id)!;
-        return (
-          ['on_bidding_normal', 'on_bidding'].includes(s.bidding_status) &&
-          tts > FOUR_H_MS &&
-          tts <= TWENTY4_H_MS
-        );
-      })
-      .map(s => s.id);
-
-    if (urgentIds.length > 0) {
-      const { data: escalated, error } = await supabase
-        .from('shifts')
-        .update({ bidding_status: 'on_bidding_urgent', updated_at: now.toISOString() })
-        .in('id', urgentIds)
-        .select('id');
-      if (error) {
-        logs.push(`[WARN] Urgency escalation error: ${error.message}`);
-      } else {
-        const count = escalated?.length ?? 0;
-        if (count > 0) logs.push(`[INFO] Escalated ${count} shift(s) to on_bidding_urgent`);
       }
     }
 
@@ -217,7 +190,6 @@ Deno.serve(async (req: Request) => {
       success: true,
       timestamp: now.toISOString(),
       finalCalls: finalCallIds.length,
-      updatedUrgency: urgentIds.length,
       expiredOffers: offerExpiredIds.length,
       expiredBidding: biddingExpiredIds.length,
       expiredSwaps: (expiredSwaps as any[])?.length ?? 0,

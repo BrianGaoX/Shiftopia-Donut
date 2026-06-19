@@ -116,34 +116,6 @@ export function getShiftFSMState(shift: ShiftFSMInput): ShiftStateID {
     return 'UNKNOWN';
 }
 
-// ─── Emergency source ─────────────────────────────────────────────────────────
-
-export type EmergencySource = 'manual' | 'auto' | null;
-
-const FOUR_HOURS_SEC = 4 * 60 * 60;
-
-/**
- * Resolves the `emergency_source` value to write during an assignment.
- *
- * Rules:
- *  - Write-once: if already set, return as-is (even across reassignment).
- *  - EMERGENCY_ASSIGN action → 'manual'
- *  - TTS < 4 h → 'auto'
- *  - Otherwise → null
- *
- * Mirrors `set_emergency_source()` PL/pgSQL function exactly.
- */
-export function resolveEmergencySource(
-    action: 'EMERGENCY_ASSIGN' | 'NORMAL_ASSIGN',
-    timeToStartSec: number,
-    current: EmergencySource
-): EmergencySource {
-    if (current !== null) return current;
-    if (action === 'EMERGENCY_ASSIGN') return 'manual';
-    if (timeToStartSec < FOUR_HOURS_SEC) return 'auto';
-    return null;
-}
-
 // ─── Convenience helpers ──────────────────────────────────────────────────────
 
 /** Returns state metadata alongside the derived state ID. */
