@@ -1,14 +1,7 @@
--- ENUM-VALUE DRIFT FIX (root cause of stuck "S5*" bidding and latent "S3*" offers)
---
--- The app writes the UNIFIED bidding value `on_bidding` and encodes an offered
--- shift (S3) as `assigned + assignment_outcome NULL`. But the timer processors
--- still filtered on the LEGACY values (`on_bidding_normal`/`on_bidding_urgent`)
--- and `assignment_outcome = 'offered'` — neither of which the app produces — so
--- bidding never timed out and offers never expired. Align the filters.
---
--- process_shift_timers() (every minute) is the authoritative processor.
-
--- 1. Bidding timeout: include the unified 'on_bidding'.
+-- process_shift_timers step 2a only matched the LEGACY split bidding values
+-- ('on_bidding_normal'/'on_bidding_urgent'); the app now writes the unified
+-- 'on_bidding', so bidding never timed out (stuck "S5*"). Add 'on_bidding'.
+-- All other steps are verbatim.
 CREATE OR REPLACE FUNCTION public.process_shift_timers()
  RETURNS TABLE(operation text, affected integer)
  LANGUAGE plpgsql
@@ -26,7 +19,7 @@ BEGIN
     IF v_count > 0 THEN operation:='OFFER_EXPIRED'; affected:=v_count; RETURN NEXT; END IF;
     v_count := 0;
 
-    -- 2a. Bidding timeout S5/S6 → S8
+    -- 2a. Bidding timeout S5/S6 → S8  (triggers BIDDING_TIMEOUT in fn_audit_shift_update)
     WITH timed_out AS (
         UPDATE public.shifts SET
             bidding_status       = 'bidding_closed_no_winner'::shift_bidding_status,
@@ -138,82 +131,3 @@ BEGIN
     IF v_count > 0 THEN operation:='SWAP_EXPIRED'; affected:=v_count; RETURN NEXT; END IF;
 END;
 $function$;
-
--- 2. Offer expiry: match the real S3 encoding (assigned + outcome NULL),
---    not the never-written 'offered'.
-CREATE OR REPLACE FUNCTION public.fn_process_offer_expirations()
- RETURNS TABLE(res_shift_id uuid, from_state text, to_state text)
- LANGUAGE plpgsql
- SET search_path TO 'pg_catalog', 'public'
-AS $function$
-DECLARE
-    v_shift       RECORD;
-    v_new_state   TEXT := 'S2';
-    v_shift_start TIMESTAMPTZ;
-BEGIN
-    FOR v_shift IN
-        SELECT s.*
-        FROM public.shifts s
-        WHERE s.lifecycle_status   = 'Published'
-          AND s.assignment_status  = 'assigned'
-          AND s.assignment_outcome IS NULL
-          AND s.deleted_at         IS NULL
-          AND (
-              (s.offer_expires_at IS NOT NULL AND s.offer_expires_at < NOW())
-              OR
-              (
-                COALESCE(
-                    s.start_at,
-                    (s.shift_date::TEXT || ' ' || s.start_time::TEXT)::TIMESTAMP
-                        AT TIME ZONE COALESCE(s.timezone, 'Australia/Sydney')
-                ) < (NOW() + INTERVAL '4 hours')
-              )
-          )
-        FOR UPDATE SKIP LOCKED
-    LOOP
-        v_shift_start := COALESCE(
-            v_shift.start_at,
-            (v_shift.shift_date::TEXT || ' ' || v_shift.start_time::TEXT)::TIMESTAMP
-                AT TIME ZONE COALESCE(v_shift.timezone, 'Australia/Sydney')
-        );
-
-        UPDATE public.shift_offers
-        SET
-            status         = 'Expired',
-            responded_at   = NOW(),
-            response_notes = CASE
-                WHEN v_shift.offer_expires_at IS NOT NULL AND v_shift.offer_expires_at < NOW()
-                    THEN 'Auto-expired: deadline passed'
-                ELSE 'Auto-retracted: 4h pre-shift lockout reached'
-            END
-        WHERE shift_id = v_shift.id
-          AND status   = 'Pending';
-
-        UPDATE public.shifts
-        SET
-            lifecycle_status     = 'Draft',
-            assignment_status    = 'assigned',
-            assignment_outcome   = NULL,
-            fulfillment_status   = 'none'::shift_fulfillment_status,
-            is_on_bidding        = FALSE,
-            bidding_status       = 'not_on_bidding'::shift_bidding_status,
-            updated_at           = NOW(),
-            last_modified_reason = CASE
-                WHEN v_shift.offer_expires_at IS NOT NULL AND v_shift.offer_expires_at < NOW()
-                    THEN 'Offer expired - Reverted to Draft Assigned'
-                ELSE '4h Lockout - Auto-retracted to Draft Assigned'
-            END
-        WHERE id = v_shift.id;
-
-        res_shift_id := v_shift.id;
-        from_state   := 'S3';
-        to_state     := v_new_state;
-        RETURN NEXT;
-    END LOOP;
-END;
-$function$;
-
--- 3. sm_run_state_processor (parallel 15-min processor) Pass 3 also matches the
---    unified 'on_bidding' — applied directly in 20260610010000 (Pass 3 IN-list),
---    which holds that procedure's full body. process_shift_timers above is the
---    authoritative every-minute path; sm_run_state_processor is the 15-min backup.
