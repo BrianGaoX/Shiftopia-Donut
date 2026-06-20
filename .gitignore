@@ -32,3 +32,6 @@ dist-ssr
 # Python build artifacts
 __pycache__/
 *.pyc
+
+# Claude Code agent worktrees — transient; never commit as gitlinks
+.claude/worktrees/
