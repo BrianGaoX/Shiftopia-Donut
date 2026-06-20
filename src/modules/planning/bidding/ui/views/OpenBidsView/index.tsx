@@ -715,12 +715,30 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
     return result;
   }, [shifts, activeToggle, searchQuery]);
 
+  // If the expanded shift is no longer visible under the active toggle/search
+  // (toggle switched, search narrowed, or it moved to "Resolved" after being
+  // assigned), clear the expansion + candidate selection so the Bidders /
+  // Intelligence panes don't keep showing a stale shift's bidders.
+  useEffect(() => {
+    if (expandedV8ShiftId && !filteredShifts.some(s => s.id === expandedV8ShiftId)) {
+      setExpandedV8ShiftId(null);
+      setSelectedBid(null);
+      setDrawerBidId(null);
+    }
+  }, [filteredShifts, expandedV8ShiftId]);
+
   // ── Compliance Panel ───────────────────────────────────────────────────────
   const bidsPanel = useBidsCompliancePanel(selectedBid, expandedShift, toast);
 
   // Derived from bidsPanel.result for Intelligence pane
   const blockingIssues = bidsPanel.result?.buckets.A ?? [];
   const warningIssues  = bidsPanel.result?.buckets.B ?? [];
+  // Hard blocks = compliance blockers (bucket A) or failing system/qual checks
+  // (bucket D). Warnings (bucket B) are NOT hard blocks — they are overridable
+  // via the amber "Override & Assign" button (clicking it IS the acknowledgment).
+  // Mirrors the canonical gate in CompliancePanel.tsx.
+  const systemFails    = bidsPanel.result?.summary.systemFails ?? 0;
+  const hardBlocked    = blockingIssues.length > 0 || systemFails > 0;
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -744,10 +762,12 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
   }, []);
 
   const handleAssign = useCallback(async () => {
-    if (
-      !selectedBid || !expandedV8ShiftId ||
-      !bidsPanel.canProceed || isAssigning
-    ) return;
+    if (!selectedBid || !expandedV8ShiftId || isAssigning) return;
+    // Only hard blocks prevent assignment — compliance blockers (bucket A) or
+    // failing system/qual checks (bucket D). Warnings are overridable, so the
+    // amber "Override & Assign" button must proceed without a separate ack step.
+    const result = bidsPanel.result;
+    if (!result || result.buckets.A.length > 0 || (result.summary.systemFails ?? 0) > 0) return;
 
     setIsAssigning(true);
     try {
@@ -759,7 +779,7 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
       if (error) throw error;
 
       toast({ title: 'Shift Assigned', description: `Assigned to ${selectedBid.employeeName}.` });
-      queryClient.invalidateQueries({ queryKey: shiftKeys.managerBidShifts(organizationId || '') });
+      queryClient.invalidateQueries({ queryKey: shiftKeys.managerBidShiftsRoot });
       queryClient.invalidateQueries({ queryKey: shiftKeys.bids(expandedV8ShiftId) });
       setSelectedBid(null);
       bidsPanel.reset();
@@ -962,7 +982,7 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
     }
 
     setIsAutoAssigning(false);
-    queryClient.invalidateQueries({ queryKey: shiftKeys.managerBidShifts(organizationId || '') });
+    queryClient.invalidateQueries({ queryKey: shiftKeys.managerBidShiftsRoot });
     toast({
       title:       'Auto-Assign Complete',
       description: `${assigned} assigned · ${skipped} skipped · ${failed} failed`,
@@ -1255,13 +1275,13 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                       <Loader2 className="h-4 w-4 animate-spin mr-2" /> Analyzing…
                     </Button>
                   ) : (
-                    <motion.div whileTap={{ scale: blockingIssues.length > 0 ? 1 : 0.98 }}>
+                    <motion.div whileTap={{ scale: hardBlocked ? 1 : 0.98 }}>
                       <Button
                         onClick={handleAssign}
-                        disabled={isAssigning || blockingIssues.length > 0}
+                        disabled={isAssigning || hardBlocked}
                         className={cn(
                           'w-full min-h-[44px] rounded-xl text-[11px] font-semibold uppercase tracking-wider shadow-lg',
-                          blockingIssues.length > 0
+                          hardBlocked
                             ? 'bg-muted/50 text-muted-foreground/40 cursor-not-allowed shadow-none border border-border/40'
                             : warningIssues.length > 0
                             ? 'bg-amber-500 text-amber-950 hover:bg-amber-400 shadow-amber-500/20'
@@ -1271,7 +1291,7 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                         {isAssigning
                           ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
                           : <LucideUserCheck className="h-4 w-4 mr-2" />}
-                        {blockingIssues.length > 0
+                        {hardBlocked
                           ? 'Blocked by Compliance'
                           : warningIssues.length > 0
                           ? 'Override & Assign'
@@ -1531,14 +1551,14 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    whileTap={{ scale: blockingIssues.length > 0 ? 1 : 0.98 }}
+                    whileTap={{ scale: hardBlocked ? 1 : 0.98 }}
                   >
                     <Button
                       onClick={handleAssign}
-                      disabled={isAssigning || blockingIssues.length > 0}
+                      disabled={isAssigning || hardBlocked}
                       className={cn(
                         'w-full h-11 rounded-xl text-[11px] font-semibold uppercase tracking-wider shadow-lg transition-all duration-300',
-                        blockingIssues.length > 0
+                        hardBlocked
                           ? 'bg-muted/50 text-muted-foreground/40 cursor-not-allowed shadow-none border border-border/40'
                           : warningIssues.length > 0
                           ? 'bg-amber-500 text-amber-950 hover:bg-amber-400 shadow-amber-500/20'
@@ -1548,7 +1568,7 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                       {isAssigning
                         ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
                         : <LucideUserCheck className="h-4 w-4 mr-2" />}
-                      {blockingIssues.length > 0
+                      {hardBlocked
                         ? 'Blocked by Compliance'
                         : warningIssues.length > 0
                         ? 'Override & Assign Role'

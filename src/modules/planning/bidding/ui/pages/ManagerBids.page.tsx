@@ -25,8 +25,18 @@ export const ManagerBidsPage: React.FC = () => {
     const [activeToggle, setActiveToggle] = useState<BidToggle>('urgent');
     const [counts, setCounts] = useState<ToggleCounts>({ urgent: 0, normal: 0, resolved: 0 });
     const [autoAssign, setAutoAssign] = useState<{ run: () => void; isRunning: boolean }>({ run: () => {}, isRunning: false });
-    const [startDate, setStartDate] = useState<Date>(() => new Date());
-    const [endDate, setEndDate]     = useState<Date>(() => new Date());
+    // Bids are inherently forward-looking — default to a window that includes
+    // upcoming open shifts (matches the employee bids page: −7 → +30 days).
+    const [startDate, setStartDate] = useState<Date>(() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        return d;
+    });
+    const [endDate, setEndDate]     = useState<Date>(() => {
+        const d = new Date();
+        d.setDate(d.getDate() + 30);
+        return d;
+    });
 
     const handleAutoAssignReady = useCallback((fn: { run: () => void; isRunning: boolean }) => {
         setAutoAssign(fn);

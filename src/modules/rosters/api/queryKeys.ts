@@ -114,8 +114,23 @@ export const shiftKeys = {
   // ── Level 1: open / bidding ───────────────────────────────────────────────
   openShifts: (orgId?: string, filters?: { departmentId?: string | null; subDepartmentId?: string | null }) =>
     ['shifts', 'open', orgId ?? null, filters?.departmentId ?? null, filters?.subDepartmentId ?? null] as const,
-  managerBidShifts: (orgId?: string, filters?: { departmentId?: string | null; subDepartmentId?: string | null }) =>
-    ['shifts', 'managerBids', orgId ?? null, filters?.departmentId ?? null, filters?.subDepartmentId ?? null] as const,
+  // Prefix that matches every managerBidShifts variant (any org/dept/date scope).
+  // Use this for invalidation — passing the full factory key with trailing nulls
+  // would over-specify and fail React Query's partial match against dated keys.
+  managerBidShiftsRoot: ['shifts', 'managerBids'] as const,
+  managerBidShifts: (
+    orgId?: string,
+    filters?: { departmentId?: string | null; subDepartmentId?: string | null; startDate?: string | null; endDate?: string | null },
+  ) =>
+    [
+      'shifts',
+      'managerBids',
+      orgId ?? null,
+      filters?.departmentId ?? null,
+      filters?.subDepartmentId ?? null,
+      filters?.startDate ?? null,
+      filters?.endDate ?? null,
+    ] as const,
   bids: (shiftId: string) => ['shifts', 'bids', shiftId] as const,
 
   // ── Level 1: lookups — reference / master data ───────────────────────────
