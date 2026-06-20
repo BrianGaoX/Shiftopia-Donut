@@ -17,7 +17,7 @@ import {
     applyTimesheetFilters,
 } from "./TimesheetFilterDrawer";
 import { exportTimesheetXLSX, exportTimesheetPDF } from "./timesheet.export";
-import { isShiftFinished } from "./TimesheetTable.utils";
+import { isEntryReviewable } from "./TimesheetTable.utils";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -138,7 +138,9 @@ export const TimesheetTable: React.FC<TimesheetTableProps> = ({
                 .filter(e => {
                     const s = (e.timesheetStatus || "").toLowerCase();
                     if (s !== "draft" && s !== "submitted") return false;
-                    return isShiftFinished(e.date, e.scheduledStart, e.scheduledEnd, e.clockOut);
+                    // Only entries at a terminal attendance state (No-Show, clock-out,
+                    // or auto clock-out) are eligible for bulk approve/reject.
+                    return isEntryReviewable(e);
                 })
                 .map(e => String(e.id)),
         [sortedEntries],

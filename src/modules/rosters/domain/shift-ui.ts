@@ -613,6 +613,42 @@ export function getLiveRule(shift: ShiftDotInput): ShiftRuleBadge | null {
 }
 
 /**
+ * Terminal-attendance gate for manager timesheet review.
+ *
+ * A manager may only approve / reject / edit a timesheet once the shift has
+ * reached a definitive attendance outcome — i.e. one of:
+ *
+ *   • No-Show          — the shift ended and the employee never clocked in
+ *   • Clock-Out exists — the employee clocked out (`actual_end` recorded)
+ *   • Auto Clock-Out   — the system auto-closed the shift at the 12.5h horizon
+ *
+ * Every non-terminal Live Rule state must block review:
+ *   Scheduled · Awaiting Check-In · Missing · (still clocked in mid-shift) ·
+ *   Working Overtime.
+ *
+ * Derived from the same {@link getLiveRuleBadges} engine the badges use, so the
+ * gate a manager hits and the badge they see can never disagree. Time-dependent
+ * (a "Missing" shift becomes a reviewable "No Show" once it ends), exactly like
+ * the badges.
+ */
+export function isTimesheetReviewable(shift: ShiftDotInput): boolean {
+    // An explicitly-marked no-show is always terminal, regardless of clocks.
+    if ((shift.attendance_status ?? '').toLowerCase() === 'no_show') return true;
+
+    const { arrival, departure } = getLiveRuleBadges(shift);
+
+    // No-Show stand-in: ended, never clocked in.
+    if (arrival?.label === 'No Show') return true;
+
+    // A departure badge is present for a real clock-out, an Auto Clock-Out, or
+    // Working Overtime. Only Working Overtime is non-terminal (ended but still
+    // clocked in with no auto-out yet), so it alone must NOT unlock review.
+    if (departure && departure.label !== 'Working Overtime') return true;
+
+    return false;
+}
+
+/**
  * Available FSM actions for a given state.
  * This is the single source of truth for action menus.
  * 

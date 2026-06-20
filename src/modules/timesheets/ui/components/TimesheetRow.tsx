@@ -35,7 +35,7 @@ import { Textarea } from '@/modules/core/ui/primitives/textarea';
 import { Label } from '@/modules/core/ui/primitives/label';
 import type { TimesheetRow as TimesheetRowType } from "../../model/timesheet.types";
 import { calculateHoursBetween, formatHours, formatDifferential, isShiftFinished } from "./TimesheetTable.utils";
-import { getProtectionContext, getTimeRule, getLiveRuleBadges } from "@/modules/rosters/domain/shift-ui";
+import { getProtectionContext, getTimeRule, getLiveRuleBadges, isTimesheetReviewable } from "@/modules/rosters/domain/shift-ui";
 import { estimateDetailedCostFromShift } from '@/modules/rosters/domain/projections/utils/cost';
 import { ZERO_COST_BREAKDOWN } from '@/modules/rosters/domain/projections/utils/cost/constants';
 
@@ -86,12 +86,10 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
         unpaidBreak: entry.unpaidBreak || "0",
     });
 
-    // Shift is currently running — block both approve and reject until it ends
-    const isShiftOver = useMemo(() => 
+    // Shift physically over (used to gate the "Mark No-Show" affordance).
+    const isShiftOver = useMemo(() =>
         isShiftFinished(entry.date, entry.scheduledStart, entry.scheduledEnd, entry.clockOut),
     [entry.date, entry.scheduledStart, entry.scheduledEnd, entry.clockOut]);
-    
-    const isInProgress = entry.liveStatus === 'InProgress' || !isShiftOver;
 
     const isPast = useMemo(() => {
         if (!entry.date || !entry.scheduledEnd) return false;
@@ -127,11 +125,19 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     const timeRuleBadge = useMemo(() => getTimeRule(shiftInput), [shiftInput]);
     const liveRuleBadges = useMemo(() => getLiveRuleBadges(shiftInput), [shiftInput]);
 
+    // Manager review gate: approve / reject / edit are only allowed once the
+    // shift reaches a terminal attendance state — No-Show, a recorded clock-out,
+    // or an auto clock-out. Everything else (in progress, Missing, Working
+    // Overtime) stays locked. Supersedes the looser "scheduled end passed" gate.
+    const isReviewable = useMemo(() => isTimesheetReviewable(shiftInput), [shiftInput]);
+    // Approve / reject / edit are locked until the shift is reviewable.
+    const reviewLocked = !isReviewable;
+
     // Attendance warnings — drives the approval modal
     const warnings = useMemo(() => {
         const list: { text: string; severity: 'error' | 'warning' }[] = [];
-        if (isInProgress) {
-            list.push({ text: 'Shift is currently in progress — approval is only available after the shift has ended', severity: 'error' });
+        if (!isReviewable) {
+            list.push({ text: 'Shift has not reached a final attendance state — review unlocks after a clock-out, auto clock-out, or no-show', severity: 'error' });
         }
         if (entry.attendanceStatus === 'no_show') {
             list.push({ text: 'Employee was marked as no-show for this shift', severity: 'error' });
@@ -150,9 +156,9 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
             list.push({ text: 'No clock-out recorded — auto clock-out may have been applied', severity: 'warning' });
         }
         return list;
-    }, [entry, isInProgress]);
+    }, [entry, reviewLocked]);
 
-    const requiresReason = warnings.some(w => w.severity === 'error') && !isInProgress;
+    const requiresReason = warnings.some(w => w.severity === 'error') && !reviewLocked;
 
     // Auto-calculate Length and Net Length when editing
     const calculatedValues = useMemo(() => {
@@ -242,10 +248,10 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     const handleReject = () => {
         const status = entry.timesheetStatus?.toLowerCase();
         if (status !== 'submitted' && status !== 'draft') return;
-        if (isInProgress) {
+        if (reviewLocked) {
             toast({
                 title: 'Cannot Reject Yet',
-                description: 'Shift is still in progress. Wait until the shift ends.',
+                description: 'Review unlocks once the shift ends with a clock-out, an auto clock-out, or a no-show.',
                 variant: 'destructive',
             });
             return;
@@ -326,7 +332,15 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     };
 
     const handleAdjustedCellClick = () => {
-        if (!readOnly && !isEditingAdjusted && entry.liveStatus !== 'Cancelled') {
+        if (reviewLocked) {
+            toast({
+                title: 'Cannot Edit Yet',
+                description: 'Billable times can only be edited once the shift ends with a clock-out, an auto clock-out, or a no-show.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (!readOnly && !isFinalized && !isEditingAdjusted && entry.liveStatus !== 'Cancelled') {
             setEditedAdjusted({
                 adjustedStart: entry.adjustedStart || entry.scheduledStart || "",
                 adjustedEnd: entry.adjustedEnd || entry.scheduledEnd || "",
@@ -351,7 +365,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
     const cellClass = "p-3 text-sm whitespace-nowrap border-b border-border/50 transition-all duration-200";
     const editableCellClass = cn(
         cellClass,
-        (!isFinalized && !readOnly && !isInProgress)
+        (!isFinalized && !readOnly && !reviewLocked)
             ? "cursor-pointer hover:bg-primary/5 hover:text-primary font-medium text-foreground/80"
             : "font-medium text-foreground/60"
     );
@@ -371,7 +385,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                         className="rounded border-border bg-background focus:ring-primary h-4 w-4 transition-all"
                         disabled={
                             (entry.timesheetStatus !== 'SUBMITTED' && entry.timesheetStatus !== 'DRAFT') ||
-                            isInProgress
+                            reviewLocked
                         }
                     />
                 </td>
@@ -698,10 +712,10 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                                     variant="ghost"
                                                     size="icon"
                                                     onClick={handleApprove}
-                                                    disabled={isInProgress}
+                                                    disabled={reviewLocked}
                                                     className={cn(
                                                         "h-8 w-8 rounded-xl",
-                                                        isInProgress
+                                                        reviewLocked
                                                             ? "text-muted-foreground/40 cursor-not-allowed"
                                                             : "text-green-600 dark:text-green-400 hover:bg-green-500/20"
                                                     )}
@@ -710,7 +724,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                                 </Button>
                                             </TooltipTrigger>
                                             <TooltipContent>
-                                                {isInProgress ? 'Shift Ongoing — action available after scheduled end' : 'Approve'}
+                                                {reviewLocked ? 'Locked — unlocks after clock-out, auto clock-out, or no-show' : 'Approve'}
                                             </TooltipContent>
                                         </Tooltip>
                                     </TooltipProvider>
@@ -725,10 +739,10 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                                     variant="ghost"
                                                     size="icon"
                                                     onClick={handleReject}
-                                                    disabled={isInProgress}
+                                                    disabled={reviewLocked}
                                                     className={cn(
                                                         "h-8 w-8 rounded-xl",
-                                                        isInProgress
+                                                        reviewLocked
                                                             ? "text-muted-foreground/40 cursor-not-allowed"
                                                             : "text-red-600 dark:text-red-400 hover:bg-red-500/20"
                                                     )}
@@ -737,7 +751,7 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                                                 </Button>
                                             </TooltipTrigger>
                                             <TooltipContent>
-                                                {isInProgress ? 'Shift Ongoing — action available after scheduled end' : 'Reject'}
+                                                {reviewLocked ? 'Locked — unlocks after clock-out, auto clock-out, or no-show' : 'Reject'}
                                             </TooltipContent>
                                         </Tooltip>
                                     </TooltipProvider>
@@ -772,12 +786,12 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
-                            <AlertTriangle className={cn("h-5 w-5", isInProgress ? "text-red-500" : "text-amber-500")} />
-                            {isInProgress ? 'Approval Blocked' : 'Attendance Issues Detected'}
+                            <AlertTriangle className={cn("h-5 w-5", reviewLocked ? "text-red-500" : "text-amber-500")} />
+                            {reviewLocked ? 'Approval Blocked' : 'Attendance Issues Detected'}
                         </DialogTitle>
                         <DialogDescription>
-                            {isInProgress
-                                ? <>Approval for <strong>{entry.employee}</strong>'s timesheet is blocked until the shift ends.</>
+                            {reviewLocked
+                                ? <>Approval for <strong>{entry.employee}</strong>'s timesheet is blocked until the shift reaches a final attendance state — a clock-out, an auto clock-out, or a no-show.</>
                                 : <>Review the following issues before approving <strong>{entry.employee}</strong>'s timesheet.</>
                             }
                         </DialogDescription>
@@ -814,15 +828,15 @@ export const TimesheetRow: React.FC<TimesheetRowProps> = ({
                     )}
 
                     <DialogFooter className="gap-2 flex-wrap">
-                        {!isInProgress && (
+                        {!reviewLocked && (
                             <Button variant="outline" onClick={() => { setWarningsOpen(false); handleAdjustedCellClick(); }}>
                                 Adjust Times
                             </Button>
                         )}
                         <Button variant="outline" onClick={() => setWarningsOpen(false)}>
-                            {isInProgress ? 'OK' : 'Cancel'}
+                            {reviewLocked ? 'OK' : 'Cancel'}
                         </Button>
-                        {!isInProgress && (
+                        {!reviewLocked && (
                             <Button
                                 onClick={doApprove}
                                 disabled={requiresReason && !overrideReason.trim()}

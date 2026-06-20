@@ -22,7 +22,7 @@ import { TimesheetStatusBadge } from './TimesheetStatusBadge';
 import { getGroupColor } from '@/modules/rosters/model/roster.types';
 import type { TimesheetRow } from '../../model/timesheet.types';
 import { SharedShiftCard } from '@/modules/planning/ui/components/SharedShiftCard';
-import { isShiftFinished } from './TimesheetTable.utils';
+import { isShiftFinished, isEntryReviewable } from './TimesheetTable.utils';
 
 interface TimesheetMobileCardProps {
     entry: TimesheetRow;
@@ -147,7 +147,17 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
     const [localPaidBreak, setLocalPaidBreak] = useState(entry.paidBreak || '0');
     const [localUnpaidBreak, setLocalUnpaidBreak] = useState(entry.unpaidBreak || '0');
 
+    const { toast } = useToast();
+
     const handleStartEditing = () => {
+        if (reviewLocked) {
+            toast({
+                title: 'Cannot Edit Yet',
+                description: 'Billable times unlock once the shift ends with a clock-out, an auto clock-out, or a no-show.',
+                variant: 'destructive',
+            });
+            return;
+        }
         setLocalAdjStart(entry.adjustedStart || entry.scheduledStart || '');
         setLocalAdjEnd(entry.adjustedEnd || entry.scheduledEnd || '');
         setLocalPaidBreak(entry.paidBreak || '0');
@@ -155,11 +165,13 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
         setIsEditing(true);
     };
 
-    const { toast } = useToast();
-
-    const isShiftOver = useMemo(() => 
+    const isShiftOver = useMemo(() =>
         isShiftFinished(entry.date, entry.scheduledStart, entry.scheduledEnd, entry.clockOut),
     [entry.date, entry.scheduledStart, entry.scheduledEnd, entry.clockOut]);
+
+    // Manager review gate: approve / reject / edit unlock only once the shift
+    // reaches a terminal attendance state (No-Show, clock-out, or auto clock-out).
+    const reviewLocked = useMemo(() => !isEntryReviewable(entry), [entry]);
 
     const isPending = entry.timesheetStatus?.toLowerCase() === 'submitted' || entry.timesheetStatus?.toLowerCase() === 'draft';
     
@@ -227,14 +239,22 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
         isPast
     ), [entry.liveStatus, isPast]);
 
+    const reviewLockedToast = () => toast({
+        title: 'Locked',
+        description: 'Unlocks once the shift ends with a clock-out, an auto clock-out, or a no-show.',
+        variant: 'destructive',
+    });
+
     const handleApprove = () => {
         if (!canAction) return;
+        if (reviewLocked) { reviewLockedToast(); return; }
         onSave?.(String(entry.id), { timesheetStatus: 'approved' } as any);
         toast({ title: 'Approved', description: `Timesheet approved for ${entry.employee}.` });
     };
 
     const handleReject = () => {
         if (!canAction) return;
+        if (reviewLocked) { reviewLockedToast(); return; }
         onSave?.(String(entry.id), { timesheetStatus: 'rejected' } as any);
         toast({ title: 'Rejected', description: `Timesheet rejected for ${entry.employee}.` });
     };
@@ -382,14 +402,16 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
                             <div className="flex gap-1 w-full">
                                 <Button
                                     onClick={handleApprove}
-                                    disabled={!isShiftOver}
+                                    disabled={reviewLocked}
+                                    title={reviewLocked ? 'Unlocks after clock-out, auto clock-out, or no-show' : undefined}
                                     className="flex-1 h-9 rounded-xl font-black uppercase text-[9px] tracking-widest bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-30 transition-all active:scale-95 px-0"
                                 >
                                     Approve
                                 </Button>
                                 <Button
                                     onClick={handleReject}
-                                    disabled={!isShiftOver}
+                                    disabled={reviewLocked}
+                                    title={reviewLocked ? 'Unlocks after clock-out, auto clock-out, or no-show' : undefined}
                                     className="flex-1 h-9 rounded-xl font-black uppercase text-[9px] tracking-widest bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/10 hover:bg-rose-500/20 disabled:opacity-30 transition-all active:scale-95 px-0"
                                 >
                                     Reject
@@ -397,7 +419,9 @@ export const TimesheetMobileCard = forwardRef<HTMLDivElement, TimesheetMobileCar
                                 <Button
                                     variant="outline"
                                     onClick={handleStartEditing}
-                                    className="flex-1 h-9 rounded-xl border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 px-0"
+                                    disabled={reviewLocked}
+                                    title={reviewLocked ? 'Unlocks after clock-out, auto clock-out, or no-show' : undefined}
+                                    className="flex-1 h-9 rounded-xl border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 px-0 disabled:opacity-30"
                                 >
                                     Edit
                                 </Button>

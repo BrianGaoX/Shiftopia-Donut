@@ -1,3 +1,35 @@
+import { type ShiftDotInput, isTimesheetReviewable } from '@/modules/rosters/domain/shift-ui';
+import { type TimesheetRow } from '../../model/timesheet.types';
+
+/**
+ * Maps a UI {@link TimesheetRow} entry to the {@link ShiftDotInput} shape the
+ * Live Rules engine consumes. Single source of truth for this projection so the
+ * row, mobile card, and bulk-select all derive identical attendance state.
+ */
+export const timesheetEntryToShiftInput = (entry: TimesheetRow): ShiftDotInput => ({
+    lifecycle_status: entry.liveStatus,
+    attendance_status: entry.attendanceStatus,
+    attendance_note: entry.attendanceNote,
+    actual_start: entry.rawActualStart ?? entry.clockIn,
+    actual_end: entry.rawActualEnd ?? entry.clockOut,
+    adjusted_start: entry.adjustedStart,
+    adjusted_end: entry.adjustedEnd,
+    adjusted_is_manual: entry.isAdjustedManual,
+    start_at: entry.rawStartAt,
+    end_at: entry.rawEndAt,
+    shift_date: typeof entry.date === 'string' ? entry.date : undefined,
+    start_time: entry.scheduledStart,
+    end_time: entry.scheduledEnd,
+});
+
+/**
+ * Manager review gate (approve / reject / edit) for a timesheet entry — true
+ * only once the shift reaches a terminal attendance state (No-Show, clock-out,
+ * or auto clock-out). Thin wrapper over the domain {@link isTimesheetReviewable}.
+ */
+export const isEntryReviewable = (entry: TimesheetRow): boolean =>
+    isTimesheetReviewable(timesheetEntryToShiftInput(entry));
+
 /**
  * Formats decimal hours as H:MM or H.hh
  */
