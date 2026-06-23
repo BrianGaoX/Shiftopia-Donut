@@ -2,39 +2,50 @@
 
 Drains `swap_review_queue` and decides each MANAGER_PENDING swap: **AUTO_APPROVE / MANUAL_REVIEW / AUTO_REJECT**. The decision *brain* runs here (TypeScript); the *commit* is owned by the DB (`sm_swap_auto_decide` → the `sm_apply_shift_op` gateway). Ships **shadow-first** and is **dormant** until an org opts in.
 
-> Status: **NOT deployed.** Code + unit tests only. The DB side (tables, trigger, RPCs) is already live in prod (migrations `20260623140946`, `20260623143908`), but no org has an enabled policy, so the queue is empty and nothing runs.
+> Status: **NOT deployed** (but now deployable). Code + unit tests only. The DB side (tables, trigger, RPCs) is already live in prod (migrations `20260623140946`, `20260623143908`), but no org has an enabled policy, so the queue is empty and nothing runs.
 
 ---
 
-## ⚠️ DEPLOYMENT STATUS — NOT deployable as-is (read before deploying)
+## ✅ COMPLIANCE STRATEGY — APPROACH A (implemented)
 
-This worker `import`s `@compliance/v8/swap-engine/...` (`runSwapGuards`,
-`swapEvaluator`). **That tree is NOT vendored** — `_vendor/` holds only shims. Two
-blockers, discovered 2026-06-24:
+This worker no longer vendors the v8 TS compliance engine. It is **self-contained**
+(supabase-js + `fetch` + pure local TS) and calls the already-deployed
+**`evaluate-compliance`** Edge Function over HTTP, **once per swap party**:
 
-1. **Deno is not installed** in the build environment → a vendored bundle cannot be
-   verified locally.
-2. **No Edge Function in this project vendors the v8 TS engine.** The proven pattern is
-   **DB-RPC delegation** (the deployed `evaluate-compliance` calls `check_shift_overlap`,
-   `calculate_weekly_hours`, `validate_rest_period`, `check_shift_compliance`).
+- **Party A (requester)** RECEIVES the offered/target shift, GIVES UP their own:
+  `evaluate-compliance { employee_id: requester_id, <target shift facts>,
+  shift_id: target_shift_id, exclude_shift_id: requester_shift_id }`
+- **Party B (offerer/target)** RECEIVES the requester shift, GIVES UP theirs:
+  `evaluate-compliance { employee_id: target_id, <requester shift facts>,
+  shift_id: requester_shift_id, exclude_shift_id: target_shift_id }`
 
-### Corrected approach before deploy — pick one
+For a 2-way swap the constraints are **per-employee** (no shared schedule), so the v8
+`swapEvaluator` decomposes cleanly into these two independent calls. `exclude_shift_id`
+removes the shift each party gives up from the overlap/hours math. For a **giveaway**
+(no `target_shift_id`) only Party B is evaluated (receiving the requester shift).
+`violated` on either party ⇒ solver BLOCKING; `warned` ⇒ WARNING; both `passed` ⇒ PASS.
+A transport failure or `unavailable` verdict is **fail-closed** (treated as BLOCKING).
 
-- **(A — recommended, deployable without Deno gymnastics)** Drop the
-  `@compliance/...` imports. For a **2-way swap the constraints are per-employee** (no
-  shared schedule), so call the deployed **`evaluate-compliance`** function once per
-  party with that party's post-swap shift; treat `violated` → blocking, `warned` →
-  WARNING. This is a sound decomposition of `swapEvaluator` for 2-way swaps and yields a
-  worker shaped like the existing deployable functions (supabase-js + `fetch` + pure
-  TS). Keep `eligibility.ts` + `decision-matrix.ts` unchanged.
-- **(B — full fidelity, needs Deno)** Vendor `src/modules/compliance/v8/swap-engine/**`
-  (+ its v8 deps) into `_vendor/compliance/`, fix extensions/aliases/`import.meta.env`,
-  and `deno check`.
+The old `runSwapGuards` entity/lock/drift checks are covered downstream: the gateway
+`approve_trade` re-checks the 4h time-lock + version-CAS at commit, and loading the rows
+covers existence. The worker keeps a small **inline** not-found / 4h-time-lock guard and
+delegates the rest to the gateway.
 
-`eligibility.ts` + `decision-matrix.ts` (35 passing tests) are correct under either
-approach. The DB layer is inert until an org enables a policy, so there is no urgency —
-do it correctly. Everything else in this README (deploy command, cron, staging) applies
-once the compliance integration is switched to approach A or B.
+> Imports are limited to: `npm:@supabase/supabase-js@2.50.0`, Deno built-ins
+> (`Deno.serve`, `Deno.env`, `crypto.subtle`, `fetch`, `TextEncoder`), and the colocated
+> pure modules `./eligibility.ts`, `./decision-matrix.ts`, `./types.ts`. No `@compliance`,
+> no `_vendor/` engine, no browser-only shims. `import_map.json` maps only supabase-js.
+
+**Correctness caveat:** `evaluate-compliance` runs a FIXED rule set — overlap +
+weekly-hours (**48h**) + rest (**11h**) + qualification — via DB RPCs. The v8 swap solver
+had a richer rule set (daily-hours, 20-in-28, streak limit, spread-of-hours, etc.). The
+always-on eligibility gates (certification / fatigue / overlap) and the gateway still
+apply, but auto-APPROVE under Approach A reflects only the 48h/11h/overlap/qual checks,
+not the full v8 constraint catalogue. This is acceptable for the shadow-first rollout
+(below); revisit before enabling live auto-approve broadly.
+
+`eligibility.ts` + `decision-matrix.ts` (35 passing tests) are unchanged. Everything else
+in this README (deploy command, cron, staging) applies as-is.
 
 ## Flow
 
@@ -45,7 +56,7 @@ shift_swaps → MANAGER_PENDING ──(enqueue trigger, only if an ENABLED polic
                                           │  per claimed row (fail-closed try/catch):
                                           │   load swap + both shifts + both rosters (service role)
                                           │   recompute idempotency key (matches the trigger)
-                                          │   runSwapGuards → swapEvaluator.evaluate → eligibility engine
+                                          │   inline guards → evaluate-compliance ×(1–2 parties) → eligibility engine
                                           │   decision-matrix → { decision, reason, confidence }
                                           │   sm_swap_auto_decide(swap_id, idemKey, payload)
                                           │     ↳ RPC owns: idempotency dedup, shadow suppression,
@@ -86,6 +97,6 @@ npx vitest run --config supabase/functions/auto-approve-swaps/vitest.config.ts  
 
 ## Integration risks a human must resolve before deploy
 
-1. **Compliance-engine vendoring is the gating item.** `runSwapGuards` / `swapEvaluator` are app TypeScript with browser-only deps (`@sentry/react`, `@/platform/supabase/client`, `import.meta.env`). This function reuses the `auto-assign-bids` vendor+shim pattern, but the **swap-engine subtree still needs to be vendored** into `_vendor/` (copy `src/modules/compliance/v8/swap-engine/**` + adapt `import.meta.env` → `Deno.env`). The `import_map.json` here redirects `@sentry/react` and `@/platform/supabase/client` to the shims; verify every transitive import resolves under Deno before deploy.
-2. **Roster/shift column + signature assumptions** (no DB was called while building): `shifts.required_skills/required_licenses/scheduled_start/role_id`, the `ShiftTimeRange` mapping, and the exact `runSwapGuards`/`swapEvaluator.evaluate` return shapes must match the live schema and the current `swaps.api.ts` wiring.
-3. **Idempotency parity.** The key is `sha256_hex(`${swap_id}:${req_ver}:${off_ver}:${policy_version}`)` (off_ver=0 for a giveaway) — it must stay byte-identical to the `enqueue_swap_auto_decision` trigger formula. If either side changes the string, dedup breaks. (Verified identical at build time.)
+1. **Compliance fidelity (Approach A).** `evaluate-compliance` enforces a FIXED rule set — overlap + weekly-hours (48h) + rest (11h) + qualification — which is a subset of the v8 swap solver's catalogue. See the "Correctness caveat" above. Acceptable for the shadow rollout; re-evaluate before broad live auto-approve.
+2. **Roster/shift column assumptions** (no DB was called while building): `shifts.required_skills/required_licenses/role_id/unpaid_break_minutes` and the `remuneration_levels(hourly_rate_min)` join must match the live schema and the current `swaps.api.ts` wiring. The `evaluate-compliance` request body keys are validated against `compliance.service.ts` (`employee_id`, `shift_date`, `start_time`, `end_time`, `net_length_minutes`, `exclude_shift_id`, `shift_id`, `override_*`).
+3. **Idempotency parity.** The key is `sha256_hex(`${swap_id}:${req_ver}:${off_ver}:${policy_version}`)` (off_ver=0 for a giveaway) — it must stay byte-identical to the `enqueue_swap_auto_decision` trigger formula. UNCHANGED by this refactor. If either side changes the string, dedup breaks. (Verified identical at build time.)

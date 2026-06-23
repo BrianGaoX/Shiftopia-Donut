@@ -1,13 +1,10 @@
 {
-  "//": "Function-local import map for auto-assign-bids. Overrides the shared",
-  "//bundling": "supabase/functions/import_map.json so the VENDORED v8 engine and",
-  "//shims": "its browser-only leaves resolve under Deno. See README.md §Bundling.",
+  "//": "Function-local import map for auto-assign-bids (APPROACH A). The function",
+  "//approach": "is self-contained: it calls the deployed evaluate-compliance Edge",
+  "//approach2": "Function over HTTP instead of vendoring the v8 compliance engine, so",
+  "//approach3": "the only mapped specifier is the supabase-js pin. No @compliance, no",
+  "//approach4": "_vendor shims. See README.md §Bundling.",
   "imports": {
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.50.0",
-
-    "@compliance/": "./_vendor/compliance/",
-
-    "@/platform/supabase/client": "./_vendor/_shims/supabase-client.ts",
-    "@sentry/react": "./_vendor/_shims/sentry.ts"
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.50.0"
   }
 }

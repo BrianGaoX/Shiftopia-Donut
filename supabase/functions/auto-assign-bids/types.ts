@@ -4,7 +4,7 @@
 // Mirrors docs/implementation/01-auto-assign-bids-refactor.md §8 (API design)
 // and docs/implementation/00-contracts-and-conventions.md §6 (decision enums),
 // §7 (routes). These are the ONLY shapes that cross the HTTP boundary; the
-// internal engine/snapshot types live in engine.ts.
+// internal snapshot/decision types live inline in index.ts.
 //
 // NOTE: this file is Deno-only TS. It is intentionally outside the project's
 // tsconfig (supabase/functions is not type-checked by `npx tsc`). Do not add it.
@@ -45,18 +45,33 @@ export interface AssignmentScope {
 }
 
 /**
- * Run-level options. Defaults mirror runBidSelection's DEFAULT_BIDDING_CONFIG
- * plus the per-run win cap from 01 §4.5. Recorded verbatim on the run for replay.
+ * Run-level options. Recorded verbatim on the run for replay.
+ *
+ * APPROACH A note: the decision is per-shift first-clear-bidder via the deployed
+ * evaluate-compliance function, so the v8 engine's scoring-weight knobs no longer
+ * drive selection. The single behavioural toggle is `reject_warnings`. The legacy
+ * weight/cap fields are kept (optional, recorded but unused) so older callers and
+ * stored run.options rows stay shape-compatible.
  */
 export interface AssignmentOptions {
-  /** Accept WARNING-status compliance bids. Default false (R6 — explicit, OFF). */
+  /**
+   * Treat a 'warned' compliance result as INELIGIBLE (skip that bidder). Default
+   * false ⇒ a 'warned' bidder is eligible. Only 'violated'/'unavailable' block by
+   * default. (Was `accept_warnings` in the v8 engine — inverted polarity here.)
+   */
+  reject_warnings?: boolean;
+
+  /** @deprecated v8 engine option — accepted for back-compat, no longer consumed. */
   accept_warnings?: boolean;
-  /** Hard cap on wins per employee in one run (01 §4.5). Default 3. */
+  /** @deprecated v8 engine option — accepted for back-compat, no longer consumed. */
   max_wins_per_employee?: number;
-  /** Scoring weights (01 §4.1). Omitted ⇒ DEFAULT_BIDDING_CONFIG values. */
+  /** @deprecated v8 scoring weight — accepted for back-compat, no longer consumed. */
   compliance_weight?: number;
+  /** @deprecated v8 scoring weight — accepted for back-compat, no longer consumed. */
   priority_weight?: number;
+  /** @deprecated v8 scoring weight — accepted for back-compat, no longer consumed. */
   fairness_weight?: number;
+  /** @deprecated v8 scoring weight — accepted for back-compat, no longer consumed. */
   recency_weight?: number;
 }
 

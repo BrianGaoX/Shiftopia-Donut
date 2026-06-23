@@ -13,28 +13,33 @@
 // (D3/D4/D5, idempotency §5, enums §6, RPC contracts).
 //
 // -----------------------------------------------------------------------------
-// BUNDLING / IMPORT STRATEGY (full rationale in ./README.md)
+// COMPLIANCE STRATEGY — APPROACH A (HTTP delegation, NOT vendored TS)
 // -----------------------------------------------------------------------------
-// We VENDOR the v8 compliance engine into ./_vendor/compliance/ and rewire its
-// browser-only leaves via ./import_map.json — identical to auto-assign-bids:
-//   "@/platform/supabase/client" → ./_vendor/_shims/supabase-client.ts
-//   "@sentry/react"              → ./_vendor/_shims/sentry.ts
-// DIFFERENCE FROM auto-assign-bids: the swap pipeline reuses `runSwapGuards`,
-// which does REAL DB reads through the supabase-client binding. So that shim is
-// INJECTABLE (not a no-op): the worker pushes a service-role client into it
-// before calling runSwapGuards, so the guards run RLS-blind under service role.
-// `swapEvaluator.evaluate` is pure and imported unchanged.
+// We do NOT vendor the v8 TS compliance engine. Instead we reuse the already-
+// deployed `evaluate-compliance` Edge Function over HTTP — the same engine the
+// app uses (overlap + weekly-hours(48h) + rest(11h) + qualification via DB RPCs,
+// run RLS-blind under the service role). This keeps the worker SELF-CONTAINED
+// (supabase-js + fetch + pure local TS) so it bundles under Deno like the other
+// deployed functions (get-roster-view, shift-state-processor).
 //
-// The aliases below resolve through import_map.json → "@compliance/".
-import { runSwapGuards } from '@compliance/v8/swap-engine/guards.ts';
-import { swapEvaluator } from '@compliance/v8/swap-engine/swap-evaluator.ts';
-import type {
-  GuardResult,
-  SolverResult,
-  ConstraintViolation,
-} from '@compliance/v8/swap-engine/types.ts';
-import { setComplianceSupabaseClient } from './_vendor/_shims/supabase-client.ts';
-
+// KEY DECOMPOSITION — for a 2-WAY swap the constraints are PER-EMPLOYEE (no
+// shared schedule), so the v8 `swapEvaluator` decomposes cleanly into two
+// independent evaluate-compliance calls:
+//   - Party A (requester) RECEIVES the offered/target shift, GIVES UP their own:
+//       evaluate-compliance { employee_id: requester_id, <target shift facts>,
+//         shift_id: target_shift_id, exclude_shift_id: requester_shift_id }
+//   - Party B (offerer/target) RECEIVES the requester shift, GIVES UP theirs:
+//       evaluate-compliance { employee_id: target_id, <requester shift facts>,
+//         shift_id: requester_shift_id, exclude_shift_id: target_shift_id }
+//   `exclude_shift_id` removes the shift each party gives up from the overlap /
+//   weekly-hours math. For a GIVEAWAY (no target shift) only Party B is
+//   evaluated (receiving the requester shift). 'violated' on either party =>
+//   solver BLOCKING; 'warned' => WARNING; both 'passed' => PASS.
+//
+// The old runSwapGuards entity/lock/drift checks are covered downstream: the
+// gateway `approve_trade` re-checks the 4h time-lock + version-CAS at commit,
+// and loading the rows covers existence. We keep a small inline not-found /
+// time-lock guard and DELEGATE the rest to the gateway.
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 import { evaluateEligibility } from './eligibility.ts';
@@ -65,19 +70,10 @@ const POLICY_VERSION_FALLBACK = 1; // only used if a policy row has no version
 
 const ROSTER_WINDOW_DAYS = 30; // ±30d, mirrors validateSwapCompliance (swaps.api.ts:52)
 
-// Fatigue / overtime constraint ids the solver emits (verified in
-// src/modules/compliance/v8/rules/*). Used to classify SolverSignals (§3.6/§3.7).
-const FATIGUE_RULE_IDS = new Set(['V8_MIN_REST_GAP', 'V8_20_IN_28', 'V8_STREAK_LIMIT']);
-const OVERTIME_RULE_IDS = new Set([
-  'V8_MAX_DAILY_HOURS',
-  'V8_ORD_HOURS_AVG',
-  'V8_SPREAD_OF_HOURS',
-]);
-
-// Abuse thresholds (02 §4 — defaults; overridable via policy.rules params).
-const RATE_LIMIT_WINDOW_DAYS = 7;
-const PAIRWISE_WINDOW_DAYS = 30;
-const PAIRWISE_MAX_DEFAULT = 3;
+// §9 time-lock: swaps are forbidden if a shift starts within 4 hours. The
+// gateway re-checks this at commit; we also reject inline so the worker never
+// produces an approve for an already-locked shift.
+const TIME_LOCK_HOURS = 4;
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -128,9 +124,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
   });
-  // Inject the service-role client into the vendored compliance supabase binding
-  // so `runSwapGuards` reads under the service role (RLS-blind, 00 D3).
-  setComplianceSupabaseClient(service);
 
   const workerId = `swap-worker:${crypto.randomUUID()}`;
   const summary: WorkerSummary = {
@@ -204,6 +197,14 @@ async function processRow(
       : null;
     const giveaway = !swap.target_shift_id;
 
+    // A 2-way swap whose target shift vanished is no longer evaluable — defer to
+    // the gateway/manager (DONE here, the swap stays MANAGER_PENDING for a human).
+    if (!giveaway && !offeredShift) {
+      await complete(service, row.id, 'DONE', 'target shift gone');
+      summary.done++;
+      return;
+    }
+
     const policy = await resolvePolicy(
       service,
       requesterShift.organization_id,
@@ -230,37 +231,36 @@ async function processRow(
       swap.target_id ? loadRoster(service, swap.target_id, lo, hi) : Promise.resolve([]),
     ]);
 
-    // ── (d) Guards (runSwapGuards reuses the injected service client). ───────
-    const guardResult: GuardResult = await runSwapGuards({
-      shiftIds: [swap.requester_shift_id, swap.target_shift_id].filter(Boolean) as string[],
-      employeeIds: [swap.requester_id, swap.target_id].filter(Boolean) as string[],
-      currentSwapId: swap.id,
-      // No snapshot here: the queue key already encodes the live versions, so a
-      // drift since enqueue produced a NEW key ⇒ a fresh row; the version-CAS in
-      // the gateway is the final drift guard at commit.
-    });
+    // ── (d) Inline guard: existence (above) + 4h time-lock. The remaining
+    // entity/lock/drift checks are DELEGATED to the gateway approve_trade
+    // (version-CAS + time-lock) at commit time. The version-CAS is also the
+    // final drift guard: the queue key already encodes the live versions, so a
+    // drift since enqueue produced a NEW key ⇒ a fresh row.
+    const guardResult = computeInlineGuards(requesterShift, offeredShift);
     const guards: GuardSummary = {
       passed: guardResult.passed,
       codes: guardResult.violations.map((v) => v.code),
     };
 
-    // ── (d) Solver (swapEvaluator.evaluate — pure, partyA/partyB shape). ─────
-    const solverRaw: SolverResult = swapEvaluator.evaluate({
-      partyA: {
-        employee_id: swap.requester_id,
-        name: 'Requester',
-        current_shifts: requesterRoster.map(toRosterShift),
-        shift_to_give: shiftToRosterShift(requesterShift),
-      },
-      partyB: {
-        employee_id: swap.target_id ?? '__giveaway__',
-        name: 'Offerer',
-        current_shifts: offererRoster.map(toRosterShift),
-        shift_to_give: offeredShift
-          ? shiftToRosterShift(offeredShift)
-          : shiftToRosterShift(requesterShift), // giveaway: B receives Rs, gives nothing meaningful
-      },
-    });
+    // ── (d) Solver via evaluate-compliance, decomposed PER PARTY. ────────────
+    // Party A (requester) receives the offered shift (skip on a giveaway — they
+    // receive nothing). Party B (offerer/target) receives the requester shift.
+    const partyA = !giveaway && offeredShift && swap.target_id
+      ? await evaluateParty(service, {
+          employeeId: swap.requester_id,
+          receivesShift: offeredShift, // RECEIVES the target shift
+          excludeShiftId: swap.requester_shift_id, // GIVES UP their own
+        })
+      : null;
+    const partyB = swap.target_id
+      ? await evaluateParty(service, {
+          employeeId: swap.target_id,
+          receivesShift: requesterShift, // RECEIVES the requester shift
+          excludeShiftId: giveaway ? undefined : swap.target_shift_id ?? undefined,
+        })
+      : null;
+
+    const solverRaw = buildSolverResult(partyA, partyB);
     const solver = toSolverSummary(solverRaw);
     const solverSignals = toSolverSignals(solverRaw);
 
@@ -302,7 +302,7 @@ async function processRow(
       decision: decision.decision,
       guard_result: guardResult,
       eligibility_result: eligibility,
-      solver_result: redactSolver(solverRaw),
+      solver_result: solverRaw,
       reason: decision.reason,
       policy_version: policy.version,
       engine_version: ENGINE_VERSION,
@@ -423,6 +423,169 @@ async function complete(
     // row becomes reclaimable; idempotency makes a re-process safe.
     console.error('[auto-approve-swaps] queue complete failed', queueId, status, e.message);
   }
+}
+
+// =============================================================================
+// COMPLIANCE — evaluate-compliance HTTP delegation (APPROACH A)
+//
+// One call PER PARTY for the shift that party RECEIVES post-swap, excluding the
+// shift they give up. Mirrors the deployed contract (compliance.service.ts):
+//   POST ${SUPABASE_URL}/functions/v1/evaluate-compliance
+//   headers: Authorization+apikey = SERVICE_ROLE_KEY
+//   body: { employee_id, shift_date, start_time, end_time, net_length_minutes,
+//           exclude_shift_id?, shift_id?, override_role_id?, override_skill_ids?,
+//           override_license_ids? }
+//   → { status: 'passed'|'violated'|'warned'|'unavailable',
+//       violations: string[], warnings: string[], ... }
+// =============================================================================
+
+type ComplianceStatus = 'passed' | 'violated' | 'warned' | 'unavailable';
+
+interface ComplianceResult {
+  status: ComplianceStatus;
+  violations: string[];
+  warnings: string[];
+  // ...other fields (weeklyHours, qualificationViolations, …) are passed through
+  // opaquely; the worker only needs status/violations/warnings.
+}
+
+/** Per-party post-swap compliance verdict, kept in the audited solver_result. */
+interface PartyResult {
+  employee_id: string;
+  received_shift_id: string;
+  excluded_shift_id: string | null;
+  status: ComplianceStatus;
+  violations: string[];
+  warnings: string[];
+}
+
+async function evaluateParty(
+  service: SupabaseClient,
+  args: {
+    employeeId: string;
+    receivesShift: ShiftRow;
+    excludeShiftId?: string;
+  },
+): Promise<PartyResult> {
+  const s = args.receivesShift;
+  const body = {
+    employee_id: args.employeeId,
+    shift_date: s.shift_date,
+    start_time: s.start_time,
+    end_time: s.end_time,
+    net_length_minutes: paidMinutes(s),
+    exclude_shift_id: args.excludeShiftId ?? null,
+    shift_id: s.id, // drives the qualification check for the received shift
+    override_role_id: null,
+    override_skill_ids: null,
+    override_license_ids: null,
+  };
+
+  const res = await callEvaluateCompliance(service, body);
+
+  return {
+    employee_id: args.employeeId,
+    received_shift_id: s.id,
+    excluded_shift_id: args.excludeShiftId ?? null,
+    status: res.status,
+    violations: res.violations ?? [],
+    warnings: res.warnings ?? [],
+  };
+}
+
+/**
+ * Invoke the deployed evaluate-compliance function. Prefers the supabase-js
+ * functions.invoke transport (handles base URL + auth headers) and falls back
+ * to a raw fetch. A transport failure or an 'unavailable' verdict is treated as
+ * fail-closed by the caller (buildSolverResult marks unavailable → BLOCKING).
+ */
+async function callEvaluateCompliance(
+  service: SupabaseClient,
+  body: Record<string, unknown>,
+): Promise<ComplianceResult> {
+  // Primary path: supabase-js functions.invoke (resolves URL + service-role auth).
+  // deno-lint-ignore no-explicit-any
+  const fns = (service as any)?.functions;
+  if (fns && typeof fns.invoke === 'function') {
+    const { data, error } = await fns.invoke('evaluate-compliance', { body });
+    if (!error && data) return normalizeCompliance(data);
+    // fall through to fetch on transport error
+    console.warn('[auto-approve-swaps] functions.invoke failed, falling back to fetch', error);
+  }
+
+  // Fallback path: raw fetch with explicit service-role headers.
+  const url = `${SUPABASE_URL}/functions/v1/evaluate-compliance`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      apikey: SERVICE_ROLE_KEY as string,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    return { status: 'unavailable', violations: [], warnings: [`http ${resp.status}`] };
+  }
+  return normalizeCompliance(await resp.json());
+}
+
+// deno-lint-ignore no-explicit-any
+function normalizeCompliance(raw: any): ComplianceResult {
+  const status: ComplianceStatus = ['passed', 'violated', 'warned', 'unavailable'].includes(
+    raw?.status,
+  )
+    ? raw.status
+    : 'unavailable';
+  return {
+    status,
+    violations: Array.isArray(raw?.violations) ? raw.violations : [],
+    warnings: Array.isArray(raw?.warnings) ? raw.warnings : [],
+  };
+}
+
+/**
+ * Fold the per-party compliance verdicts into the SolverResult shape the
+ * decision matrix + audit payload consume.
+ *
+ * - any party 'violated' OR 'unavailable' (fail-closed) ⇒ feasible=false,
+ *   verdict BLOCKING.
+ * - any party 'warned' (and none violated) ⇒ feasible=true, verdict WARNING.
+ * - both 'passed' ⇒ feasible=true, verdict PASS.
+ */
+function buildSolverResult(
+  partyA: PartyResult | null,
+  partyB: PartyResult | null,
+): SolverResultLite {
+  const parties = [partyA, partyB].filter(Boolean) as PartyResult[];
+
+  const anyViolated = parties.some(
+    (p) => p.status === 'violated' || p.status === 'unavailable',
+  );
+  const anyWarned = parties.some((p) => p.status === 'warned');
+
+  const violations = parties
+    .filter((p) => p.status === 'violated' || p.status === 'unavailable')
+    .map((p) => ({
+      employee_id: p.employee_id,
+      status: p.status,
+      messages: p.status === 'unavailable'
+        ? ['compliance engine unavailable (fail-closed)']
+        : p.violations,
+    }));
+
+  const warnings = parties
+    .filter((p) => p.status === 'warned')
+    .map((p) => ({ employee_id: p.employee_id, messages: p.warnings }));
+
+  return {
+    feasible: !anyViolated,
+    verdict: anyViolated ? 'BLOCKING' : anyWarned ? 'WARNING' : 'PASS',
+    partyA,
+    partyB,
+    violations,
+    warnings,
+  };
 }
 
 // =============================================================================
@@ -636,6 +799,55 @@ async function checkAbuse(
   return { rateLimited, launderingCycle: false };
 }
 
+// Abuse thresholds (02 §4 — defaults; overridable via policy.rules params).
+const RATE_LIMIT_WINDOW_DAYS = 7;
+const PAIRWISE_WINDOW_DAYS = 30;
+const PAIRWISE_MAX_DEFAULT = 3;
+
+// =============================================================================
+// INLINE GUARDS — existence (loaders) + 4h time-lock. The rest of the v8
+// runSwapGuards surface (entity validity, concurrency, drift) is DELEGATED to
+// the gateway approve_trade (version-CAS + time-lock) at commit time.
+// =============================================================================
+
+interface InlineGuardResult {
+  passed: boolean;
+  violations: { code: string; message: string }[];
+  delegated_to_gateway: string[];
+}
+
+function computeInlineGuards(
+  requesterShift: ShiftRow,
+  offeredShift: ShiftRow | null,
+): InlineGuardResult {
+  const violations: { code: string; message: string }[] = [];
+
+  // 4h time-lock on either leg (the gateway re-checks; we reject early so the
+  // worker never proposes an approve for a locked shift).
+  for (const s of [requesterShift, offeredShift].filter(Boolean) as ShiftRow[]) {
+    if (isTimeLocked(s.shift_date, s.start_time)) {
+      violations.push({
+        code: 'TIME_LOCKED',
+        message: `shift ${s.id} starts within ${TIME_LOCK_HOURS}h (or has started)`,
+      });
+    }
+  }
+
+  return {
+    passed: violations.length === 0,
+    violations,
+    delegated_to_gateway: ['entity_validity', 'version_cas_drift', 'lock_recheck'],
+  };
+}
+
+/** True when the shift starts within the 4h lock window or has already started. */
+function isTimeLocked(shiftDate: string, startTime: string): boolean {
+  const startMs = Date.parse(`${shiftDate}T${hhmm(startTime)}:00Z`);
+  if (Number.isNaN(startMs)) return false; // unparseable ⇒ don't block on the lock here
+  const hoursUntil = (startMs - Date.now()) / 3_600_000;
+  return hoursUntil < TIME_LOCK_HOURS;
+}
+
 // =============================================================================
 // MAPPERS: DB rows → engine inputs
 // =============================================================================
@@ -659,7 +871,7 @@ function buildEligibilityInput(
 
   const requester: EligParty = {
     employee_id: requesterId,
-    is_active: true, // entity-active is gated by runSwapGuards; default true here
+    is_active: true, // entity-active is gated by the gateway; default true here
     held_certs: [], // cert sources are not loaded in this scaffold (see risks)
     roster: requesterRoster.map(toRosterEntry),
     available_for_received: null, // unknown → fail-closed in the engine
@@ -708,74 +920,47 @@ function toRosterEntry(r: RosterRow): RosterEntry {
   };
 }
 
-// swapEvaluator expects RosterShift = V8Shift ({id, date, start_time(HH:mm), end_time, is_ordinary_hours, ...}).
-// deno-lint-ignore no-explicit-any
-function shiftToRosterShift(s: ShiftRow): any {
-  return {
-    id: s.id,
-    date: s.shift_date,
-    shift_date: s.shift_date,
-    start_time: hhmm(s.start_time),
-    end_time: hhmm(s.end_time),
-    is_ordinary_hours: true,
-    unpaid_break_minutes: s.unpaid_break_minutes ?? 0,
-    role_id: s.role_id ?? undefined,
-  };
+// =============================================================================
+// SOLVER RESULT SHAPE (local — no vendored v8 types)
+// =============================================================================
+
+interface SolverResultLite {
+  feasible: boolean;
+  verdict: 'PASS' | 'WARNING' | 'BLOCKING';
+  partyA: PartyResult | null;
+  partyB: PartyResult | null;
+  violations: { employee_id: string; status: ComplianceStatus; messages: string[] }[];
+  warnings: { employee_id: string; messages: string[] }[];
 }
 
-// deno-lint-ignore no-explicit-any
-function toRosterShift(r: RosterRow): any {
-  return {
-    id: r.id,
-    date: r.shift_date,
-    shift_date: r.shift_date,
-    start_time: hhmm(r.start_time),
-    end_time: hhmm(r.end_time),
-    is_ordinary_hours: true,
-    unpaid_break_minutes: r.unpaid_break_minutes ?? 0,
-  };
-}
-
-function toSolverSummary(r: SolverResult): SolverSummary {
-  const hasBlocking = r.violations.some((v) => v.blocking);
-  const hasWarning = r.warnings.length > 0;
-  const verdict: SolverSummary['verdict'] = hasBlocking
-    ? 'BLOCKING'
-    : hasWarning
-      ? 'WARNING'
-      : 'PASS';
+function toSolverSummary(r: SolverResultLite): SolverSummary {
   return {
     feasible: r.feasible,
-    verdict,
-    blocking: r.violations
-      .filter((v) => v.blocking)
-      .map((v: ConstraintViolation) => ({ employee_name: v.employee_name, summary: v.summary })),
+    verdict: r.verdict,
+    blocking: r.violations.map((v) => ({
+      employee_name: v.employee_id,
+      summary: v.messages.join('; ') || v.status,
+    })),
   };
 }
 
-function toSolverSignals(r: SolverResult): SolverSignals {
-  const fatigueHits = r.all_results
-    .filter((v) => FATIGUE_RULE_IDS.has(v.constraint_id) && v.blocking)
-    .map((v) => v.constraint_id);
-  const otHits = r.warnings
-    .filter((v) => OVERTIME_RULE_IDS.has(v.constraint_id))
-    .map((v) => v.constraint_id);
+function toSolverSignals(r: SolverResultLite): SolverSignals {
+  // evaluate-compliance does not split fatigue vs overtime by constraint id; it
+  // returns coarse violations/warnings. Map: a per-party BLOCKING verdict feeds
+  // the always-on fatigue gate as a blocking signal (belt-and-braces — overlap
+  // is also re-checked in the eligibility engine), and any warning feeds the
+  // overtime/warning signals + the confidence penalty.
+  const fatigueBlocking = r.verdict === 'BLOCKING';
+  const warningCount = r.warnings.reduce((n, w) => n + (w.messages.length || 1), 0);
+  const overtimeWarning = warningCount > 0;
   return {
-    fatigue_blocking: fatigueHits.length > 0,
-    fatigue_hits: fatigueHits,
-    overtime_warning: otHits.length > 0,
-    overtime_hits: otHits,
-    warning_count: r.warnings.length,
-  };
-}
-
-/** Keep the audit payload bounded: drop the (large) scenario echo. */
-function redactSolver(r: SolverResult): Record<string, unknown> {
-  return {
-    feasible: r.feasible,
-    violations: r.violations,
-    warnings: r.warnings,
-    solve_time_ms: r.solve_time_ms,
+    fatigue_blocking: fatigueBlocking,
+    fatigue_hits: fatigueBlocking
+      ? r.violations.flatMap((v) => v.messages.length ? v.messages : [v.status])
+      : [],
+    overtime_warning: overtimeWarning,
+    overtime_hits: r.warnings.flatMap((w) => w.messages),
+    warning_count: warningCount,
   };
 }
 

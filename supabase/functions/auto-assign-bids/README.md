@@ -1,10 +1,12 @@
 # `auto-assign-bids` — Supabase Edge Function
 
-Server-side host for the **pure v8 bidding brain** (`runBidSelection`). It takes a
-manager-supplied scope, builds one consistent snapshot under the service role
-(RLS-blind, so compliance sees every bidder's full schedule), runs the
-deterministic decision model, and commits each selected winner through the
-existing `sm_apply_shift_op('select_winner', …)` gateway with version-CAS.
+Server-side worker that drains open-for-bidding shifts in a manager-supplied
+scope and commits a winner for each through the existing
+`sm_apply_shift_op('select_winner', …)` gateway with version-CAS. It builds one
+consistent snapshot under the service role (open shifts + their pending bids +
+F3 fairness debts), then **decides each shift per-bidder by calling the deployed
+`evaluate-compliance` Edge Function over HTTP** — the first bidder whose result
+is not `'violated'` wins.
 
 Implements `docs/implementation/01-auto-assign-bids-refactor.md` §2 (orchestration)
 and §8 (API), bound by `docs/implementation/00-contracts-and-conventions.md`
@@ -12,46 +14,59 @@ and §8 (API), bound by `docs/implementation/00-contracts-and-conventions.md`
 
 ---
 
-## ⚠️ DEPLOYMENT STATUS — NOT deployable as-is (read before deploying)
+## ✅ DEPLOYMENT STATUS — APPROACH A (self-contained worker)
 
-This function `import`s `@compliance/v8/orchestrator/bidding/...` (the TypeScript
-engine). **That tree is NOT vendored** — `_vendor/` holds only the sentry +
-supabase-client shims. Two facts block a clean deploy, both discovered 2026-06-24:
+This function was refactored to **approach A** (2026-06-24): the vendored v8 TS
+compliance engine was **dropped**. The function now imports ONLY
+`@supabase/supabase-js`, Deno built-ins, and `./types.ts`, so it bundles under
+Deno exactly like the other deployed functions (`evaluate-compliance`,
+`autoschedule-*`, `get-roster-view`): supabase-js + `fetch` + pure local TS.
 
-1. **Deno is not installed in the build environment**, so a vendored bundle cannot
-   be verified locally (`deno check`).
-2. **No existing Edge Function in this project vendors the v8 TS engine.** The proven
-   server-side-compliance pattern here is **DB-RPC delegation** — the deployed
-   `evaluate-compliance` function calls `check_shift_overlap`, `calculate_weekly_hours`,
-   `validate_rest_period`, `check_shift_compliance`; `autoschedule-*` are the same
-   shape (supabase-js + fetch + pure TS). Vendoring `runBidSelection` swims against
-   that grain.
+### What changed
 
-### Corrected approach before deploy — pick one
+- **Removed** the `@compliance/v8/orchestrator/bidding/...` + `../types` engine
+  imports, `runBidSelection`/`runV8Orchestrator`, and the whole `_vendor/` tree
+  (the sentry + supabase-client shims and the `@compliance/` import-map alias).
+- **Replaced** the global decision model with a per-shift, per-bidder loop that
+  mirrors the hardened CLIENT path (`OpenBidsView` `handleAutoAssign`): for each
+  open shift (chronological), fetch its pending bids (FIFO, with F3 fairness-debt
+  owed bidders first), and for each bidder POST `evaluate-compliance` with the
+  SHIFT's `shift_date` / `start_time` / `end_time` / `net_length_minutes` +
+  `shift_id` (so the qualification check runs) + `employee_id = bidder`. The first
+  bidder whose `status !== 'violated'` wins (`'warned'` counts as eligible unless
+  `options.reject_warnings`; `'unavailable'` is fail-closed = not eligible).
+- **Kept intact:** the run model (`sm_assignment_run_start` → per-winner commit
+  via the `sm_apply_shift_op` gateway → `assignment_decisions` /
+  `assignment_events` → `sm_assignment_run_finish`), the dry-run path
+  (`committed = false`, no gateway), the resumable cursor, the per-shift
+  try/catch, and the bounded CAS retry on `VERSION_CONFLICT`.
 
-- **(A — recommended, deployable without Deno gymnastics)** Drop the `@compliance/...`
-  imports. Keep the run model (`sm_assignment_run_*`) and the per-winner commit via
-  `sm_select_bid_winner` / the gateway. For per-candidate compliance, call the deployed
-  **`evaluate-compliance`** function over HTTP per bidder (this is exactly what the
-  current client `handleAutoAssign` loop does conceptually, but server-side and
-  transactional). This yields a worker shaped like `evaluate-compliance`/`autoschedule-*`
-  (supabase-js + `fetch` + pure local TS) that bundles reliably. Tradeoff: you lose
-  `runBidSelection`'s *global* optimization (it becomes per-shift first-clear-bidder,
-  same as today) — acceptable for v1; revisit with (B) later.
-- **(B — full fidelity, needs Deno)** Vendor `src/modules/compliance/v8/**` into
-  `_vendor/compliance/`, append `.ts` to every relative import, redirect browser deps
-  via `import_map.json`, and adapt `import.meta.env` → `Deno.env`. ~60 files;
-  **requires `deno check` to verify** before deploy.
+### Tradeoff (documented approach-A cost)
 
-The hardened DB write path (`sm_select_bid_winner`) + audit tables + run RPCs are
-already live in prod and protect the **current client** auto-assign regardless of this
-function. So there is no urgency to deploy this; do it correctly, not fast.
+The decision is necessarily **per-shift, first-clear-bidder**. We no longer run
+`runBidSelection`'s *global* optimization (scoring across all shifts/bidders to
+maximise total coverage). That is the accepted v1 cost of self-containment;
+revisit with approach B (vendor + `deno check`) later if global optimality is
+needed.
 
-> **Status:** scaffold. Not deployed in this environment. The draft migration
-> that creates `assignment_runs` / `assignment_decisions` / `assignment_events`
-> and the `sm_assignment_run_*` RPCs lives at
+### Correctness caveat — compliance rule set
+
+`evaluate-compliance` is **not** the v8 engine. It runs four DB-RPC checks:
+overlap, **weekly hours capped at 48h** (`calculate_weekly_hours`), **11h rest**
+(`validate_rest_period`), and qualification (`check_shift_compliance`). The v8
+bidding engine enforced a broader/different rule set (e.g. fatigue streak /
+20-in-28 / spread-of-hours / student-visa 48h windows). So a bidder this worker
+clears may have failed a v8-only rule, and vice-versa. The 48h weekly cap here is
+the AU default, not the v8 ordinary-hours model. This is acceptable for v1
+because the deployed `sm_select_bid_winner` gateway re-enforces its own P0 guards
+(time-lock, winner-pending, FSM legality) at commit regardless.
+
+> **Status:** self-contained scaffold. The draft migration that creates
+> `assignment_runs` / `assignment_decisions` / `assignment_events` and the
+> `sm_assignment_run_*` RPCs lives at
 > `docs/implementation/migrations-draft/0001_assignment_audit_and_engine.sql`
 > and must be promoted to prod **before** this function will work end-to-end.
+> `evaluate-compliance` is already deployed in prod.
 
 ---
 
@@ -101,103 +116,62 @@ constants stamped on every decision (00 §8).
 
 ---
 
-## Bundling — IMPORTANT (the one thing a reviewer must understand)
+## Bundling — self-contained (APPROACH A)
 
-The v8 compliance engine under `src/modules/compliance/v8/**` is **browser/Node
-TypeScript**, authored for Vite. It cannot be imported into Deno as-is. The exact
-incompatible surface that the bidding pipeline transitively reaches:
+There is **nothing to vendor**. `index.ts` imports only:
+
+- `@supabase/supabase-js` (pinned in `import_map.json` to `npm:@supabase/supabase-js@2.50.0`),
+- Deno built-ins (`Deno.serve`, `Deno.env`, `fetch`, `crypto.subtle`, `TextEncoder`),
+- `./types.ts` (pure local wire types).
+
+No `@compliance`, no `_vendor/`, no shims, no `import.meta.env`. The function
+bundles under Deno like `evaluate-compliance` / `autoschedule-*`. The only mapped
+specifier in `import_map.json` is the supabase-js pin.
+
+### How compliance is called
+
+For each `(shift, bidder)` the worker POSTs to the deployed function:
 
 ```
-bidding/index.ts        (runBidSelection — PURE, fine)
-  → bidding/evaluator.ts
-      → ../index.ts  (runV8Orchestrator)   ← imports `@sentry/react`
-                                            ← reads `import.meta.env.VITE_*`
-                                            ← imports ./audit.ts
-                                                 → `@/platform/supabase/client`
-                                                 → `@sentry/react`
-                                                 → `import.meta.env.VITE_*`
+POST ${SUPABASE_URL}/functions/v1/evaluate-compliance
+  headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+             apikey: ${SERVICE_ROLE_KEY},
+             'Content-Type': 'application/json' }
+  body: { employee_id: <bidder>,
+          shift_date, start_time:'HH:mm:ss', end_time:'HH:mm:ss',
+          net_length_minutes: <gross − unpaid break>,
+          shift_id: <shift.id>,                 // enables the qualification check
+          override_role_id, override_skill_ids, override_license_ids }
 ```
 
-`runBidSelection` itself is pure, but it pulls `runV8Orchestrator` for the
-per-bid compliance simulation, which drags in those three browser-only deps.
-None of `@sentry/react`, the Vite alias `@/…`, or `import.meta.env` exist under
-Deno. (`windows.ts` is **fine** — an earlier grep flagged it only because it
-contains the substring `window`; it has no browser import.)
-
-### Approach chosen: **VENDOR + import-map shim** (not `npm:` and not a path alias to `src/`)
-
-We do **not** point Deno at `src/` directly (it would try to resolve the Vite
-alias and Sentry against the browser build) and we do **not** publish the engine
-to npm. Instead:
-
-1. **Vendor** the compliance engine into `./_vendor/compliance/v8/**` — a copy of
-   `src/modules/compliance/v8/**`, unchanged source. The function-local import map
-   aliases `@compliance/` → `./_vendor/compliance/`, and `index.ts` imports **only**
-   `runBidSelection` (+ types) from it. *(This directory is intentionally not
-   created by the scaffold — see "Vendoring step" — to avoid duplicating ~40
-   engine files into the repo before the human deploy step. The import map and
-   shims that make it work ARE committed.)*
-
-2. **Shim the three browser-only leaves** through the same import map
-   (already committed):
-
-   | Original specifier | Deno replacement | Why it's safe |
-   |---|---|---|
-   | `@/platform/supabase/client` | `./_vendor/_shims/supabase-client.ts` | Only `audit.ts` uses it, for a *fire-and-forget* `compliance_rejections` insert + `auth.getUser()`. The shim is a no-op client. The run's own `assignment_decisions`/`assignment_events` are the audit of record (01 §3.9), so we deliberately do **not** want the per-candidate simulation writing its own rows here. |
-   | `@sentry/react` | `./_vendor/_shims/sentry.ts` | The engine calls only `getClient()` / `addBreadcrumb()`. No-ops. |
-   | `import.meta.env.VITE_*` | **needs adaptation** (see below) | `import.meta.env` is undefined in Deno → a bare read throws `TypeError`. |
-
-3. **`import.meta.env`** cannot be fixed by an import map (it's a syntax-level
-   global, not a module). Two of the vendored files read it:
-   - `v8/orchestrator/index.ts:32` — `import.meta.env.VITE_COMPLIANCE_BLOCKING_ENABLED`
-   - `v8/orchestrator/audit.ts:17` — `import.meta.env.VITE_COMPLIANCE_REJECTION_PERSIST`
-
-   During the vendoring step, replace those two reads with a Deno-safe helper, e.g.
-   `Deno.env.get('VITE_COMPLIANCE_BLOCKING_ENABLED')`, or hard-pin the flag (the
-   engine defaults both to "enabled unless the value is exactly `'false'`", which
-   is the behaviour we want server-side anyway). This is the **single source edit**
-   the vendoring needs; everything else copies verbatim.
-
-### Vendoring step (run once before deploy, or wire into CI)
-
-```bash
-# Copy the engine into the function (kept out of git history until the human
-# deploy step decides how to vendor — submodule, copy, or build artifact).
-mkdir -p supabase/functions/auto-assign-bids/_vendor/compliance
-cp -R src/modules/compliance/v8 \
-      supabase/functions/auto-assign-bids/_vendor/compliance/v8
-
-# Apply the single import.meta.env adaptation (2 files) — see step 3 above.
-# (A codemod/sed in CI is preferable to a manual edit so re-vendoring is reproducible.)
-```
-
-> **Why a copy and not a Deno symlink to `src/`:** `supabase functions deploy`
-> bundles only what lives under the function directory; a symlink out to `src/`
-> is not portable to the deployed runtime. A vendored copy (or a CI build step
-> that produces it) is the robust option. If drift between `src/` and `_vendor/`
-> is a concern, add a CI check that re-vendors and `git diff --exit-code`s.
-
-Once `_vendor/compliance/v8/**` exists and the two `import.meta.env` reads are
-adapted, `supabase functions deploy auto-assign-bids` bundles cleanly:
-`runBidSelection` runs unchanged, the two shims satisfy its browser deps.
+Response `status`: `'violated'` = blocking (bidder out), `'warned'` = warning
+(eligible unless `options.reject_warnings`), `'passed'` = clear, `'unavailable'`
+= checks couldn't run (**fail-closed** ⇒ treated as not eligible). The first
+bidder that is not blocked wins the shift. A `fetch`/HTTP failure is mapped to
+`'unavailable'` so a transport blip never silently passes an ineligible bidder.
 
 ---
 
 ## Behaviour notes
 
 - **Fail-closed (D5).** Every per-shift error is *recorded* (`outcome:'ERROR'`),
-  never thrown. The top-level handler catch aborts the run (`status:'ABORTED'`)
-  and still returns structured JSON. A run is never left `RUNNING` on a throw.
+  never thrown. A compliance `'unavailable'`/`fetch` failure blocks that bidder
+  (it does not auto-pass). The top-level handler catch aborts the run
+  (`status:'ABORTED'`) and still returns structured JSON. A run is never left
+  `RUNNING` on a throw.
 - **Idempotency (D4, 00 §5).** Two layers: the gateway dedups on a deterministic
   UUIDv5 of `run_id:shift_id` (matched against `shift_events.metadata->>'idem'`),
   and `assignment_decisions` has `UNIQUE(run_id, shift_id)` with
   `ON CONFLICT DO NOTHING`. A resumed run never double-commits.
-- **Concurrency (00 D1, 01 §5).** Winners commit in `shift_id ASC` order
-  (consistent lock ordering) with bounded CAS retry (`MAX_CAS_ATTEMPTS=3`,
-  50/100/200 ms backoff + jitter). On `VERSION_CONFLICT` the engine re-reads the
-  envelope's `current_state`; if the shift is no longer `S5`/`S6` it records
-  `SKIPPED_BLOCKED` instead of retrying.
-- **Dry run.** Computes + persists decisions with `version_after=null` and never
-  calls the gateway. Returns the full `preview[]` (01 §8.1).
+- **Ordering & concurrency (00 D1, 01 §5).** Shifts are decided + committed in
+  `shift_date` order (then `shift_id` as tiebreak) so streak/window-style checks
+  accumulate chronologically — matching the client loop. Within a shift, bidders
+  are tried FIFO with F3 fairness-debt-owed bidders first. Each commit uses a
+  bounded CAS retry (`MAX_CAS_ATTEMPTS=3`, 50/100/200 ms backoff + jitter); on
+  `VERSION_CONFLICT` the worker re-reads the envelope's `current_state` and, if
+  the shift is no longer `S5`/`S6`, records `SKIPPED_BLOCKED` instead of retrying.
+- **Dry run.** Decides each shift (same per-bidder compliance calls) and persists
+  decisions with `version_after=null`; never calls the gateway. Returns the full
+  `preview[]` (01 §8.1).
 - **Resumability (01 §2.5).** `assignment_runs.cursor = {last_shift_id}` advances
   after each decision; a re-invoke with the same `run_id` resumes after it.

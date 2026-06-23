@@ -1,17 +1,10 @@
 {
-  "//": "Function-local import map for auto-approve-swaps. Mirrors the",
-  "//bundling": "auto-assign-bids strategy: VENDOR the v8 compliance engine and",
-  "//shims": "rewire its browser-only leaves so Deno can bundle it. See README.md.",
-  "//swap-note": "The swap pipeline (runSwapGuards + swapEvaluator) reuses the v8",
-  "//swap-note2": "swap-engine. swapEvaluator is pure; runSwapGuards reads the DB via",
-  "//swap-note3": "the supabase-client shim, into which the worker injects a real",
-  "//swap-note4": "service-role client (see _vendor/_shims/supabase-client.ts).",
+  "//": "Function-local import map for auto-approve-swaps (APPROACH A — see README).",
+  "//strategy": "Self-contained: supabase-js + fetch + pure local TS. The worker",
+  "//strategy2": "calls the deployed evaluate-compliance Edge Function over HTTP",
+  "//strategy3": "instead of vendoring the v8 TS compliance engine. No @compliance",
+  "//strategy4": "alias, no _vendor engine, no browser-only shims.",
   "imports": {
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.50.0",
-
-    "@compliance/": "./_vendor/compliance/",
-
-    "@/platform/supabase/client": "./_vendor/_shims/supabase-client.ts",
-    "@sentry/react": "./_vendor/_shims/sentry.ts"
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.50.0"
   }
 }
