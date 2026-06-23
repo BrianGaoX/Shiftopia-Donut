@@ -1,0 +1,10 @@
+{
+  "//": "Function-local import map for auto-assign-bids (APPROACH A). The function",
+  "//approach": "is self-contained: it calls the deployed evaluate-compliance Edge",
+  "//approach2": "Function over HTTP instead of vendoring the v8 compliance engine, so",
+  "//approach3": "the only mapped specifier is the supabase-js pin. No @compliance, no",
+  "//approach4": "_vendor shims. See README.md §Bundling.",
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.50.0"
+  }
+}

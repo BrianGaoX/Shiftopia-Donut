@@ -1,0 +1,10 @@
+{
+  "//": "Function-local import map for auto-approve-swaps (APPROACH A — see README).",
+  "//strategy": "Self-contained: supabase-js + fetch + pure local TS. The worker",
+  "//strategy2": "calls the deployed evaluate-compliance Edge Function over HTTP",
+  "//strategy3": "instead of vendoring the v8 TS compliance engine. No @compliance",
+  "//strategy4": "alias, no _vendor engine, no browser-only shims.",
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.50.0"
+  }
+}
