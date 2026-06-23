@@ -806,6 +806,10 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
 
     setIsAutoAssigning(true);
     let assigned = 0, skipped = 0, failed = 0;
+    // Per-reason breakdown for shifts the hardened RPC rejected (returns a row,
+    // not a thrown error): SHIFT_TIME_LOCKED / WINNER_NOT_PENDING / ILLEGAL_STATE /
+    // SHIFT_GONE / … . These are skipped-with-reason, NOT generic failures.
+    const rpcRejections = new Map<string, number>();
     const userId = (await supabase.auth.getUser()).data.user?.id;
 
     // Cache student-visa enforcement flag per employee to avoid redundant DB calls.
@@ -813,15 +817,43 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
     const visaFlagCache = new Map<string, boolean>();
     const getVisaFlag = async (employeeId: string): Promise<boolean> => {
       if (visaFlagCache.has(employeeId)) return visaFlagCache.get(employeeId)!;
+      // S3 fix: an employee can hold MORE than one 'WorkRights' license row, so
+      // `.maybeSingle()` would THROW (PGRST116) and abort this bidder entirely.
+      // Fetch all matching rows and reduce with OR — restricted if ANY says so.
       const { data } = await supabase
         .from('employee_licenses')
         .select('has_restricted_work_limit')
         .eq('employee_id', employeeId)
-        .eq('license_type', 'WorkRights')
-        .maybeSingle();
-      const flag = data?.has_restricted_work_limit ?? false;
+        .eq('license_type', 'WorkRights');
+      const flag = (data ?? []).some(r => r.has_restricted_work_limit === true);
       visaFlagCache.set(employeeId, flag);
       return flag;
+    };
+
+    // R4/R5 fix: the candidate shift's required qualifications + role live on the
+    // `shifts` table (required_skills / required_licenses are skills.id / licenses.id
+    // UUIDs — the SAME namespace as employee_skills.skill_id / employee_licenses.license_id,
+    // i.e. the qualification_ids fetchV8EmployeeContext hydrates). They are NOT on the
+    // client ManagerBidShift object, so fetch them once per shift and cache (no N calls).
+    // required_qualifications = union(required_licenses, required_skills) so the V8
+    // qualifications rule fires for unqualified bidders instead of being silently disabled.
+    const shiftQualCache = new Map<string, { roleId: string; requiredQualifications: string[] }>();
+    const getShiftQuals = async (shiftId: string, fallbackRoleId: string) => {
+      if (shiftQualCache.has(shiftId)) return shiftQualCache.get(shiftId)!;
+      const { data } = await supabase
+        .from('shifts')
+        .select('role_id, required_skills, required_licenses')
+        .eq('id', shiftId)
+        .maybeSingle();
+      const entry = {
+        roleId: (data?.role_id as string | null) ?? fallbackRoleId,
+        requiredQualifications: [
+          ...((data?.required_licenses as string[] | null) ?? []),
+          ...((data?.required_skills   as string[] | null) ?? []),
+        ].filter(Boolean),
+      };
+      shiftQualCache.set(shiftId, entry);
+      return entry;
     };
 
     for (const shift of urgentShifts) {
@@ -873,24 +905,38 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
 
         let winnerBid: { id: string; employee_id: string } | null = null;
 
+        // R4/R5: resolve the candidate shift's real role + required qualifications
+        // ONCE per shift (identical for every bidder) so the V8 qualifications/role
+        // rules enforce instead of being disabled by a hardcoded [] / ''.
+        const candidateQuals = await getShiftQuals(shift.id, shift.roleId || '');
+
         for (const bid of orderedBids) {
           const { data: existingRaw } = await supabase
             .from('shifts')
-            .select('id, start_time, end_time, shift_date, unpaid_break_minutes')
+            .select('id, start_time, end_time, shift_date, unpaid_break_minutes, role_id, required_skills, required_licenses')
             .eq('assigned_employee_id', bid.employee_id)
             .gte('shift_date', startDate)
             .lte('shift_date', endDate)
             .is('deleted_at', null)
             .eq('is_cancelled', false);
 
-          const existingShifts: ShiftTimeRange[] = (existingRaw || [])
-            .filter((s: any) => s.id !== shift.id)
-            .map((s: any) => ({
-              shift_date:           s.shift_date,
-              start_time:           s.start_time,
-              end_time:             s.end_time,
-              unpaid_break_minutes: s.unpaid_break_minutes || 0,
-            }));
+          // R5 fix: keep each existing shift's real role_id + required_qualifications
+          // so cross-shift role/qual rules can fire (was '' / [] before). Carried on the
+          // ShiftTimeRange via extra fields the V8 mapper below reads.
+          const existingRows = (existingRaw || []).filter((s: any) => s.id !== shift.id);
+          const existingShifts: ShiftTimeRange[] = existingRows.map((s: any) => ({
+            shift_date:           s.shift_date,
+            start_time:           s.start_time,
+            end_time:             s.end_time,
+            unpaid_break_minutes: s.unpaid_break_minutes || 0,
+            // non-ShiftTimeRange extras consumed only by the V8 existing-shift mapper:
+            id:                   s.id,
+            role_id:              s.role_id || '',
+            required_qualifications: [
+              ...((s.required_licenses as string[] | null) ?? []),
+              ...((s.required_skills   as string[] | null) ?? []),
+            ].filter(Boolean),
+          })) as ShiftTimeRange[];
 
           // Fetch the student-visa enforcement flag for this bidder.
           // This makes STUDENT_VISA_48H blocking (not just a warning) when the
@@ -928,13 +974,13 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
               employeeId: input.employee_id,
               employeeContext: autoEmployeeCtx,
               existingShifts: existingShifts.map((s, idx) => ({
-                id:                      (s as any).shift_id || `s-${idx}`,
+                id:                      (s as any).id || `s-${idx}`,
                 date:                    s.shift_date,
                 shift_date:              s.shift_date,
                 start_time:              (s.start_time || '').replace(/:\d{2}$/, ''),
                 end_time:                (s.end_time   || '').replace(/:\d{2}$/, ''),
-                role_id:                 '',
-                required_qualifications: [],
+                role_id:                 (s as any).role_id || '',
+                required_qualifications: (s as any).required_qualifications || [],
                 is_ordinary_hours:       true,
                 break_minutes:           s.unpaid_break_minutes || 0,
                 unpaid_break_minutes:    s.unpaid_break_minutes || 0,
@@ -945,11 +991,11 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
                 shift_date:              shift.date,
                 start_time:              shift.startTime,
                 end_time:                shift.endTime,
-                role_id:                 shift.roleId || '',
+                role_id:                 candidateQuals.roleId,
                 organization_id:         shift.organizationId,
                 department_id:           shift.departmentId,
                 sub_department_id:       shift.subDepartmentId,
-                required_qualifications: [],
+                required_qualifications: candidateQuals.requiredQualifications,
                 is_ordinary_hours:       true,
                 break_minutes:           0,
                 unpaid_break_minutes:    shift.unpaidBreak || 0,
@@ -968,14 +1014,28 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
 
         if (!winnerBid) { skipped++; continue; }
 
-        // Assign the compliance-clear winner
-        const { error } = await (supabase as any).rpc('sm_select_bid_winner', {
+        // Assign the compliance-clear winner.
+        // The hardened sm_select_bid_winner now returns a jsonb ROW
+        // ({ success, error }) on a guarded rejection (FOUND / FSM / winner-pending /
+        // TTS) — supabase.rpc surfaces that as `data`, NOT as `error`. Only a true
+        // transport/DB exception lands in `error`. Inspect both.
+        const { data: rpcData, error } = await (supabase as any).rpc('sm_select_bid_winner', {
           p_shift_id:  shift.id,
           p_winner_id: winnerBid.employee_id,
           p_user_id:   userId,
         });
 
-        if (error) { failed++; } else { assigned++; }
+        if (error) {
+          // Transport / unexpected DB exception → genuine failure.
+          failed++;
+        } else if (rpcData && rpcData.success === false) {
+          // Guarded rejection — skipped-with-reason, not a failure.
+          const reason = (rpcData.error as string) || 'REJECTED';
+          rpcRejections.set(reason, (rpcRejections.get(reason) ?? 0) + 1);
+          skipped++;
+        } else {
+          assigned++;
+        }
       } catch {
         failed++;
       }
@@ -983,9 +1043,21 @@ export const OpenBidsView: React.FC<OpenBidsViewProps> = ({
 
     setIsAutoAssigning(false);
     queryClient.invalidateQueries({ queryKey: shiftKeys.managerBidShiftsRoot });
+    // Human-readable breakdown of guarded RPC rejections, appended to the toast.
+    const REJECTION_LABELS: Record<string, string> = {
+      SHIFT_TIME_LOCKED:  'time-locked',
+      WINNER_NOT_PENDING: 'bid no longer pending',
+      ILLEGAL_STATE:      'not open for selection',
+      SHIFT_GONE:         'shift removed',
+    };
+    const rejectionBreakdown = [...rpcRejections.entries()]
+      .map(([reason, n]) => `${n} ${REJECTION_LABELS[reason] ?? reason.toLowerCase()}`)
+      .join(', ');
     toast({
       title:       'Auto-Assign Complete',
-      description: `${assigned} assigned · ${skipped} skipped · ${failed} failed`,
+      description:
+        `${assigned} assigned · ${skipped} skipped · ${failed} failed` +
+        (rejectionBreakdown ? ` (${rejectionBreakdown})` : ''),
     });
   }, [shifts, toast, queryClient, organizationId]);
 
