@@ -4,6 +4,38 @@ Drains `swap_review_queue` and decides each MANAGER_PENDING swap: **AUTO_APPROVE
 
 > Status: **NOT deployed.** Code + unit tests only. The DB side (tables, trigger, RPCs) is already live in prod (migrations `20260623140946`, `20260623143908`), but no org has an enabled policy, so the queue is empty and nothing runs.
 
+---
+
+## ⚠️ DEPLOYMENT STATUS — NOT deployable as-is (read before deploying)
+
+This worker `import`s `@compliance/v8/swap-engine/...` (`runSwapGuards`,
+`swapEvaluator`). **That tree is NOT vendored** — `_vendor/` holds only shims. Two
+blockers, discovered 2026-06-24:
+
+1. **Deno is not installed** in the build environment → a vendored bundle cannot be
+   verified locally.
+2. **No Edge Function in this project vendors the v8 TS engine.** The proven pattern is
+   **DB-RPC delegation** (the deployed `evaluate-compliance` calls `check_shift_overlap`,
+   `calculate_weekly_hours`, `validate_rest_period`, `check_shift_compliance`).
+
+### Corrected approach before deploy — pick one
+
+- **(A — recommended, deployable without Deno gymnastics)** Drop the
+  `@compliance/...` imports. For a **2-way swap the constraints are per-employee** (no
+  shared schedule), so call the deployed **`evaluate-compliance`** function once per
+  party with that party's post-swap shift; treat `violated` → blocking, `warned` →
+  WARNING. This is a sound decomposition of `swapEvaluator` for 2-way swaps and yields a
+  worker shaped like the existing deployable functions (supabase-js + `fetch` + pure
+  TS). Keep `eligibility.ts` + `decision-matrix.ts` unchanged.
+- **(B — full fidelity, needs Deno)** Vendor `src/modules/compliance/v8/swap-engine/**`
+  (+ its v8 deps) into `_vendor/compliance/`, fix extensions/aliases/`import.meta.env`,
+  and `deno check`.
+
+`eligibility.ts` + `decision-matrix.ts` (35 passing tests) are correct under either
+approach. The DB layer is inert until an org enables a policy, so there is no urgency —
+do it correctly. Everything else in this README (deploy command, cron, staging) applies
+once the compliance integration is switched to approach A or B.
+
 ## Flow
 
 ```

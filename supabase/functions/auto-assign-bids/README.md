@@ -10,6 +10,43 @@ Implements `docs/implementation/01-auto-assign-bids-refactor.md` §2 (orchestrat
 and §8 (API), bound by `docs/implementation/00-contracts-and-conventions.md`
 (decisions D1–D5; idempotency §5; enums §6; routes §7).
 
+---
+
+## ⚠️ DEPLOYMENT STATUS — NOT deployable as-is (read before deploying)
+
+This function `import`s `@compliance/v8/orchestrator/bidding/...` (the TypeScript
+engine). **That tree is NOT vendored** — `_vendor/` holds only the sentry +
+supabase-client shims. Two facts block a clean deploy, both discovered 2026-06-24:
+
+1. **Deno is not installed in the build environment**, so a vendored bundle cannot
+   be verified locally (`deno check`).
+2. **No existing Edge Function in this project vendors the v8 TS engine.** The proven
+   server-side-compliance pattern here is **DB-RPC delegation** — the deployed
+   `evaluate-compliance` function calls `check_shift_overlap`, `calculate_weekly_hours`,
+   `validate_rest_period`, `check_shift_compliance`; `autoschedule-*` are the same
+   shape (supabase-js + fetch + pure TS). Vendoring `runBidSelection` swims against
+   that grain.
+
+### Corrected approach before deploy — pick one
+
+- **(A — recommended, deployable without Deno gymnastics)** Drop the `@compliance/...`
+  imports. Keep the run model (`sm_assignment_run_*`) and the per-winner commit via
+  `sm_select_bid_winner` / the gateway. For per-candidate compliance, call the deployed
+  **`evaluate-compliance`** function over HTTP per bidder (this is exactly what the
+  current client `handleAutoAssign` loop does conceptually, but server-side and
+  transactional). This yields a worker shaped like `evaluate-compliance`/`autoschedule-*`
+  (supabase-js + `fetch` + pure local TS) that bundles reliably. Tradeoff: you lose
+  `runBidSelection`'s *global* optimization (it becomes per-shift first-clear-bidder,
+  same as today) — acceptable for v1; revisit with (B) later.
+- **(B — full fidelity, needs Deno)** Vendor `src/modules/compliance/v8/**` into
+  `_vendor/compliance/`, append `.ts` to every relative import, redirect browser deps
+  via `import_map.json`, and adapt `import.meta.env` → `Deno.env`. ~60 files;
+  **requires `deno check` to verify** before deploy.
+
+The hardened DB write path (`sm_select_bid_winner`) + audit tables + run RPCs are
+already live in prod and protect the **current client** auto-assign regardless of this
+function. So there is no urgency to deploy this; do it correctly, not fast.
+
 > **Status:** scaffold. Not deployed in this environment. The draft migration
 > that creates `assignment_runs` / `assignment_decisions` / `assignment_events`
 > and the `sm_assignment_run_*` RPCs lives at
