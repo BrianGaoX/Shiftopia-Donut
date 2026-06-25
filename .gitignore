@@ -35,3 +35,8 @@ __pycache__/
 
 # Claude Code agent worktrees — transient; never commit as gitlinks
 .claude/worktrees/
+
+# Capacitor iOS
+ios/App/Pods/
+ios/App/App.xcworkspace/xcuserdata/
+ios/.DS_Store
