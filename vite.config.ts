@@ -24,11 +24,11 @@ export default defineConfig(({ mode }) => ({
       gzipSize: true,
       brotliSize: true,
     }),
-    viteCompression({
+    mode === 'production' && !process.env.CAPACITOR_BUILD && viteCompression({
       algorithm: 'gzip',
       ext: '.gz',
     }),
-    viteCompression({
+    mode === 'production' && !process.env.CAPACITOR_BUILD && viteCompression({
       algorithm: 'brotliCompress',
       ext: '.br',
     }),
