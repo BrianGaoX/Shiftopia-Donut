@@ -63,9 +63,9 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children, noPadding = false }) =>
           isCollapsed ? "md:ml-0" : "md:ml-[280px]",
           // Roster pages must not scroll at top level
           noPadding
-            ? "p-0 overflow-hidden bg-background"
+            ? "p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] overflow-hidden bg-background md:pt-0 md:pb-0"
             // Normal pages scroll normally
-            : "p-4 sm:p-6 md:p-8 pb-32 md:pb-8 overflow-auto bg-background bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-background to-background"
+            : "px-4 pb-32 pt-[calc(env(safe-area-inset-top,0px)+1rem)] sm:p-6 md:p-8 md:pb-8 overflow-auto bg-background bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-background to-background"
         )}
       >
         {/* Critical Fix: use min-h-0 instead of h-full */}

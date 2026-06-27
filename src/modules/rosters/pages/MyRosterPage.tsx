@@ -37,6 +37,9 @@ const MyRosterNavigator: React.FC<{
 
     const range = computeRange(selectedDate, view);
     const label = formatRangeLabel(range, view);
+    const mobileLabel = view === 'month'
+        ? format(selectedDate, 'MMM yyyy')
+        : format(selectedDate, 'd MMM');
 
     const handlePrev = () => onDateChange(navigateDate(selectedDate, view, -1));
     const handleNext = () => onDateChange(navigateDate(selectedDate, view, 1));
@@ -53,7 +56,7 @@ const MyRosterNavigator: React.FC<{
     };
 
     const buttonBaseCls = cn(
-        "flex items-center gap-2 h-10 lg:h-11 px-2.5 lg:px-4 rounded-xl transition-all font-black tabular-nums text-[10px]",
+        "flex items-center gap-1.5 h-10 lg:h-11 px-2.5 lg:px-4 rounded-xl transition-all font-black tabular-nums text-[10px] whitespace-nowrap",
         isDark 
             ? "bg-[#111827]/60 text-white hover:bg-[#252d40]" 
             : "bg-white text-slate-900 border border-slate-200/50 shadow-sm hover:bg-slate-50"
@@ -103,9 +106,10 @@ const MyRosterNavigator: React.FC<{
 
                 <Popover open={isPickerOpen} onOpenChange={setIsPickerOpen}>
                     <PopoverTrigger asChild>
-                        <button className={buttonBaseCls}>
+                        <button className={cn(buttonBaseCls, "min-w-[70px] justify-center")}>
                             <Calendar className="w-3.5 h-3.5 opacity-50" />
-                            <span className="tracking-tight">{label}</span>
+                            <span className="tracking-tight sm:hidden">{mobileLabel}</span>
+                            <span className="hidden tracking-tight sm:inline">{label}</span>
                         </button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="center">
@@ -267,7 +271,7 @@ const MyRosterPage: React.FC = () => {
           initial={{ scale: 0, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0, opacity: 0 }}
-          className="md:hidden fixed bottom-24 right-5 z-40"
+          className="md:hidden fixed bottom-[calc(max(0.375rem,calc(env(safe-area-inset-bottom,0px)-1.25rem))+84px)] right-5 z-40"
         >
           <button
             onClick={(e) => {

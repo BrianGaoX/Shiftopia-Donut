@@ -32,6 +32,7 @@ const BottomNavbar: React.FC = () => {
   const [isBottomDrawerActive, setIsBottomDrawerActive] = useState(false);
   const location = useLocation();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const mobileDockBottom = 'max(0.375rem, calc(env(safe-area-inset-bottom, 0px) - 1.25rem))';
 
   useEffect(() => {
     const checkDrawer = () => {
@@ -210,7 +211,8 @@ const BottomNavbar: React.FC = () => {
               default: { type: 'spring', damping: 25, stiffness: 350 },
               filter: { type: 'tween', duration: 0.2, ease: 'easeOut' }
             }}
-            className="fixed bottom-[110px] left-4 right-4 z-[59] rounded-[32px] bg-card/80 backdrop-blur-3xl border border-white/20 dark:border-white/10 shadow-[0_24px_48px_-12px_rgba(0,0,0,0.3)] overflow-hidden"
+            style={{ bottom: `calc(${mobileDockBottom} + 5.5rem)` }}
+            className="fixed left-4 right-4 z-[59] rounded-[32px] bg-card/80 backdrop-blur-3xl border border-white/20 dark:border-white/10 shadow-[0_24px_48px_-12px_rgba(0,0,0,0.3)] overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-white/0 dark:from-white/10 dark:to-white/0 pointer-events-none" />
             <div className="relative p-5">
@@ -256,8 +258,8 @@ const BottomNavbar: React.FC = () => {
           opacity: isBottomDrawerActive ? 0 : 1 
         }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        style={{ pointerEvents: isBottomDrawerActive ? 'none' : 'auto' }}
-        className="md:hidden fixed bottom-6 left-4 right-4 z-[60] h-[72px] bg-background/80 dark:bg-black/60 backdrop-blur-3xl border border-white/20 dark:border-white/10 shadow-[0_24px_40px_-10px_rgba(0,0,0,0.3)] rounded-[36px] flex items-center p-2 gap-2 overflow-hidden"
+        style={{ bottom: mobileDockBottom, pointerEvents: isBottomDrawerActive ? 'none' : 'auto' }}
+        className="md:hidden fixed left-4 right-4 z-[60] h-[72px] bg-background/80 dark:bg-black/60 backdrop-blur-3xl border border-white/20 dark:border-white/10 shadow-[0_24px_40px_-10px_rgba(0,0,0,0.3)] rounded-[36px] flex items-center p-2 gap-2 overflow-hidden"
       >
         {/* SCROLLABLE TRACK */}
         <div 

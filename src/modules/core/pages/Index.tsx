@@ -318,7 +318,7 @@ const Index: React.FC = () => {
         initial={{ y: -24, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="relative z-20 mx-auto flex w-full max-w-[1500px] items-center justify-between px-8 py-6 lg:px-16"
+        className="relative z-20 mx-auto flex w-full max-w-[1500px] items-center justify-between px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+1rem)] sm:px-8 lg:px-16"
       >
         <Logo />
         <div className="flex items-center gap-2">
@@ -345,7 +345,7 @@ const Index: React.FC = () => {
             initial={{ opacity: 0, y: 28 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.05 }}
-            className="text-[clamp(3.5rem,6vw,5.5rem)] font-medium leading-[1.08] tracking-tight text-[#160e2e]"
+            className="text-[2.65rem] font-medium leading-[1.08] tracking-tight text-[#160e2e] sm:text-[3.5rem] lg:text-[5.5rem]"
           >
             <span className="text-white drop-shadow-md">Stop Chasing Shifts.</span>{' '}
             <span className="text-fuchsia-200/90 drop-shadow-md">

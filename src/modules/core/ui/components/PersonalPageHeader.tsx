@@ -58,14 +58,14 @@ export const PersonalPageHeader: React.FC<PersonalPageHeaderProps> = ({
                 </div>
                 <div className="flex flex-col items-end gap-2">
                     <div className="text-right">
-                        <div className="flex items-center justify-end gap-3 mb-1">
+                        <div className="flex items-baseline justify-end gap-1 mb-1">
                             <p className="text-3xl font-mono font-black tabular-nums leading-none text-slate-800 dark:text-foreground">
                                 {format(now, 'HH:mm')}
                             </p>
+                            <p className="text-xs font-mono tabular-nums text-slate-400 dark:text-muted-foreground">
+                                :{format(now, 'ss')}
+                            </p>
                         </div>
-                        <p className="text-xs font-mono tabular-nums text-slate-400 dark:text-muted-foreground">
-                            :{format(now, 'ss')}
-                        </p>
                     </div>
                     {rightActions && (
                         <div className="flex items-center gap-2">
