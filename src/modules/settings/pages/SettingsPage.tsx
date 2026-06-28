@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/modules/core/contexts/ThemeContext';
 import { cn } from '@/modules/core/lib/utils';
 import { PersonalPageHeader } from '@/modules/core/ui/components/PersonalPageHeader';
+import { ThemeToggleSwitch } from '@/modules/core/ui/components/ThemeSelector';
 import { SettingsFunctionBar } from '../ui/components/SettingsFunctionBar';
 import { Input } from '@/modules/core/ui/primitives/input';
 import { Label } from '@/modules/core/ui/primitives/label';
@@ -48,6 +49,7 @@ const DEFAULT_BRAND_COLOR = '#A48AFB';
    ============================================================ */
 const AppearanceSettings: React.FC = () => {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
   const { orgBranding, updateBranding, updateLanguage, isOrgLoading } = useSettings();
   const [brandColor, setBrandColor] = useState(DEFAULT_BRAND_COLOR);
   const [chartStyle, setChartStyle] = useState('default');
@@ -55,6 +57,22 @@ const AppearanceSettings: React.FC = () => {
   const [cookieBanner, setCookieBanner] = useState('default');
   const [enableGroupColoring, setEnableGroupColoring] = useState(false);
   const [hexError, setHexError] = useState(false);
+  const headingClass = isDark ? 'text-white' : 'text-slate-900';
+  const descriptionClass = isDark ? 'text-blue-200/60' : 'text-slate-500';
+  const mutedClass = isDark ? 'text-blue-200/40' : 'text-slate-400';
+  const dividerClass = isDark ? 'bg-white/5' : 'bg-slate-200/70';
+  const panelClass = cn(
+    'p-6 rounded-2xl border',
+    isDark ? 'bg-white/5 border-white/5' : 'bg-white/80 border-slate-200 shadow-sm'
+  );
+  const optionCardClass = cn(
+    'overflow-hidden rounded-xl border-2 transition-all',
+    isDark ? 'bg-[#1a2744]/50' : 'bg-white'
+  );
+  const optionHeaderClass = cn(
+    'p-3 text-xs font-medium border-b capitalize',
+    isDark ? 'bg-white/5 text-white/80 border-white/5' : 'bg-slate-100 text-slate-700 border-slate-200'
+  );
 
   useEffect(() => {
     if (orgBranding && !updateBranding.isPending && !updateLanguage.isPending) {
@@ -115,29 +133,50 @@ const AppearanceSettings: React.FC = () => {
 
   return (
     <div className="space-y-10">
+      {/* Theme Mode Section */}
+      <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
+        <div>
+          <h3 className={cn('text-base font-semibold', headingClass)}>Theme mode</h3>
+          <p className={cn('text-sm mt-1', descriptionClass)}>
+            Switch between light and dark mode.
+          </p>
+        </div>
+        <div className={cn(panelClass, 'flex items-center justify-between')}>
+          <div>
+            <p className={cn('text-sm font-medium', headingClass)}>{isDark ? 'Dark mode' : 'Light mode'}</p>
+            <p className={cn('text-xs mt-0.5', mutedClass)}>Your choice is saved on this device.</p>
+          </div>
+          <ThemeToggleSwitch />
+        </div>
+      </div>
+
+      <div className={cn('h-px w-full', dividerClass)}></div>
+
       {/* Brand Color Section */}
       <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
         <div>
-          <h3 className="text-base font-semibold text-white">{t('settings.brand_color')}</h3>
-          <p className="text-sm text-blue-200/60 mt-1">
+          <h3 className={cn('text-base font-semibold', headingClass)}>{t('settings.brand_color')}</h3>
+          <p className={cn('text-sm mt-1', descriptionClass)}>
             Global color for your organization.
           </p>
         </div>
         <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-4 p-6 rounded-2xl bg-white/5 border border-white/5">
+          <div className={cn(panelClass, 'flex items-center gap-4')}>
             <div 
               className="h-12 w-12 rounded-xl ring-2 ring-white/10 shadow-lg transition-colors duration-300" 
               style={{ backgroundColor: /^[0-9A-F]{6}$/i.test(brandColor.replace('#','')) ? brandColor : '#333' }}
             ></div>
             <div className="relative flex-1 max-w-[200px]">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-white/40 font-mono">
+              <div className={cn('absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none font-mono', isDark ? 'text-white/40' : 'text-slate-400')}>
                 #
               </div>
               <Input
                 value={brandColor.replace('#', '')}
                 onChange={(e) => handleBrandColorChange(e.target.value)}
                 maxLength={6}
-                className={`pl-8 h-12 bg-black/20 border-white/10 text-white font-mono tracking-wide transition-all ${
+                className={`pl-8 h-12 font-mono tracking-wide transition-all ${
+                  isDark ? 'bg-black/20 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
+                } ${
                   hexError ? 'border-red-500/50 ring-1 ring-red-500/20' : 'focus:border-primary/50'
                 }`}
               />
@@ -146,7 +185,7 @@ const AppearanceSettings: React.FC = () => {
               variant="ghost" 
               size="sm" 
               onClick={handleReset}
-              className="text-white/40 hover:text-white hover:bg-white/5"
+              className={isDark ? 'text-white/40 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'}
             >
               {t('common.cancel')}
             </Button>
@@ -155,13 +194,13 @@ const AppearanceSettings: React.FC = () => {
         </div>
       </div>
 
-      <div className="h-px bg-white/5 w-full"></div>
+      <div className={cn('h-px w-full', dividerClass)}></div>
 
       {/* Chart Style Section */}
       <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
         <div>
-          <h3 className="text-base font-semibold text-white">{t('settings.chart_style')}</h3>
-          <p className="text-sm text-blue-200/60 mt-1">
+          <h3 className={cn('text-base font-semibold', headingClass)}>{t('settings.chart_style')}</h3>
+          <p className={cn('text-sm mt-1', descriptionClass)}>
             Visual style for analytics.
           </p>
         </div>
@@ -174,10 +213,8 @@ const AppearanceSettings: React.FC = () => {
                 chartStyle === style ? 'scale-[1.02]' : ''
               }`}
             >
-              <div className={`overflow-hidden rounded-xl border-2 bg-[#1a2744]/50 transition-all ${
-                chartStyle === style ? 'border-primary shadow-glow/20' : 'border-white/10 hover:border-white/20'
-              }`}>
-                <div className="bg-white/5 p-3 text-xs font-medium text-white/80 border-b border-white/5 capitalize">
+              <div className={cn(optionCardClass, chartStyle === style ? 'border-primary shadow-glow/20' : isDark ? 'border-white/10 hover:border-white/20' : 'border-slate-200 hover:border-slate-300')}>
+                <div className={optionHeaderClass}>
                   {style.replace('-', ' ')}
                 </div>
                 <div className="p-6 h-36 flex items-center justify-center">
@@ -199,13 +236,13 @@ const AppearanceSettings: React.FC = () => {
         </div>
       </div>
 
-      <div className="h-px bg-white/5 w-full"></div>
+      <div className={cn('h-px w-full', dividerClass)}></div>
 
       {/* Language Section */}
       <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
         <div>
-          <h3 className="text-base font-semibold text-white">{t('settings.language')}</h3>
-          <p className="text-sm text-blue-200/60 mt-1">
+          <h3 className={cn('text-base font-semibold', headingClass)}>{t('settings.language')}</h3>
+          <p className={cn('text-sm mt-1', descriptionClass)}>
             {t('settings.language_description')}
           </p>
         </div>
@@ -226,7 +263,7 @@ const AppearanceSettings: React.FC = () => {
               }
             );
           }}>
-            <SelectTrigger className="w-full sm:w-[280px] h-11 bg-white/5 border-white/10 text-white hover:bg-white/10 focus:border-primary/50">
+            <SelectTrigger className={cn('w-full sm:w-[280px] h-11 focus:border-primary/50', isDark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50')}>
               <div className="flex items-center gap-3">
                 <span className="text-lg">
                   {SUPPORTED_LOCALES.find(l => l.code === language)?.flag ?? '🌐'}
@@ -245,13 +282,13 @@ const AppearanceSettings: React.FC = () => {
         </div>
       </div>
 
-      <div className="h-px bg-white/5 w-full"></div>
+      <div className={cn('h-px w-full', dividerClass)}></div>
 
       {/* Cookie Banner Section */}
       <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
         <div>
-          <h3 className="text-base font-semibold text-white">{t('settings.cookie_banner')}</h3>
-          <p className="text-sm text-blue-200/60 mt-1">
+          <h3 className={cn('text-base font-semibold', headingClass)}>{t('settings.cookie_banner')}</h3>
+          <p className={cn('text-sm mt-1', descriptionClass)}>
             Display cookie banners to visitors.
           </p>
         </div>
@@ -264,15 +301,13 @@ const AppearanceSettings: React.FC = () => {
                 cookieBanner === option ? 'scale-[1.02]' : ''
               }`}
             >
-              <div className={`overflow-hidden rounded-xl border-2 bg-[#1a2744]/50 transition-all ${
-                cookieBanner === option ? 'border-primary shadow-glow/20' : 'border-white/10 hover:border-white/20'
-              }`}>
-                <div className="bg-white/5 p-3 text-xs font-medium text-white/80 border-b border-white/5 capitalize">
+              <div className={cn(optionCardClass, cookieBanner === option ? 'border-primary shadow-glow/20' : isDark ? 'border-white/10 hover:border-white/20' : 'border-slate-200 hover:border-slate-300')}>
+                <div className={optionHeaderClass}>
                   {option}
                 </div>
                 <div className="p-4 h-32 flex items-end justify-center">
                   {option === 'none' ? (
-                    <div className="text-xs text-white/30 font-medium px-3 py-1 bg-white/5 rounded-full mb-4">No banner</div>
+                    <div className={cn('text-xs font-medium px-3 py-1 rounded-full mb-4', isDark ? 'text-white/30 bg-white/5' : 'text-slate-400 bg-slate-100')}>No banner</div>
                   ) : (
                     <div className={`w-full h-8 ${option === 'simplified' ? 'h-6 w-3/4' : ''} bg-primary/20 rounded-md border border-primary/30 flex items-center justify-center mb-2`}>
                       <div className="w-12 h-1.5 bg-primary/40 rounded-full"></div>
@@ -290,24 +325,24 @@ const AppearanceSettings: React.FC = () => {
         </div>
       </div>
 
-      <div className="h-px bg-white/5 w-full"></div>
+      <div className={cn('h-px w-full', dividerClass)}></div>
 
       {/* Group Coloring Section */}
       <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-start">
         <div>
-          <h3 className="text-base font-semibold text-white">Advanced coloring</h3>
-          <p className="text-sm text-blue-200/60 mt-1">
+          <h3 className={cn('text-base font-semibold', headingClass)}>Advanced coloring</h3>
+          <p className={cn('text-sm mt-1', descriptionClass)}>
             Group-based card themes.
           </p>
         </div>
-        <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-between">
+        <div className={cn(panelClass, 'flex items-center justify-between')}>
           <div className="flex items-center gap-4">
             <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
               <Palette className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <p className="text-sm font-medium text-white">Group-based Card Coloring</p>
-              <p className="text-xs text-blue-200/40 mt-0.5">Automatically color-code timecards by center (Convention, Exhibition, Theatre).</p>
+              <p className={cn('text-sm font-medium', headingClass)}>Group-based Card Coloring</p>
+              <p className={cn('text-xs mt-0.5', mutedClass)}>Automatically color-code timecards by center (Convention, Exhibition, Theatre).</p>
             </div>
           </div>
           <Switch 
