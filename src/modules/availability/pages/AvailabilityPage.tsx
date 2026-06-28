@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { addMonths, subMonths } from 'date-fns';
 import { CalendarDays, ChevronLeft, ChevronRight, Plus, RefreshCw } from 'lucide-react';
 import { useAvailability } from '../state/useAvailability';
@@ -178,6 +178,27 @@ export const AvailabilityPage: React.FC = () => {
           editingData={editingData}
         />
       </motion.div>
+
+      <AnimatePresence>
+        {!editingData.editState.mode && (
+          <motion.div
+            key="availability-create-fab"
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0, opacity: 0 }}
+            transition={{ type: 'spring', damping: 22, stiffness: 320 }}
+            className="fixed bottom-[calc(max(0.375rem,calc(env(safe-area-inset-bottom,0px)-1.25rem))+84px)] right-5 z-40 md:hidden"
+          >
+            <Button
+              onClick={handleAddAvailability}
+              size="icon"
+              className="h-14 w-14 rounded-full shadow-2xl bg-primary text-primary-foreground hover:scale-105 active:scale-95 transition-all duration-300"
+            >
+              <Plus className="h-7 w-7 stroke-[3]" />
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

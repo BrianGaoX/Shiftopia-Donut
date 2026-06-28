@@ -107,12 +107,12 @@ export const UnifiedModuleFunctionBar: React.FC<UnifiedModuleFunctionBarProps> =
         const unwrappedFilters = unwrapChildren(filters);
         const unwrappedChildrenList = unwrapChildren(children);
 
-        const totalColumns = 
-            (datePickerActive ? 1 : 0) +
-            (viewModeActive ? 1 : 0) +
-            unwrappedFilters.length +
-            unwrappedChildrenList.length +
-            (refreshActive ? 1 : 0);
+        const columnTracks = [
+            ...(datePickerActive ? ['minmax(44px, 0.7fr)'] : []),
+            ...(viewModeActive ? ['minmax(44px, 0.7fr)'] : []),
+            ...unwrappedFilters.map(() => 'minmax(0, 1.8fr)'),
+            ...(refreshActive ? ['minmax(44px, 0.55fr)'] : []),
+        ];
 
         return (
             <div 
@@ -126,7 +126,7 @@ export const UnifiedModuleFunctionBar: React.FC<UnifiedModuleFunctionBarProps> =
                     className
                 )}
                 style={{
-                    gridTemplateColumns: `repeat(${totalColumns}, minmax(0, 1fr))`
+                    gridTemplateColumns: columnTracks.join(' ')
                 }}
             >
                 {/* 1. Filter by Date */}
@@ -257,14 +257,14 @@ export const UnifiedModuleFunctionBar: React.FC<UnifiedModuleFunctionBarProps> =
 
                 {/* 3. Group By / Filters */}
                 {unwrappedFilters.map((filter, idx) => (
-                    <div key={`filter-${idx}`} className="w-full">
+                    <div key={`filter-${idx}`} className="w-full min-w-0">
                         {filter}
                     </div>
                 ))}
 
                 {/* 4. Bulk Mode & Settings (passed as children) */}
                 {unwrappedChildrenList.map((child, idx) => (
-                    <div key={`child-${idx}`} className="w-full">
+                    <div key={`child-${idx}`} className="w-full col-span-full [&_button]:w-full [&_button]:justify-center">
                         {child}
                     </div>
                 ))}

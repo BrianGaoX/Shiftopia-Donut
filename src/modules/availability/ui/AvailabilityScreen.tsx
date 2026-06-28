@@ -25,13 +25,11 @@ import { itemVariants, tabTransition } from '@/modules/core/ui/motion/presets';
 import {
   ChevronLeft,
   ChevronRight,
-  Plus,
   RefreshCw,
   Calendar,
   ClipboardList,
   Settings,
 } from 'lucide-react';
-import { Button } from '@/modules/core/ui/primitives/button';
 import { useToast } from '@/modules/core/hooks/use-toast';
 import { cn } from '@/modules/core/lib/utils';
 import { useTheme } from '@/modules/core/contexts/ThemeContext';
@@ -104,7 +102,6 @@ export function AvailabilityScreen({
 
   const {
     editState,
-    startCreate,
     startEdit,
     cancelEdit,
     submitEdit,
@@ -413,28 +410,6 @@ export function AvailabilityScreen({
             />
           )}
         </motion.div>
-      </AnimatePresence>
-
-      {/* Floating Action Button (Mobile Only) */}
-      <AnimatePresence>
-        {!editState.mode && (
-          <motion.div
-            key="availability-create-fab"
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0, opacity: 0 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 320 }}
-            className="fixed bottom-[calc(max(0.375rem,calc(env(safe-area-inset-bottom,0px)-1.25rem))+84px)] right-6 z-50 md:hidden"
-          >
-            <Button
-              onClick={startCreate}
-              size="icon"
-              className="h-16 w-16 rounded-full shadow-2xl bg-primary text-primary-foreground hover:scale-110 active:scale-95 transition-all duration-300"
-            >
-              <Plus className="h-8 w-8 stroke-[3]" />
-            </Button>
-          </motion.div>
-        )}
       </AnimatePresence>
     </motion.div>
   );

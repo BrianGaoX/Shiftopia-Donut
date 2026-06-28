@@ -58,10 +58,6 @@ import { TimesheetTable } from '@/modules/timesheets/ui/components/TimesheetTabl
 
 // ── Motion variants ────────────────────────────────────────────────────────────
 
-const pageVariants: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.04, delayChildren: 0.02 } },
-};
 const itemVariants: Variants = {
   hidden: { opacity: 0, y: 8 },
   show: { opacity: 1, y: 0, transition: { ease: [0.16, 1, 0.3, 1], duration: 0.4 } },
@@ -653,12 +649,7 @@ const AttendancePage: React.FC = () => {
 
 
   return (
-    <motion.div
-      variants={pageVariants}
-      initial="hidden"
-      animate="show"
-      className="h-full flex flex-col overflow-hidden p-4 lg:p-6 space-y-4"
-    >
+    <div className="h-full flex flex-col overflow-hidden p-4 lg:p-6 space-y-4">
       {/* ── Unified Header ────────────────────────────────────────────── */}
       <div className="sticky top-0 z-30">
         <div className={cn(
@@ -808,7 +799,7 @@ const AttendancePage: React.FC = () => {
         </div>
       </div>
 
-    </motion.div>
+    </div>
   );
 };
 
