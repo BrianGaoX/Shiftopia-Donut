@@ -32,30 +32,11 @@ FOR SELECT
 TO authenticated
 USING (
   public.is_admin()
-  OR EXISTS (
-    SELECT 1
-    FROM public.profiles p
-    WHERE p.id = (SELECT auth.uid())
-      AND p.is_active = true
-      AND p.legacy_organization_id = departments.organization_id
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM public.user_contracts uc
-    WHERE uc.user_id = (SELECT auth.uid())
-      AND uc.status = 'Active'
-      AND uc.organization_id = departments.organization_id
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM public.app_access_certificates ac
-    WHERE ac.user_id = (SELECT auth.uid())
-      AND ac.is_active = true
-      AND (
-        ac.access_level = 'zeta'
-        OR ac.organization_id = departments.organization_id
-        OR ac.department_id = departments.id
-      )
+  OR public.user_has_action_in_scope(
+    'roster.view',
+    departments.organization_id,
+    departments.id,
+    NULL::uuid
   )
 );
 
@@ -65,30 +46,11 @@ FOR SELECT
 TO authenticated
 USING (
   public.is_admin()
-  OR EXISTS (
-    SELECT 1
-    FROM public.profiles p
-    WHERE p.id = (SELECT auth.uid())
-      AND p.is_active = true
-      AND p.legacy_organization_id = departments.organization_id
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM public.user_contracts uc
-    WHERE uc.user_id = (SELECT auth.uid())
-      AND uc.status = 'Active'
-      AND uc.organization_id = departments.organization_id
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM public.app_access_certificates ac
-    WHERE ac.user_id = (SELECT auth.uid())
-      AND ac.is_active = true
-      AND (
-        ac.access_level = 'zeta'
-        OR ac.organization_id = departments.organization_id
-        OR ac.department_id = departments.id
-      )
+  OR public.user_has_action_in_scope(
+    'roster.view',
+    departments.organization_id,
+    departments.id,
+    NULL::uuid
   )
 );
 
@@ -105,10 +67,10 @@ COMMENT ON POLICY "Authenticated users can update departments" ON public.departm
   IS 'R3: replaces USING/WITH CHECK (true) with admin-only department updates.';
 
 COMMENT ON POLICY "Authenticated users can view all departments" ON public.departments
-  IS 'R3: replaces USING (true) with organization-scoped department visibility.';
+  IS 'R3: replaces USING (true) with RBAC department-scoped visibility.';
 
 COMMENT ON POLICY departments_select ON public.departments
-  IS 'R3: replaces USING (true) with organization-scoped department visibility.';
+  IS 'R3: replaces USING (true) with RBAC department-scoped visibility.';
 
 COMMENT ON POLICY public_read ON public.departments
   IS 'R3: replaces public USING (true) with deny-by-default public access.';
