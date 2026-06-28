@@ -41,11 +41,7 @@ const BottomNavbar: React.FC = () => {
       
       activeElements.forEach((el) => {
         const className = el.className || '';
-        const hasBottomClass = typeof className === 'string' && (
-          className.includes('bottom-0') || 
-          className.includes('slide-in-from-bottom') ||
-          className.includes('inset-x-0')
-        );
+        const hasBottomClass = typeof className === 'string' && className.includes('bottom-0');
         const isVaulDrawer = el.hasAttribute('data-vaul-drawer') || el.closest('[data-vaul-drawer]') !== null;
         
         if (hasBottomClass || isVaulDrawer) {
@@ -264,7 +260,7 @@ const BottomNavbar: React.FC = () => {
         {/* SCROLLABLE TRACK */}
         <div 
           ref={scrollContainerRef}
-          className="flex-1 h-full overflow-x-auto no-scrollbar flex items-center justify-between px-3 relative"
+          className="flex-1 h-full overflow-x-auto scrollbar-none flex items-center justify-between px-3 relative"
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
           {middleItems.map(item => <NavItem key={item.path} item={item} />)}

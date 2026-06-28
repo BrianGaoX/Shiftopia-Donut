@@ -75,7 +75,7 @@ const MyRosterNavigator: React.FC<{
     ];
 
     return (
-        <div className="flex items-center gap-1.5 lg:gap-2">
+        <div className="flex w-full items-center justify-between gap-1 sm:gap-1.5 lg:gap-2">
             {/* View Toggle */}
             <div className={cn(
                 "flex items-center gap-1 p-1 rounded-xl",
@@ -96,17 +96,17 @@ const MyRosterNavigator: React.FC<{
                 ))}
             </div>
 
-            <div className="h-6 w-px bg-border/10 mx-1" />
+            <div className="hidden sm:block h-6 w-px bg-border/10 mx-1" />
 
             {/* Navigation Controls */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 sm:gap-1.5">
                 <button onClick={handlePrev} className={cn(buttonBaseCls, "px-2 lg:px-2")}>
                     <ChevronLeft className="w-4 h-4" />
                 </button>
 
                 <Popover open={isPickerOpen} onOpenChange={setIsPickerOpen}>
                     <PopoverTrigger asChild>
-                        <button className={cn(buttonBaseCls, "min-w-[70px] justify-center")}>
+                        <button className={cn(buttonBaseCls, "min-w-[64px] sm:min-w-[70px] justify-center")}>
                             <Calendar className="w-3.5 h-3.5 opacity-50" />
                             <span className="tracking-tight sm:hidden">{mobileLabel}</span>
                             <span className="hidden tracking-tight sm:inline">{label}</span>
@@ -127,7 +127,7 @@ const MyRosterNavigator: React.FC<{
                 </button>
             </div>
 
-            <div className="h-6 w-px bg-border/10 mx-1" />
+            <div className="hidden sm:block h-6 w-px bg-border/10 mx-1" />
 
             {/* Today Button */}
             <button onClick={handleToday} className={cn(buttonBaseCls, "uppercase tracking-wider")}>
@@ -188,7 +188,7 @@ const MyRosterPage: React.FC = () => {
         isGammaLocked={isGammaLocked}
         functionBar={
           <div className="flex flex-row items-center gap-2 w-full">
-            <div className="flex items-center gap-2 flex-1 min-w-0 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
               <MyRosterNavigator
                 view={view}
                 onViewChange={setView}
@@ -222,7 +222,7 @@ const MyRosterPage: React.FC = () => {
       />
 
       {/* ── BODY (Calendar) ── */}
-      <div className="flex-1 min-h-0 overflow-hidden px-4 lg:px-6 pb-4 lg:pb-6">
+      <div className="flex-1 min-h-0 overflow-hidden px-2 lg:px-6 pb-4 lg:pb-6">
         <div className={cn(
             "h-full rounded-[32px] overflow-hidden transition-all border",
             isDark 

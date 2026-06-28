@@ -52,7 +52,7 @@ export const ManagerBidsPage: React.FC = () => {
 
     const toggleChips = (
         <div className={cn(
-            "flex items-center gap-1 p-1 h-9 rounded-lg",
+            "flex items-center justify-center gap-1 p-1 h-9 rounded-lg",
             isDark ? "bg-[#111827]/60" : "bg-slate-200/50"
         )}>
             {(Object.keys(TOGGLE_CONFIG) as BidToggle[]).map(key => {
