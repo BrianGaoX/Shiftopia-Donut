@@ -6,6 +6,7 @@ import { visualizer } from 'rollup-plugin-visualizer';
 import viteCompression from 'vite-plugin-compression';
 import webfontDl from 'vite-plugin-webfont-dl';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => ({
   server: {
@@ -33,6 +34,17 @@ export default defineConfig(({ mode }) => ({
       ext: '.br',
     }),
     webfontDl(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'icons/*.png'],
+      manifest: false,
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
+    }),
     // Source-map upload runs only when SENTRY_AUTH_TOKEN is present (i.e. in CI
     // for prod builds). Local prod builds without the token still produce
     // source maps but skip the upload, so they never fail the build.
