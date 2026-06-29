@@ -113,9 +113,9 @@ export const GoldStandardHeader: React.FC<GoldStandardHeaderProps> = ({
         // Outer wrapper provides equal padding on all four sides — disconnects
         // the header card from the sidebar, top, right edge, and the body below.
         // We use pb-2 to ensure the gap between header and body is consistent with the top/sides.
-        <div className={cn("flex-shrink-0 p-4 lg:p-6", className)}>
+        <div className={cn("flex-shrink-0 px-2 pt-2 pb-4 lg:p-6", className)}>
             <div className={cn(
-                "rounded-[32px] p-4 lg:p-6 transition-all border relative overflow-hidden",
+                "rounded-[32px] px-3 py-4 lg:p-6 transition-all border relative overflow-hidden",
                 isDark
                     ? "bg-[#1c2333]/40 border-white/5 shadow-2xl shadow-black/20 backdrop-blur-xl"
                     : "bg-white/70 backdrop-blur-md border-white shadow-xl shadow-slate-200/50"

@@ -335,5 +335,6 @@ export function DevPerfOverlay() {
  */
 export function DevPerfOverlayGate() {
     if (!import.meta.env.DEV) return null;
+    if (window.matchMedia('(max-width: 768px), (pointer: coarse)').matches) return null;
     return <DevPerfOverlay />;
 }

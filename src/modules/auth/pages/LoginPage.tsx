@@ -160,7 +160,7 @@ const LoginPage: React.FC = () => {
                   placeholder="name@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-14 pl-12 bg-[#25282c] text-white rounded-xl"
+                  className="h-14 pl-12 bg-[#25282c] text-base text-white rounded-xl"
                 />
               </div>
             </div>
@@ -175,7 +175,7 @@ const LoginPage: React.FC = () => {
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-14 pl-12 pr-12 bg-[#25282c] text-white rounded-xl"
+                  className="h-14 pl-12 pr-12 bg-[#25282c] text-base text-white rounded-xl"
                 />
                 <button
                   type="button"

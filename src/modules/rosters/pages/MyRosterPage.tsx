@@ -37,6 +37,9 @@ const MyRosterNavigator: React.FC<{
 
     const range = computeRange(selectedDate, view);
     const label = formatRangeLabel(range, view);
+    const mobileLabel = view === 'month'
+        ? format(selectedDate, 'MMM yyyy')
+        : format(selectedDate, 'd MMM');
 
     const handlePrev = () => onDateChange(navigateDate(selectedDate, view, -1));
     const handleNext = () => onDateChange(navigateDate(selectedDate, view, 1));
@@ -53,7 +56,7 @@ const MyRosterNavigator: React.FC<{
     };
 
     const buttonBaseCls = cn(
-        "flex items-center gap-2 h-10 lg:h-11 px-2.5 lg:px-4 rounded-xl transition-all font-black tabular-nums text-[10px]",
+        "flex items-center gap-1.5 h-10 lg:h-11 px-2.5 lg:px-4 rounded-xl transition-all font-black tabular-nums text-[10px] whitespace-nowrap",
         isDark 
             ? "bg-[#111827]/60 text-white hover:bg-[#252d40]" 
             : "bg-white text-slate-900 border border-slate-200/50 shadow-sm hover:bg-slate-50"
@@ -72,7 +75,7 @@ const MyRosterNavigator: React.FC<{
     ];
 
     return (
-        <div className="flex items-center gap-1.5 lg:gap-2">
+        <div className="flex w-full items-center justify-between gap-1 sm:gap-1.5 lg:gap-2">
             {/* View Toggle */}
             <div className={cn(
                 "flex items-center gap-1 p-1 rounded-xl",
@@ -93,19 +96,20 @@ const MyRosterNavigator: React.FC<{
                 ))}
             </div>
 
-            <div className="h-6 w-px bg-border/10 mx-1" />
+            <div className="hidden sm:block h-6 w-px bg-border/10 mx-1" />
 
             {/* Navigation Controls */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 sm:gap-1.5">
                 <button onClick={handlePrev} className={cn(buttonBaseCls, "px-2 lg:px-2")}>
                     <ChevronLeft className="w-4 h-4" />
                 </button>
 
                 <Popover open={isPickerOpen} onOpenChange={setIsPickerOpen}>
                     <PopoverTrigger asChild>
-                        <button className={buttonBaseCls}>
+                        <button className={cn(buttonBaseCls, "min-w-[64px] sm:min-w-[70px] justify-center")}>
                             <Calendar className="w-3.5 h-3.5 opacity-50" />
-                            <span className="tracking-tight">{label}</span>
+                            <span className="tracking-tight sm:hidden">{mobileLabel}</span>
+                            <span className="hidden tracking-tight sm:inline">{label}</span>
                         </button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="center">
@@ -123,7 +127,7 @@ const MyRosterNavigator: React.FC<{
                 </button>
             </div>
 
-            <div className="h-6 w-px bg-border/10 mx-1" />
+            <div className="hidden sm:block h-6 w-px bg-border/10 mx-1" />
 
             {/* Today Button */}
             <button onClick={handleToday} className={cn(buttonBaseCls, "uppercase tracking-wider")}>
@@ -184,7 +188,7 @@ const MyRosterPage: React.FC = () => {
         isGammaLocked={isGammaLocked}
         functionBar={
           <div className="flex flex-row items-center gap-2 w-full">
-            <div className="flex items-center gap-2 flex-1 min-w-0 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
               <MyRosterNavigator
                 view={view}
                 onViewChange={setView}
@@ -218,7 +222,7 @@ const MyRosterPage: React.FC = () => {
       />
 
       {/* ── BODY (Calendar) ── */}
-      <div className="flex-1 min-h-0 overflow-hidden px-4 lg:px-6 pb-4 lg:pb-6">
+      <div className="flex-1 min-h-0 overflow-hidden px-2 lg:px-6 pb-4 lg:pb-6">
         <div className={cn(
             "h-full rounded-[32px] overflow-hidden transition-all border",
             isDark 
@@ -267,7 +271,7 @@ const MyRosterPage: React.FC = () => {
           initial={{ scale: 0, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0, opacity: 0 }}
-          className="md:hidden fixed bottom-24 right-5 z-40"
+          className="md:hidden fixed bottom-[calc(max(0.375rem,calc(env(safe-area-inset-bottom,0px)-1.25rem))+84px)] right-5 z-40"
         >
           <button
             onClick={(e) => {

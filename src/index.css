@@ -123,6 +123,24 @@ body,
   body {
     @apply font-sans antialiased text-foreground bg-background selection:bg-primary/30 selection:text-primary-foreground;
   }
+
+  @media (max-width: 768px) {
+    body {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    input,
+    select,
+    textarea {
+      /* ponytail: iOS zooms focused controls below 16px; remove when root font-size stops being 75%. */
+      font-size: 16px !important;
+      -webkit-touch-callout: default;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+  }
 }
 
 /* ============================================================

@@ -135,3 +135,15 @@ See [.env.example](.env.example) for all configuration options including:
 ## License
 
 Proprietary — All rights reserved.
+
+## 问题：
+1. My Notifications里All标签的通知打勾以后就消失了，正常逻辑应该是：在 Unread 标签中，打勾代表“标记为已读”，通知会从未读列表消失。在 All 标签中，打勾后通知应该继续显示，只是变成已读样式。
+2. Notifications，Broadcast，offer inbox做了三个入口，在app里显示太繁杂。可以合并成一个inbox，但不改变底层业务表：
+All：全部消息
+Action Required：待接受/拒绝的 Offer、换班请求
+Announcements：Broadcast 公告
+Updates：排班、竞标、换班结果等普通通知
+用户点击消息后：
+Offer 可直接接受/拒绝，或进入班次详情
+Broadcast 进入公告正文并下载附件
+普通通知跳转到对应业务页面
